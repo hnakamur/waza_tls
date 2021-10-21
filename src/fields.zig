@@ -45,6 +45,15 @@ pub const FieldIterator = struct {
         return error.InvalidField;
     }
 
+    pub fn nextForName(self: *FieldIterator, name: []const u8) !?Field {
+        while (try self.next()) |f| {
+            if (std.ascii.eqlIgnoreCase(f.name(), name)) {
+                return f;
+            }
+        }
+        return null;
+    }
+
     pub fn rest(self: *const FieldIterator) []const u8 {
         return self.buf;
     }
@@ -107,4 +116,27 @@ test "FieldIterator trim value" {
     while (try it.next()) |f| {
         try testing.expectEqualStrings("Mon, 27 Jul 2009 12:28:53 GMT", f.value());
     }
+}
+
+test "FieldIterator nextForName" {
+    const input =
+        "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
+        "Cache-Control: public, s-maxage=60\r\n" ++
+        "Vary: Accept-Encoding\r\n" ++
+        "cache-control: maxage=120\r\n" ++
+        "\r\n" ++
+        "body";
+    var values = [_][]const u8{
+        "public, s-maxage=60",
+        "maxage=120",
+    };
+
+    var it = try FieldIterator.init(input);
+    var i: usize = 0;
+    while (try it.nextForName("cache-control")) |f| {
+        try testing.expectEqualStrings(values[i], f.value());
+        i += 1;
+    }
+    try testing.expectEqual(values.len, i);
+    try testing.expectEqualStrings("body", it.rest());
 }
