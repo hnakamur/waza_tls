@@ -20,8 +20,10 @@ pub const Field = struct {
 pub const FieldIterator = struct {
     buf: []const u8,
 
-    pub fn init(buf: []const u8) FieldIterator {
-        return .{ .buf = buf };
+    pub fn init(buf: []const u8) !FieldIterator {
+        return if (std.mem.indexOf(u8, buf, crlf_crlf)) |_| blk: {
+            break :blk .{ .buf = buf };
+        } else error.InvalidInput;
     }
 
     pub fn next(self: *FieldIterator) !?Field {
@@ -48,7 +50,7 @@ pub const FieldIterator = struct {
     }
 };
 
-test "FieldIterator" {
+test "FieldIterator valid fields and body" {
     const input =
         "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
         "Server: Apache\r\n" ++
@@ -80,7 +82,7 @@ test "FieldIterator" {
         "Accept-Encoding",
         "text/plain",
     };
-    var it = FieldIterator.init(input);
+    var it = try FieldIterator.init(input);
     var i: usize = 0;
     while (try it.next()) |f| {
         try testing.expectEqualStrings(names[i], f.name());
@@ -89,4 +91,20 @@ test "FieldIterator" {
     }
     try testing.expectEqual(names.len, i);
     try testing.expectEqualStrings("body", it.rest());
+}
+
+test "FieldIterator invalid input" {
+    const input =
+        "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n";
+    try testing.expectError(error.InvalidInput, FieldIterator.init(input));
+}
+
+test "FieldIterator trim value" {
+    const input =
+        "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
+        "\r\n";
+    var it = try FieldIterator.init(input);
+    while (try it.next()) |f| {
+        try testing.expectEqualStrings("Mon, 27 Jul 2009 12:28:53 GMT", f.value());
+    }
 }
