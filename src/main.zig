@@ -1,8 +1,7 @@
 const std = @import("std");
 
-const fields = @import("fields.zig");
-pub const Field = fields.Field;
-pub const FieldIterator = fields.FieldIterator;
+pub const Field = @import("fields.zig").Field;
+pub const FieldIterator = @import("fields/iterator.zig").FieldIterator;
 
 comptime {
     std.testing.refAllDecls(@This());
