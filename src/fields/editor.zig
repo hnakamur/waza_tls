@@ -9,6 +9,7 @@ const crlf = "\r\n";
 pub const FieldsEditor = struct {
     buf: []u8,
     len: usize,
+    line_count: usize,
     allocator: *Allocator,
 
     /// FieldsEditor takes ownership of the passed in slice. The slice must have been
@@ -18,6 +19,7 @@ pub const FieldsEditor = struct {
         var editor = FieldsEditor{
             .buf = buf,
             .len = 0,
+            .line_count = 0,
             .allocator = allocator,
         };
         const new_capacity = crlf.len;
@@ -48,6 +50,10 @@ pub const FieldsEditor = struct {
         return self.buf[0..self.len];
     }
 
+    pub fn lineCount(self: *const FieldsEditor) usize {
+        return self.line_count;
+    }
+
     pub fn append(self: *FieldsEditor, name: []const u8, value: []const u8) !void {
         const new_capacity = self.len + name.len + ": ".len + value.len + crlf.len;
         try self.ensureTotalCapacity(new_capacity);
@@ -56,6 +62,7 @@ pub const FieldsEditor = struct {
         self.append_bytes(": ");
         self.append_bytes(value);
         self.append_bytes(crlf_crlf);
+        self.line_count += 1;
     }
 
     fn ensureTotalCapacity(self: *FieldsEditor, new_capacity: usize) !void {
@@ -81,10 +88,12 @@ test "FieldsEditor append" {
     var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
     defer editor.deinit();
     try testing.expectEqualStrings("\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 0), editor.lineCount());
 
     try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
         "\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 1), editor.lineCount());
 
     try editor.append("Server", "Apache");
     buf = editor.toOwnedSlice();
@@ -92,4 +101,5 @@ test "FieldsEditor append" {
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
         "Server: Apache\r\n" ++
         "\r\n", buf);
+    try testing.expectEqual(@as(usize, 2), editor.lineCount());
 }
