@@ -50,10 +50,42 @@ pub const FieldsEditor = struct {
         return self.buf[0..self.len];
     }
 
+    /// The field line count without the last empty line.
     pub fn lineCount(self: *const FieldsEditor) usize {
         return self.line_count;
     }
 
+    /// Append a field with `name` and `value`.
+    pub fn append(self: *FieldsEditor, name: []const u8, value: []const u8) !void {
+        const new_capacity = self.len + name.len + ": ".len + value.len + crlf.len;
+        try self.ensureTotalCapacity(new_capacity);
+        var pos = self.insert_bytes(self.len - crlf.len, name);
+        pos = self.insert_bytes(pos, ": ");
+        pos = self.insert_bytes(pos, value);
+        self.len = self.insert_bytes(pos, crlf_crlf);
+        self.line_count += 1;
+    }
+
+    /// Insert a field with `name` and `value` at line index `i`.
+    pub fn insert(self: *FieldsEditor, i: usize, name: []const u8, value: []const u8) !void {
+        if (i >= self.line_count) {
+            return error.OutOfBounds;
+        }
+        const line_len = name.len + ": ".len + value.len + crlf.len;
+        const new_len = self.len + line_len;
+        try self.ensureTotalCapacity(new_len);
+        var pos = self.posForLineIndex(i);
+        const dest_pos = pos + line_len;
+        std.mem.copyBackwards(u8, self.buf[dest_pos..new_len], self.buf[pos..self.len]);
+        pos = self.insert_bytes(pos, name);
+        pos = self.insert_bytes(pos, ": ");
+        pos = self.insert_bytes(pos, value);
+        _ = self.insert_bytes(pos, crlf);
+        self.len = new_len;
+        self.line_count += 1;
+    }
+
+    /// Delete the field at line index `i`.
     pub fn delete(self: *FieldsEditor, i: usize) !void {
         if (i >= self.line_count) {
             return error.OutOfBounds;
@@ -65,17 +97,6 @@ pub const FieldsEditor = struct {
         std.mem.copy(u8, self.buf[pos..new_len], self.buf[next_pos..self.len]);
         self.len = new_len;
         self.line_count -= 1;
-    }
-
-    pub fn append(self: *FieldsEditor, name: []const u8, value: []const u8) !void {
-        const new_capacity = self.len + name.len + ": ".len + value.len + crlf.len;
-        try self.ensureTotalCapacity(new_capacity);
-        self.len -= crlf.len;
-        self.append_bytes(name);
-        self.append_bytes(": ");
-        self.append_bytes(value);
-        self.append_bytes(crlf_crlf);
-        self.line_count += 1;
     }
 
     fn ensureTotalCapacity(self: *FieldsEditor, new_capacity: usize) !void {
@@ -93,17 +114,17 @@ pub const FieldsEditor = struct {
         return pos;
     }
 
-    inline fn nextLinePos(self: *const FieldsEditor, pos: usize) usize {
+    fn nextLinePos(self: *const FieldsEditor, pos: usize) usize {
         return std.mem.indexOfPos(u8, self.buf, pos, crlf).? + crlf.len;
     }
 
-    inline fn capacity(self: *const FieldsEditor) usize {
+    fn capacity(self: *const FieldsEditor) usize {
         return self.buf.len;
     }
 
-    inline fn append_bytes(self: *FieldsEditor, b: []const u8) void {
-        std.mem.copy(u8, self.buf[self.len..], b);
-        self.len += b.len;
+    fn insert_bytes(self: *FieldsEditor, pos: usize, b: []const u8) usize {
+        std.mem.copy(u8, self.buf[pos..], b);
+        return pos + b.len;
     }
 };
 
@@ -154,4 +175,25 @@ test "FieldsEditor delete" {
     try editor.delete(0);
     try testing.expectEqualStrings("\r\n", editor.view());
     try testing.expectEqual(@as(usize, 0), editor.lineCount());
+}
+
+test "FieldsEditor insert" {
+    var buf = try testing.allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try editor.append("Vary", "Accept-Encoding");
+
+    try editor.insert(0, "Date", "Mon, 27 Jul 2009 12:28:53 GMT");
+    try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Vary: Accept-Encoding\r\n" ++
+        "\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 2), editor.lineCount());
+
+    try editor.insert(1, "Server", "Apache");
+    try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Server: Apache\r\n" ++
+        "Vary: Accept-Encoding\r\n" ++
+        "\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 3), editor.lineCount());
 }
