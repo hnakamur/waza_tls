@@ -54,6 +54,19 @@ pub const FieldsEditor = struct {
         return self.line_count;
     }
 
+    pub fn delete(self: *FieldsEditor, i: usize) !void {
+        if (i >= self.line_count) {
+            return error.OutOfBounds;
+        }
+        const pos = self.posForLineIndex(i);
+        const next_pos = self.nextLinePos(pos);
+        const line_len = next_pos - pos;
+        const new_len = self.len - line_len;
+        std.mem.copy(u8, self.buf[pos..new_len], self.buf[next_pos..self.len]);
+        self.len = new_len;
+        self.line_count -= 1;
+    }
+
     pub fn append(self: *FieldsEditor, name: []const u8, value: []const u8) !void {
         const new_capacity = self.len + name.len + ": ".len + value.len + crlf.len;
         try self.ensureTotalCapacity(new_capacity);
@@ -69,6 +82,19 @@ pub const FieldsEditor = struct {
         if (self.capacity() < new_capacity) {
             self.buf = try self.allocator.reallocAtLeast(self.buf, new_capacity);
         }
+    }
+
+    fn posForLineIndex(self: *const FieldsEditor, line_index: usize) usize {
+        var pos: usize = 0;
+        var i = line_index;
+        while (i > 0) : (i -= 1) {
+            pos = self.nextLinePos(pos);
+        }
+        return pos;
+    }
+
+    inline fn nextLinePos(self: *const FieldsEditor, pos: usize) usize {
+        return std.mem.indexOfPos(u8, self.buf, pos, crlf).? + crlf.len;
     }
 
     inline fn capacity(self: *const FieldsEditor) usize {
@@ -102,4 +128,30 @@ test "FieldsEditor append" {
         "Server: Apache\r\n" ++
         "\r\n", buf);
     try testing.expectEqual(@as(usize, 2), editor.lineCount());
+}
+
+test "FieldsEditor delete" {
+    var buf = try testing.allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
+    try editor.append("Server", "Apache");
+    try editor.append("Vary", "Accept-Encoding");
+    try testing.expectEqual(@as(usize, 3), editor.lineCount());
+
+    try editor.delete(1);
+    try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Vary: Accept-Encoding\r\n" ++
+        "\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 2), editor.lineCount());
+
+    try editor.delete(1);
+    try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 1), editor.lineCount());
+
+    try editor.delete(0);
+    try testing.expectEqualStrings("\r\n", editor.view());
+    try testing.expectEqual(@as(usize, 0), editor.lineCount());
 }
