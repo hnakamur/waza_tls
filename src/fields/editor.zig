@@ -46,7 +46,7 @@ pub const FieldsEditor = struct {
 
     /// FieldsEditor owns the returned memory. The returned slice is valid for use
     /// only until the next modification of this FieldsEditor.
-    pub fn view(self: *const FieldsEditor) []const u8 {
+    pub fn slice(self: *const FieldsEditor) []const u8 {
         return self.buf[0..self.len];
     }
 
@@ -102,6 +102,9 @@ pub const FieldsEditor = struct {
         self.line_count -= 1;
     }
 
+    /// FieldsEditor owns the returned memory. The name and value of the
+    /// returned Field is valid for use only until the next modification of
+    /// this FieldsEditor.
     pub fn get(self: *const FieldsEditor, i: usize) !Field {
         try self.validateLineIndex(i);
 
@@ -114,11 +117,16 @@ pub const FieldsEditor = struct {
         };
     }
 
-    pub fn indexOfName(self: *const FieldsEditor, name: []const u8, start: usize) !?usize {
-        try self.validateLineIndex(start);
+    pub fn indexOfName(self: *const FieldsEditor, name: []const u8) ?usize {
+        if (self.line_count == 0) return null;
+        return self.indexOfNamePos(name, 0) catch unreachable;
+    }
 
-        var i = start;
-        var pos = self.posForLineIndex(start);
+    pub fn indexOfNamePos(self: *const FieldsEditor, name: []const u8, start_line_index: usize) !?usize {
+        try self.validateLineIndex(start_line_index);
+
+        var i = start_line_index;
+        var pos = self.posForLineIndex(start_line_index);
         var end_pos: usize = 0;
         while (pos < self.len) : ({
             pos = end_pos + crlf.len;
@@ -186,7 +194,7 @@ test "FieldsEditor append" {
     var buf = try testing.allocator.alloc(u8, 32);
     var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
     defer editor.deinit();
-    try testing.expectEqualStrings("\r\n", editor.view());
+    try testing.expectEqualStrings("\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 0), editor.lineCount());
 
     try testing.expectError(error.InvalidInput, editor.append("Date:", "Mon, 27 Jul 2009 12:28:53 GMT"));
@@ -194,7 +202,7 @@ test "FieldsEditor append" {
 
     try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
-        "\r\n", editor.view());
+        "\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 1), editor.lineCount());
 
     try editor.append("Server", "Apache");
@@ -219,16 +227,16 @@ test "FieldsEditor delete" {
     try editor.delete(1);
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
         "Vary: Accept-Encoding\r\n" ++
-        "\r\n", editor.view());
+        "\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 2), editor.lineCount());
 
     try editor.delete(1);
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
-        "\r\n", editor.view());
+        "\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 1), editor.lineCount());
 
     try editor.delete(0);
-    try testing.expectEqualStrings("\r\n", editor.view());
+    try testing.expectEqualStrings("\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 0), editor.lineCount());
 }
 
@@ -247,18 +255,32 @@ test "FieldsEditor insert" {
     try editor.insert(0, "Date", "Mon, 27 Jul 2009 12:28:53 GMT");
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
         "Vary: Accept-Encoding\r\n" ++
-        "\r\n", editor.view());
+        "\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 2), editor.lineCount());
 
     try editor.insert(1, "Server", "Apache");
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
         "Server: Apache\r\n" ++
         "Vary: Accept-Encoding\r\n" ++
-        "\r\n", editor.view());
+        "\r\n", editor.slice());
     try testing.expectEqual(@as(usize, 3), editor.lineCount());
 }
 
 test "FieldsEditor indexOfName" {
+    var buf = try testing.allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try testing.expect(editor.indexOfName("Date") == null);
+
+    try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
+    try editor.append("Cache-Control", "public, s-maxage=60");
+
+    try testing.expectEqual(@as(?usize, 1), editor.indexOfName("cache-control"));
+    try testing.expect(editor.indexOfName("Server") == null);
+}
+
+test "FieldsEditor indexOfNamePos" {
     var buf = try testing.allocator.alloc(u8, 32);
     var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
     defer editor.deinit();
@@ -268,13 +290,13 @@ test "FieldsEditor indexOfName" {
     try editor.append("Server", "Apache");
     try editor.append("cache-control", "max-age=120");
 
-    try testing.expectError(error.OutOfBounds, editor.indexOfName("cache-control", 4));
+    try testing.expectError(error.OutOfBounds, editor.indexOfNamePos("cache-control", 4));
 
     const wants = [_]usize{ 1, 3 };
     var j: usize = 0;
     var start: usize = 0;
     while (start < editor.lineCount()) {
-        const result = try editor.indexOfName("cache-control", start);
+        const result = try editor.indexOfNamePos("cache-control", start);
         if (result) |i| {
             try testing.expectEqual(wants[j], i);
             j += 1;
@@ -305,7 +327,7 @@ test "FieldsEditor get" {
     var j: usize = 0;
     var start: usize = 0;
     while (start < editor.lineCount()) {
-        const result = try editor.indexOfName("cache-control", start);
+        const result = try editor.indexOfNamePos("cache-control", start);
         if (result) |i| {
             const f = try editor.get(i);
             try testing.expectEqualStrings(wants[j], f.value());
