@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const Field = @import("../fields.zig").Field;
+const FieldIterator = @import("./iterator.zig").FieldIterator;
 
 const crlf_crlf = "\r\n\r\n";
 const crlf = "\r\n";
@@ -26,6 +27,27 @@ pub const FieldsEditor = struct {
         try editor.ensureTotalCapacity(new_capacity);
         editor.len = editor.insert_bytes(0, crlf);
         return editor;
+    }
+
+    /// FieldsEditor takes ownership of the passed in slice. The slice must have been
+    /// allocated with `allocator`.
+    /// Deinitialize with `deinit` or use `toOwnedSlice`.
+    pub fn parseOwnedSlice(allocator: *Allocator, buf: []u8) !FieldsEditor {
+        var line_count: usize = 0;
+        var len: usize = 0;
+        var it = FieldIterator.init(buf);
+        while (try it.next()) |f| {
+            len += f.line.len + crlf.len;
+            line_count += 1;
+        }
+        len += crlf.len;
+
+        return FieldsEditor{
+            .buf = buf,
+            .len = len,
+            .line_count = line_count,
+            .allocator = allocator,
+        };
     }
 
     /// Release all allocated memory.
@@ -392,4 +414,34 @@ test "FieldsEditor get" {
         "vary: Accept-Encoding, Origin\r\n" ++
         "Server: Apache\r\n" ++
         "\r\n", editor.slice());
+}
+
+test "FieldsEditor parseOwnedSlice" {
+    const bad_input = try testing.allocator.dupe(
+        u8,
+        "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
+            "Cache-Control: public, s-maxage=60\r\n" ++
+            "Vary: Accept-Encoding\r\n",
+    );
+    defer testing.allocator.free(bad_input);
+    try testing.expectError(
+        error.InvalidField,
+        FieldsEditor.parseOwnedSlice(testing.allocator, bad_input),
+    );
+
+    const input_fields =
+        "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
+        "Cache-Control: public, s-maxage=60\r\n" ++
+        "Vary: Accept-Encoding\r\n" ++
+        "cache-control: maxage=120\r\n" ++
+        "\r\n";
+    const input = input_fields ++
+        "body";
+
+    var buf = try testing.allocator.dupe(u8, input);
+    var editor = try FieldsEditor.parseOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try testing.expectEqualStrings(input_fields, editor.slice());
+    try testing.expectEqual(@as(usize, 4), editor.lineCount());
 }
