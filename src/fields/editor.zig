@@ -57,6 +57,9 @@ pub const FieldsEditor = struct {
 
     /// Append a field with `name` and `value`.
     pub fn append(self: *FieldsEditor, name: []const u8, value: []const u8) !void {
+        try validateName(name);
+        try validateValue(value);
+
         const new_capacity = self.len + name.len + ": ".len + value.len + crlf.len;
         try self.ensureTotalCapacity(new_capacity);
         var pos = self.insert_bytes(self.len - crlf.len, name);
@@ -68,9 +71,10 @@ pub const FieldsEditor = struct {
 
     /// Insert a field with `name` and `value` at line index `i`.
     pub fn insert(self: *FieldsEditor, i: usize, name: []const u8, value: []const u8) !void {
-        if (i >= self.line_count) {
-            return error.OutOfBounds;
-        }
+        try self.validateLineIndex(i);
+        try validateName(name);
+        try validateValue(value);
+
         const line_len = name.len + ": ".len + value.len + crlf.len;
         const new_len = self.len + line_len;
         try self.ensureTotalCapacity(new_len);
@@ -87,9 +91,8 @@ pub const FieldsEditor = struct {
 
     /// Delete the field at line index `i`.
     pub fn delete(self: *FieldsEditor, i: usize) !void {
-        if (i >= self.line_count) {
-            return error.OutOfBounds;
-        }
+        try self.validateLineIndex(i);
+
         const pos = self.posForLineIndex(i);
         const next_pos = self.nextLinePos(pos);
         const line_len = next_pos - pos;
@@ -100,9 +103,8 @@ pub const FieldsEditor = struct {
     }
 
     pub fn get(self: *const FieldsEditor, i: usize) !Field {
-        if (i >= self.line_count) {
-            return error.OutOfBounds;
-        }
+        try self.validateLineIndex(i);
+
         const pos = self.posForLineIndex(i);
         const colon_pos = std.mem.indexOfPos(u8, self.buf, pos, ":").?;
         const end_pos = std.mem.indexOfPos(u8, self.buf, colon_pos + 1, crlf).?;
@@ -113,9 +115,8 @@ pub const FieldsEditor = struct {
     }
 
     pub fn indexOfName(self: *const FieldsEditor, name: []const u8, start: usize) !?usize {
-        if (start >= self.line_count) {
-            return error.OutOfBounds;
-        }
+        try self.validateLineIndex(start);
+
         var i = start;
         var pos = self.posForLineIndex(start);
         var end_pos: usize = 0;
@@ -159,6 +160,24 @@ pub const FieldsEditor = struct {
         std.mem.copy(u8, self.buf[pos..], b);
         return pos + b.len;
     }
+
+    fn validateLineIndex(self: *const FieldsEditor, i: usize) !void {
+        if (i >= self.line_count) {
+            return error.OutOfBounds;
+        }
+    }
+
+    fn validateName(name: []const u8) !void {
+        if (std.mem.containsAtLeast(u8, name, 1, ":")) {
+            return error.InvalidInput;
+        }
+    }
+
+    fn validateValue(value: []const u8) !void {
+        if (std.mem.containsAtLeast(u8, value, 1, crlf)) {
+            return error.InvalidInput;
+        }
+    }
 };
 
 const testing = std.testing;
@@ -169,6 +188,9 @@ test "FieldsEditor append" {
     defer editor.deinit();
     try testing.expectEqualStrings("\r\n", editor.view());
     try testing.expectEqual(@as(usize, 0), editor.lineCount());
+
+    try testing.expectError(error.InvalidInput, editor.append("Date:", "Mon, 27 Jul 2009 12:28:53 GMT"));
+    try testing.expectError(error.InvalidInput, editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT\r\n"));
 
     try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
@@ -215,7 +237,12 @@ test "FieldsEditor insert" {
     var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
     defer editor.deinit();
 
+    try testing.expectError(error.OutOfBounds, editor.insert(0, "Date", "Mon, 27 Jul 2009 12:28:53 GMT"));
+
     try editor.append("Vary", "Accept-Encoding");
+
+    try testing.expectError(error.InvalidInput, editor.insert(0, "Date:", "Mon, 27 Jul 2009 12:28:53 GMT"));
+    try testing.expectError(error.InvalidInput, editor.insert(0, "Date", "Mon, 27 Jul 2009 12:28:53 GMT\r\n"));
 
     try editor.insert(0, "Date", "Mon, 27 Jul 2009 12:28:53 GMT");
     try testing.expectEqualStrings("Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
@@ -240,6 +267,8 @@ test "FieldsEditor indexOfName" {
     try editor.append("Cache-Control", "public, s-maxage=60");
     try editor.append("Server", "Apache");
     try editor.append("cache-control", "max-age=120");
+
+    try testing.expectError(error.OutOfBounds, editor.indexOfName("cache-control", 4));
 
     const wants = [_]usize{ 1, 3 };
     var j: usize = 0;
@@ -266,6 +295,8 @@ test "FieldsEditor get" {
     try editor.append("Cache-Control", "public, s-maxage=60");
     try editor.append("Server", "Apache");
     try editor.append("cache-control", "max-age=120");
+
+    try testing.expectError(error.OutOfBounds, editor.get(4));
 
     const wants = [_][]const u8{
         "public, s-maxage=60",
