@@ -34,13 +34,11 @@ pub const FieldsEditor = struct {
     /// Deinitialize with `deinit` or use `toOwnedSlice`.
     pub fn parseOwnedSlice(allocator: *Allocator, buf: []u8) !FieldsEditor {
         var line_count: usize = 0;
-        var len: usize = 0;
         var it = FieldIterator.init(buf);
-        while (try it.next()) |f| {
-            len += f.line.len + crlf.len;
+        while (try it.next()) |_| {
             line_count += 1;
         }
-        len += crlf.len;
+        const len = @ptrToInt(it.rest().ptr) - @ptrToInt(buf.ptr);
 
         return FieldsEditor{
             .buf = buf,
