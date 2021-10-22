@@ -89,6 +89,32 @@ pub const FieldsEditor = struct {
         self.line_count += 1;
     }
 
+    /// Set the field with `name` and `value` at line index `i`.
+    pub fn set(self: *FieldsEditor, i: usize, name: []const u8, value: []const u8) !void {
+        try self.validateLineIndex(i);
+        try validateName(name);
+        try validateValue(value);
+
+        var pos = self.posForLineIndex(i);
+        const next_pos = self.nextLinePos(pos);
+        const old_line_len = next_pos - pos;
+        const line_len = name.len + ": ".len + value.len + crlf.len;
+        const new_len = self.len - old_line_len + line_len;
+        if (new_len > self.len) {
+            try self.ensureTotalCapacity(new_len);
+            const dest_pos = pos + line_len;
+            std.mem.copyBackwards(u8, self.buf[dest_pos..new_len], self.buf[next_pos..self.len]);
+        } else if (new_len < self.len) {
+            const dest_pos = pos + line_len;
+            std.mem.copy(u8, self.buf[dest_pos..new_len], self.buf[next_pos..self.len]);
+        }
+        pos = self.insert_bytes(pos, name);
+        pos = self.insert_bytes(pos, ": ");
+        pos = self.insert_bytes(pos, value);
+        _ = self.insert_bytes(pos, crlf);
+        self.len = new_len;
+    }
+
     /// Delete the field at line index `i`.
     pub fn delete(self: *FieldsEditor, i: usize) !void {
         try self.validateLineIndex(i);
@@ -338,4 +364,32 @@ test "FieldsEditor get" {
         }
     }
     try testing.expectEqual(wants.len, j);
+}
+
+test "FieldsEditor get" {
+    var buf = try testing.allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
+    try editor.append("Cache-Control", "public, s-maxage=60");
+    try editor.append("Server", "Apache");
+
+    try editor.set(0, "Date", "Tue, 28 Jul 2009 12:28:53 GMT");
+    try testing.expectEqualStrings("Date: Tue, 28 Jul 2009 12:28:53 GMT\r\n" ++
+        "Cache-Control: public, s-maxage=60\r\n" ++
+        "Server: Apache\r\n" ++
+        "\r\n", editor.slice());
+
+    try editor.set(1, "cache-control", "max-age=120");
+    try testing.expectEqualStrings("Date: Tue, 28 Jul 2009 12:28:53 GMT\r\n" ++
+        "cache-control: max-age=120\r\n" ++
+        "Server: Apache\r\n" ++
+        "\r\n", editor.slice());
+
+    try editor.set(1, "vary", "Accept-Encoding, Origin");
+    try testing.expectEqualStrings("Date: Tue, 28 Jul 2009 12:28:53 GMT\r\n" ++
+        "vary: Accept-Encoding, Origin\r\n" ++
+        "Server: Apache\r\n" ++
+        "\r\n", editor.slice());
 }
