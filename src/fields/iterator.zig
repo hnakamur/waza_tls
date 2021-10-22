@@ -16,13 +16,13 @@ pub const FieldIterator = struct {
             return null;
         }
 
-        if (std.mem.indexOf(u8, self.buf, ":")) |colonPos| {
-            if (std.mem.indexOfPos(u8, self.buf, colonPos, crlf)) |crlfPos| {
-                const line = self.buf[0..crlfPos];
-                self.buf = self.buf[crlfPos + crlf.len ..];
+        if (std.mem.indexOf(u8, self.buf, ":")) |colon_pos| {
+            if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
+                const line = self.buf[0..crlf_pos];
+                self.buf = self.buf[crlf_pos + crlf.len ..];
                 return Field{
                     .line = line,
-                    .colonPos = colonPos,
+                    .colon_pos = colon_pos,
                 };
             }
         }

@@ -24,7 +24,7 @@ pub const FieldsEditor = struct {
         };
         const new_capacity = crlf.len;
         try editor.ensureTotalCapacity(new_capacity);
-        editor.append_bytes(crlf);
+        editor.len = editor.insert_bytes(0, crlf);
         return editor;
     }
 
@@ -97,6 +97,39 @@ pub const FieldsEditor = struct {
         std.mem.copy(u8, self.buf[pos..new_len], self.buf[next_pos..self.len]);
         self.len = new_len;
         self.line_count -= 1;
+    }
+
+    pub fn get(self: *const FieldsEditor, i: usize) !Field {
+        if (i >= self.line_count) {
+            return error.OutOfBounds;
+        }
+        const pos = self.posForLineIndex(i);
+        const colon_pos = std.mem.indexOfPos(u8, self.buf, pos, ":").?;
+        const end_pos = std.mem.indexOfPos(u8, self.buf, colon_pos + 1, crlf).?;
+        return Field{
+            .line = self.buf[pos..end_pos],
+            .colon_pos = colon_pos - pos,
+        };
+    }
+
+    pub fn indexOfName(self: *const FieldsEditor, name: []const u8, start: usize) !?usize {
+        if (start >= self.line_count) {
+            return error.OutOfBounds;
+        }
+        var i = start;
+        var pos = self.posForLineIndex(start);
+        var end_pos: usize = 0;
+        while (pos < self.len) : ({
+            pos = end_pos + crlf.len;
+            i += 1;
+        }) {
+            const colon_pos = std.mem.indexOfPos(u8, self.buf, pos, ":") orelse return null;
+            end_pos = std.mem.indexOfPos(u8, self.buf, colon_pos + 1, crlf).?;
+            if (std.ascii.eqlIgnoreCase(self.buf[pos..colon_pos], name)) {
+                return i;
+            }
+        }
+        return null;
     }
 
     fn ensureTotalCapacity(self: *FieldsEditor, new_capacity: usize) !void {
@@ -196,4 +229,60 @@ test "FieldsEditor insert" {
         "Vary: Accept-Encoding\r\n" ++
         "\r\n", editor.view());
     try testing.expectEqual(@as(usize, 3), editor.lineCount());
+}
+
+test "FieldsEditor indexOfName" {
+    var buf = try testing.allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
+    try editor.append("Cache-Control", "public, s-maxage=60");
+    try editor.append("Server", "Apache");
+    try editor.append("cache-control", "max-age=120");
+
+    const wants = [_]usize{ 1, 3 };
+    var j: usize = 0;
+    var start: usize = 0;
+    while (start < editor.lineCount()) {
+        const result = try editor.indexOfName("cache-control", start);
+        if (result) |i| {
+            try testing.expectEqual(wants[j], i);
+            j += 1;
+            start = i + 1;
+        } else {
+            break;
+        }
+    }
+    try testing.expectEqual(wants.len, j);
+}
+
+test "FieldsEditor get" {
+    var buf = try testing.allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(testing.allocator, buf);
+    defer editor.deinit();
+
+    try editor.append("Date", "Mon, 27 Jul 2009 12:28:53 GMT");
+    try editor.append("Cache-Control", "public, s-maxage=60");
+    try editor.append("Server", "Apache");
+    try editor.append("cache-control", "max-age=120");
+
+    const wants = [_][]const u8{
+        "public, s-maxage=60",
+        "max-age=120",
+    };
+    var j: usize = 0;
+    var start: usize = 0;
+    while (start < editor.lineCount()) {
+        const result = try editor.indexOfName("cache-control", start);
+        if (result) |i| {
+            const f = try editor.get(i);
+            try testing.expectEqualStrings(wants[j], f.value());
+            j += 1;
+            start = i + 1;
+        } else {
+            break;
+        }
+    }
+    try testing.expectEqual(wants.len, j);
 }
