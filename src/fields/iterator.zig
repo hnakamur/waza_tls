@@ -16,7 +16,7 @@ pub const FieldIterator = struct {
             return null;
         }
 
-        if (std.mem.indexOf(u8, self.buf, ":")) |colon_pos| {
+        if (std.mem.indexOfScalar(u8, self.buf, ':')) |colon_pos| {
             if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
                 const line = self.buf[0..crlf_pos];
                 self.buf = self.buf[crlf_pos + crlf.len ..];

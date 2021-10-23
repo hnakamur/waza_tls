@@ -155,7 +155,7 @@ pub const FieldsEditor = struct {
         try self.validateLineIndex(i);
 
         const pos = self.posForLineIndex(i);
-        const colon_pos = std.mem.indexOfPos(u8, self.buf, pos, ":").?;
+        const colon_pos = std.mem.indexOfScalarPos(u8, self.buf, pos, ':').?;
         const end_pos = std.mem.indexOfPos(u8, self.buf, colon_pos + 1, crlf).?;
         return Field{
             .line = self.buf[pos..end_pos],
@@ -178,7 +178,7 @@ pub const FieldsEditor = struct {
             pos = end_pos + crlf.len;
             i += 1;
         }) {
-            const colon_pos = std.mem.indexOfPos(u8, self.buf, pos, ":") orelse return null;
+            const colon_pos = std.mem.indexOfScalarPos(u8, self.buf, pos, ':') orelse return null;
             end_pos = std.mem.indexOfPos(u8, self.buf, colon_pos + 1, crlf).?;
             if (std.ascii.eqlIgnoreCase(self.buf[pos..colon_pos], name)) {
                 return i;
@@ -222,13 +222,13 @@ pub const FieldsEditor = struct {
     }
 
     fn validateName(name: []const u8) !void {
-        if (std.mem.containsAtLeast(u8, name, 1, ":")) {
+        if (std.mem.indexOfScalar(u8, name, ':')) |_| {
             return error.InvalidInput;
         }
     }
 
     fn validateValue(value: []const u8) !void {
-        if (std.mem.containsAtLeast(u8, value, 1, crlf)) {
+        if (std.mem.indexOf(u8, value, crlf)) |_| {
             return error.InvalidInput;
         }
     }
