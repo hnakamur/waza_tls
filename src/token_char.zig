@@ -8,7 +8,13 @@ pub fn isTokenChar(c: u8) bool {
     return tokenCharBitset.isSet(c);
 }
 
-const delim_chars = "\"(),/:;<=>?@[\\]{}";
+pub inline fn isFieldVisibleChar(c: u8) bool {
+    return c > '\x20';
+}
+
+pub inline fn isWhiteSpaceChar(c: u8) bool {
+    return c == ' ' or c == '\t';
+}
 
 const delimCharBitset = makeStaticCharBitSet(_isDelimChar);
 const tokenCharBitset = makeStaticCharBitSet(_isTokenChar);
@@ -26,12 +32,22 @@ fn makeStaticCharBitSet(predicate: fn(u8) bool) std.StaticBitSet(char_bitset_siz
     return bitset;
 }
 
+const delim_chars = "\"(),/:;<=>?@[\\]{}";
+
 fn _isDelimChar(c: u8) bool {
     return if (std.mem.indexOfScalar(u8, delim_chars, c)) |_| true else false;
 }
 
 fn _isTokenChar(c: u8) bool {
-    return c > '\x20' and c < '\x7f' and !_isDelimChar(c);
+    return _isVisibleChar(c) and !_isDelimChar(c);
+}
+
+fn _isVisibleChar(c: u8) bool {
+    return c > '\x20' and c < '\x7f';
+}
+
+fn _isObsTextChar(c: u8) bool {
+    return c >= '\x80';
 }
 
 const testing = std.testing;

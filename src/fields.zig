@@ -9,6 +9,6 @@ pub const Field = struct {
     }
 
     pub fn value(self: *const Field) []const u8 {
-        return std.mem.trim(u8, self.line[self.colon_pos + 1 ..], &[_]u8{' ', '\t'});
+        return std.mem.trim(u8, self.line[self.colon_pos + 1 ..], &[_]u8{ ' ', '\t' });
     }
 };
