@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const Field = @import("../fields.zig").Field;
+const Field = @import("field.zig").Field;
 
 pub fn fieldReader(reader: anytype, buffer: []u8) FieldReader(@TypeOf(reader)) {
     return FieldReader(@TypeOf(reader)).init(reader, buffer);

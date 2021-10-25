@@ -1,5 +1,5 @@
 const std = @import("std");
-const Field = @import("../fields.zig").Field;
+const Field = @import("field.zig").Field;
 
 const crlf = "\r\n";
 

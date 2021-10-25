@@ -1,8 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const Field = @import("../fields.zig").Field;
-const FieldIterator = @import("./iterator.zig").FieldIterator;
+const Field = @import("field.zig").Field;
+const FieldIterator = @import("field_iterator.zig").FieldIterator;
 
 const crlf_crlf = "\r\n\r\n";
 const crlf = "\r\n";
