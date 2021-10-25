@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 const isTokenChar = @import("token_char.zig").isTokenChar;
@@ -9,6 +10,29 @@ pub const RecvRequest = struct {
     method: Method,
     uri: []const u8,
     version: Version,
+    headers: []const u8,
+    allocator: *mem.Allocator,
+
+    // value of custom `method`, `uri`, and `headers` must be allocated with `allocator`.
+    // they are freed in `deinit`.
+    pub fn init(allocator: *mem.Allocator, method: Method, uri: []const u8, version: Version, headers: []const u8) RecvRequest {
+        return .{
+            .method = method,
+            .uri = uri,
+            .version = version,
+            .headers = headers,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *RecvRequest) void {
+        self.allocator.free(self.headers);
+        self.allocator.free(self.uri);
+        switch (self.method) {
+            .custom => |value| self.allocator.free(value),
+            else => {},
+        }
+    }
 };
 
 const version_max_len: usize = Version.http1_1.toText().len;
@@ -169,6 +193,26 @@ const FieldSectionEndFinder = struct {
 
 const testing = std.testing;
 
+test "RcvRequest - GET method" {
+    const allocator = testing.allocator;
+    const method = Method{ .get = undefined };
+    const uri = try allocator.dupe(u8, "http://www.example.org/where?q=now");
+    const headers = try allocator.dupe(u8, "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Server: Apache\r\n");
+    var req = RecvRequest.init(allocator, method, uri, Version.http1_1, headers);
+    defer req.deinit();
+}
+
+test "RcvRequest - custom method" {
+    const allocator = testing.allocator;
+    const method = Method{ .custom = try allocator.dupe(u8, "PURGE_ALL") };
+    const uri = try allocator.dupe(u8, "http://www.example.org/where?q=now");
+    const headers = try allocator.dupe(u8, "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Server: Apache\r\n");
+    var req = RecvRequest.init(allocator, method, uri, Version.http1_1, headers);
+    defer req.deinit();
+}
+
 test "RequestLineParser - whole in one buf" {
     const method = "GET";
     const uri = "http://www.example.org/where?q=now";
@@ -247,9 +291,7 @@ test "RequestLineParser - URI too long" {
     const uri_max_len_test = 12;
     var parser = RequestLineParser{ .uri_max_len = uri_max_len_test };
     try testing.expectError(error.UriTooLong, parser.parse(input));
-    try testing.expectEqual(
-        @as(usize, method.len + " ".len + uri_max_len_test + 1),
-        parser.totalBytesRead());
+    try testing.expectEqual(@as(usize, method.len + " ".len + uri_max_len_test + 1), parser.totalBytesRead());
 }
 
 test "RequestLineParser - version too long" {
@@ -260,9 +302,7 @@ test "RequestLineParser - version too long" {
 
     var parser = RequestLineParser{};
     try testing.expectError(error.BadRequest, parser.parse(input));
-    try testing.expectEqual(
-        @as(usize, method.len + " ".len + uri.len + " ".len + version_max_len + 1),
-        parser.totalBytesRead());
+    try testing.expectEqual(@as(usize, method.len + " ".len + uri.len + " ".len + version_max_len + 1), parser.totalBytesRead());
 }
 
 test "FieldSectionEndFinder - whole in one buf" {

@@ -44,6 +44,7 @@ pub const Method = union(MethodType) {
         };
     }
 
+    // caller owns the memory for `value`.
     pub fn custom(value: []const u8) Error!Method {
         for (value) |char| {
             if (!isTokenChar(char)) {
