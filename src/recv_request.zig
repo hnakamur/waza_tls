@@ -22,6 +22,7 @@ pub const RecvRequest = struct {
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
         const version = Version.fromText(ver_buf) catch |_| return error.BadRequest;
         const headers = buf[result.total_bytes_read .. result.total_bytes_read + headers_len];
+
         return RecvRequest{
             .buf = buf,
             .method = method,
@@ -37,7 +38,6 @@ pub const RecvRequest = struct {
     }
 };
 
-const version_max_len: usize = Version.http1_1.toText().len;
 
 const RequestLineSplitter = struct {
     const State = enum {
@@ -59,9 +59,10 @@ const RequestLineSplitter = struct {
         version_len: usize = 0,
     };
 
+    const version_max_len: usize = Version.http1_1.toText().len;
+
     method_max_len: usize = config.method_max_len,
     uri_max_len: usize = config.uri_max_len,
-
     state: State = .on_method,
     result: Result = undefined,
 
@@ -134,81 +135,22 @@ const RequestLineSplitter = struct {
     }
 };
 
-const FieldSectionEndFinder = struct {
-    const State = enum {
-        initial,
-        seen_cr,
-        seen_cr_lf,
-        seen_cr_lf_cr,
-        seen_cr_lf_cr_lf,
-    };
-
-    state: State = .initial,
-    total_bytes_read: usize = 0,
-
-    pub fn reachesToEnd(self: *FieldSectionEndFinder, buf: []const u8) !bool {
-        var pos: usize = 0;
-        while (pos < buf.len) {
-            switch (self.state) {
-                .initial => {
-                    if (std.mem.indexOfScalarPos(u8, buf, pos, '\r')) |cr_pos| {
-                        self.state = .seen_cr;
-                        self.total_bytes_read += cr_pos + "\r".len - pos;
-                        pos = cr_pos + "\r".len;
-                    } else {
-                        self.total_bytes_read += buf.len - pos;
-                        return false;
-                    }
-                },
-                .seen_cr => {
-                    self.total_bytes_read += 1;
-                    if (buf[pos] == '\n') {
-                        self.state = .seen_cr_lf;
-                        pos += 1;
-                    } else {
-                        return error.InvalidInput;
-                    }
-                },
-                .seen_cr_lf => {
-                    self.total_bytes_read += 1;
-                    self.state = if (buf[pos] == '\r') .seen_cr_lf_cr else .initial;
-                    pos += 1;
-                },
-                .seen_cr_lf_cr => {
-                    self.total_bytes_read += 1;
-                    if (buf[pos] == '\n') {
-                        self.state = .seen_cr_lf_cr_lf;
-                        return true;
-                    } else {
-                        return error.InvalidInput;
-                    }
-                },
-                .seen_cr_lf_cr_lf => return error.InvalidState,
-            }
-        }
-        return false;
-    }
-
-    pub fn totalBytesRead(self: *const FieldSectionEndFinder) usize {
-        return self.total_bytes_read;
-    }
-};
-
 const testing = std.testing;
+const FieldsEndFinder = @import("fields_end_finder.zig").FieldsEndFinder;
 
-test "RcvRequest - GET method" {
+test "RecvRequest - GET method" {
     const method = "GET";
-    const uri = "http://www.example.org/where?q=now";
+    const uri = "/where?q=now";
     const version = "HTTP/1.1";
-    const headers = "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
-        "Server: Apache\r\n" ++
+    const headers = "Host: www.example.com\r\n" ++
+        "Accept: */*\r\n" ++
         "\r\n";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n" ++ headers;
 
     var splitter = RequestLineSplitter{};
     try testing.expect(try splitter.parse(input));
-    var finder = FieldSectionEndFinder{};
-    try testing.expect(try finder.reachesToEnd(input[splitter.result.total_bytes_read..]));
+    var finder = FieldsEndFinder{};
+    try testing.expect(try finder.parse(input[splitter.result.total_bytes_read..]));
     try testing.expectEqual(input.len, splitter.result.total_bytes_read + finder.total_bytes_read);
 
     const allocator = testing.allocator;
@@ -222,19 +164,19 @@ test "RcvRequest - GET method" {
     try testing.expectEqualStrings(headers, req.headers);
 }
 
-test "RcvRequest - custom method" {
+test "RecvRequest - custom method" {
     const method = "PURGE_ALL";
-    const uri = "http://www.example.org/where?q=now";
+    const uri = "/where?q=now";
     const version = "HTTP/1.1";
-    const headers = "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
-        "Server: Apache\r\n" ++
+    const headers = "Host: www.example.com\r\n" ++
+        "Accept: */*\r\n" ++
         "\r\n";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n" ++ headers;
 
     var splitter = RequestLineSplitter{};
     try testing.expect(try splitter.parse(input));
-    var finder = FieldSectionEndFinder{};
-    try testing.expect(try finder.reachesToEnd(input[splitter.result.total_bytes_read..]));
+    var finder = FieldsEndFinder{};
+    try testing.expect(try finder.parse(input[splitter.result.total_bytes_read..]));
     try testing.expectEqual(input.len, splitter.result.total_bytes_read + finder.total_bytes_read);
 
     const allocator = testing.allocator;
@@ -350,28 +292,29 @@ test "RequestLineSplitter - version too long" {
 
     var splitter = RequestLineSplitter{};
     try testing.expectError(error.BadRequest, splitter.parse(input));
-    const expected_total_len = method.len + " ".len + uri.len + " ".len + version_max_len + 1;
+    const expected_total_len = method.len + " ".len + uri.len + " ".len + "HTTP/1.1".len + 1;
     try testing.expectEqual(expected_total_len, splitter.result.total_bytes_read);
 }
 
-test "FieldSectionEndFinder - whole in one buf" {
-    const input = "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+test "FieldsEndFinder - whole in one buf" {
+    const input = "Host: www.example.com\r\n" ++
+        "Accept: */*\r\n" ++
         "\r\n";
-    var finder = FieldSectionEndFinder{};
-    try testing.expect(try finder.reachesToEnd(input));
+    var finder = FieldsEndFinder{};
+    try testing.expect(try finder.parse(input));
     try testing.expectEqual(input.len, finder.totalBytesRead());
 }
 
-test "FieldSectionEndFinder - splitted case" {
-    const input = "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
-        "Server: Apache\r\n" ++
+test "FieldsEndFinder - splitted case" {
+    const input = "Host: www.example.com\r\n" ++
+        "Accept: */*\r\n" ++
         "\r\n";
     var pos: usize = 0;
     while (pos < input.len) : (pos += 1) {
-        var finder = FieldSectionEndFinder{};
-        try testing.expect(!try finder.reachesToEnd(input[0..pos]));
+        var finder = FieldsEndFinder{};
+        try testing.expect(!try finder.parse(input[0..pos]));
         try testing.expectEqual(pos, finder.totalBytesRead());
-        try testing.expect(try finder.reachesToEnd(input[pos..]));
+        try testing.expect(try finder.parse(input[pos..]));
         try testing.expectEqual(input.len, finder.totalBytesRead());
     }
 }
