@@ -93,6 +93,16 @@ pub const StatusCode = enum(u10) {
         return self.group() != .invalid;
     }
 
+    pub fn fromText(input: []const u8) !StatusCode {
+        if (input.len != 3) return error.InvalidInput;
+        var v: u10 = 0;
+        for (input) |c| {
+            v *= 10;
+            v += try std.fmt.charToDigit(c, 10);
+        }
+        return @intToEnum(StatusCode, v);
+    }
+
     pub fn toText(self: StatusCode) []const u8 {
         return switch (self) {
             continue_ => "Continue",
@@ -191,4 +201,9 @@ const testing = std.testing;
 test "StatusCode" {
     try testing.expectEqual(@as(u10, 100), StatusCode.continue_.code());
     try testing.expectEqual(@as(u10, 499), @intToEnum(StatusCode, 499).code());
+
+    try testing.expectEqual(StatusCode.continue_, try StatusCode.fromText("100"));
+    try testing.expectEqual(StatusCode.network_authentication_required, try StatusCode.fromText("511"));
+    try testing.expectError(error.InvalidInput, StatusCode.fromText("5110"));
+    try testing.expectError(error.InvalidCharacter, StatusCode.fromText("51A"));
 }
