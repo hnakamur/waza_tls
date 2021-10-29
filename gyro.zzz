@@ -1,0 +1,13 @@
+deps:
+  tigerbeetle-io:
+    src:
+      github:
+        user: hnakamur
+        repo: tigerbeetle-io
+        ref: main
+  datetime:
+    src:
+      github:
+        user: frmdstryr
+        repo: zig-datetime
+        ref: master
