@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const FieldsEndFinder = struct {
+pub const FieldsScanner = struct {
     const State = enum {
         initial,
         seen_cr,
@@ -12,7 +12,7 @@ pub const FieldsEndFinder = struct {
     state: State = .initial,
     total_bytes_read: usize = 0,
 
-    pub fn parse(self: *FieldsEndFinder, buf: []const u8) !bool {
+    pub fn scan(self: *FieldsScanner, buf: []const u8) !bool {
         var pos: usize = 0;
         while (pos < buf.len) {
             switch (self.state) {
@@ -55,7 +55,7 @@ pub const FieldsEndFinder = struct {
         return false;
     }
 
-    pub fn totalBytesRead(self: *const FieldsEndFinder) usize {
+    pub fn totalBytesRead(self: *const FieldsScanner) usize {
         return self.total_bytes_read;
     }
 };

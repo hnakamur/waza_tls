@@ -16,7 +16,7 @@ pub const RecvRequest = struct {
 
     /// `buf` must be allocated with `allocator`.
     /// It will be freed in `deinit`.
-    pub fn init(allocator: *mem.Allocator, buf: []const u8, result: *const RequestLineSplitter.Result, headers_len: usize) !RecvRequest {
+    pub fn init(allocator: *mem.Allocator, buf: []const u8, result: *const RequestLineScanner.Result, headers_len: usize) !RecvRequest {
         const method = Method.fromText(buf[0..result.method_len]) catch unreachable;
         const uri = buf[result.uri_start_pos .. result.uri_start_pos + result.uri_len];
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
@@ -39,7 +39,7 @@ pub const RecvRequest = struct {
 };
 
 
-const RequestLineSplitter = struct {
+const RequestLineScanner = struct {
     const State = enum {
         on_method,
         post_method,
@@ -66,7 +66,7 @@ const RequestLineSplitter = struct {
     state: State = .on_method,
     result: Result = undefined,
 
-    pub fn parse(self: *RequestLineSplitter, chunk: []const u8) !bool {
+    pub fn scan(self: *RequestLineScanner, chunk: []const u8) !bool {
         var pos: usize = 0;
         while (pos < chunk.len) {
             const c = chunk[pos];
@@ -136,7 +136,7 @@ const RequestLineSplitter = struct {
 };
 
 const testing = std.testing;
-const FieldsEndFinder = @import("fields_end_finder.zig").FieldsEndFinder;
+const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 
 test "RecvRequest - GET method" {
     const method = "GET";
@@ -147,10 +147,10 @@ test "RecvRequest - GET method" {
         "\r\n";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n" ++ headers;
 
-    var splitter = RequestLineSplitter{};
-    try testing.expect(try splitter.parse(input));
-    var finder = FieldsEndFinder{};
-    try testing.expect(try finder.parse(input[splitter.result.total_bytes_read..]));
+    var splitter = RequestLineScanner{};
+    try testing.expect(try splitter.scan(input));
+    var finder = FieldsScanner{};
+    try testing.expect(try finder.scan(input[splitter.result.total_bytes_read..]));
     try testing.expectEqual(input.len, splitter.result.total_bytes_read + finder.total_bytes_read);
 
     const allocator = testing.allocator;
@@ -173,10 +173,10 @@ test "RecvRequest - custom method" {
         "\r\n";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n" ++ headers;
 
-    var splitter = RequestLineSplitter{};
-    try testing.expect(try splitter.parse(input));
-    var finder = FieldsEndFinder{};
-    try testing.expect(try finder.parse(input[splitter.result.total_bytes_read..]));
+    var splitter = RequestLineScanner{};
+    try testing.expect(try splitter.scan(input));
+    var finder = FieldsScanner{};
+    try testing.expect(try finder.scan(input[splitter.result.total_bytes_read..]));
     try testing.expectEqual(input.len, splitter.result.total_bytes_read + finder.total_bytes_read);
 
     const allocator = testing.allocator;
@@ -193,14 +193,14 @@ test "RecvRequest - custom method" {
     try testing.expectEqualStrings(headers, req.headers);
 }
 
-test "RequestLineSplitter - whole in one buf" {
+test "RequestLineScanner - whole in one buf" {
     const method = "GET";
     const uri = "http://www.example.org/where?q=now";
     const version = "HTTP/1.1";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n";
 
-    var splitter = RequestLineSplitter{};
-    try testing.expect(try splitter.parse(input));
+    var splitter = RequestLineScanner{};
+    try testing.expect(try splitter.scan(input));
     const result = splitter.result;
     try testing.expectEqual(method.len, result.method_len);
     try testing.expectEqual(method.len + 1, result.uri_start_pos);
@@ -210,18 +210,18 @@ test "RequestLineSplitter - whole in one buf" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "RequestLineSplitter - one byte at time" {
+test "RequestLineScanner - one byte at time" {
     const method = "GET";
     const uri = "http://www.example.org/where?q=now";
     const version = "HTTP/1.1";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n";
 
-    var splitter = RequestLineSplitter{};
+    var splitter = RequestLineScanner{};
     var i: usize = 0;
     while (i < input.len - 2) : (i += 1) {
-        try testing.expect(!try splitter.parse(input[i .. i + 1]));
+        try testing.expect(!try splitter.scan(input[i .. i + 1]));
     }
-    try testing.expect(try splitter.parse(input[i..]));
+    try testing.expect(try splitter.scan(input[i..]));
     const result = splitter.result;
     try testing.expectEqual(method.len, result.method_len);
     try testing.expectEqual(method.len + 1, result.uri_start_pos);
@@ -231,7 +231,7 @@ test "RequestLineSplitter - one byte at time" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "RequestLineSplitter - variable length chunks" {
+test "RequestLineScanner - variable length chunks" {
     const method = "GET";
     const uri = "http://www.example.org/where?q=now";
     const version = "HTTP/1.1";
@@ -243,11 +243,11 @@ test "RequestLineSplitter - variable length chunks" {
         method.len + " ".len + uri.len + " ".len + version.len - 1,
         input.len,
     };
-    var splitter = RequestLineSplitter{};
+    var splitter = RequestLineScanner{};
 
     var start: usize = 0;
     for (ends) |end| {
-        try testing.expect((try splitter.parse(input[start..end])) == (end == input.len));
+        try testing.expect((try splitter.scan(input[start..end])) == (end == input.len));
         start = end;
     }
     const result = splitter.result;
@@ -259,62 +259,62 @@ test "RequestLineSplitter - variable length chunks" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "RequestLineSplitter - method too long" {
+test "RequestLineScanner - method too long" {
     const method = "PURGE_ALL";
     const uri = "http://www.example.org/where?q=now";
     const version = "HTTP/1.1";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n";
 
     const method_max_len_test = 7;
-    var splitter = RequestLineSplitter{ .method_max_len = method_max_len_test };
-    try testing.expectError(error.BadRequest, splitter.parse(input));
+    var splitter = RequestLineScanner{ .method_max_len = method_max_len_test };
+    try testing.expectError(error.BadRequest, splitter.scan(input));
     try testing.expectEqual(@as(usize, method_max_len_test + 1), splitter.result.total_bytes_read);
 }
 
-test "RequestLineSplitter - URI too long" {
+test "RequestLineScanner - URI too long" {
     const method = "GET";
     const uri = "http://www.example.org/where?q=now";
     const version = "HTTP/1.1";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n";
 
     const uri_max_len_test = 12;
-    var splitter = RequestLineSplitter{ .uri_max_len = uri_max_len_test };
-    try testing.expectError(error.UriTooLong, splitter.parse(input));
+    var splitter = RequestLineScanner{ .uri_max_len = uri_max_len_test };
+    try testing.expectError(error.UriTooLong, splitter.scan(input));
     const expected_total_len = method.len + " ".len + uri_max_len_test + 1;
     try testing.expectEqual(expected_total_len, splitter.result.total_bytes_read);
 }
 
-test "RequestLineSplitter - version too long" {
+test "RequestLineScanner - version too long" {
     const method = "GET";
     const uri = "http://www.example.org/where?q=now";
     const version = "HTTP/3.14";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n";
 
-    var splitter = RequestLineSplitter{};
-    try testing.expectError(error.BadRequest, splitter.parse(input));
+    var splitter = RequestLineScanner{};
+    try testing.expectError(error.BadRequest, splitter.scan(input));
     const expected_total_len = method.len + " ".len + uri.len + " ".len + "HTTP/1.1".len + 1;
     try testing.expectEqual(expected_total_len, splitter.result.total_bytes_read);
 }
 
-test "FieldsEndFinder - whole in one buf" {
+test "FieldsScanner - whole in one buf" {
     const input = "Host: www.example.com\r\n" ++
         "Accept: */*\r\n" ++
         "\r\n";
-    var finder = FieldsEndFinder{};
-    try testing.expect(try finder.parse(input));
+    var finder = FieldsScanner{};
+    try testing.expect(try finder.scan(input));
     try testing.expectEqual(input.len, finder.totalBytesRead());
 }
 
-test "FieldsEndFinder - splitted case" {
+test "FieldsScanner - splitted case" {
     const input = "Host: www.example.com\r\n" ++
         "Accept: */*\r\n" ++
         "\r\n";
     var pos: usize = 0;
     while (pos < input.len) : (pos += 1) {
-        var finder = FieldsEndFinder{};
-        try testing.expect(!try finder.parse(input[0..pos]));
+        var finder = FieldsScanner{};
+        try testing.expect(!try finder.scan(input[0..pos]));
         try testing.expectEqual(pos, finder.totalBytesRead());
-        try testing.expect(try finder.parse(input[pos..]));
+        try testing.expect(try finder.scan(input[pos..]));
         try testing.expectEqual(input.len, finder.totalBytesRead());
     }
 }

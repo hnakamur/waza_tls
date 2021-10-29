@@ -15,7 +15,7 @@ pub const RecvResponse = struct {
 
     /// `buf` must be allocated with `allocator`.
     /// It will be freed in `deinit`.
-    pub fn init(allocator: *mem.Allocator, buf: []const u8, result: *const StatusLineSplitter.Result, headers_len: usize) !RecvResponse {
+    pub fn init(allocator: *mem.Allocator, buf: []const u8, result: *const StatusLineScanner.Result, headers_len: usize) !RecvResponse {
         const ver_buf = buf[0..result.version_len];
         const version = Version.fromText(ver_buf) catch |_| return error.BadGateway;
         const code_buf = buf[result.status_code_start_pos .. result.status_code_start_pos + result.status_code_len];
@@ -38,7 +38,7 @@ pub const RecvResponse = struct {
     }
 };
 
-const StatusLineSplitter = struct {
+const StatusLineScanner = struct {
     const State = enum {
         on_version,
         post_version,
@@ -65,7 +65,7 @@ const StatusLineSplitter = struct {
     state: State = .on_version,
     result: Result = undefined,
 
-    pub fn parse(self: *StatusLineSplitter, chunk: []const u8) !bool {
+    pub fn scan(self: *StatusLineScanner, chunk: []const u8) !bool {
         var pos: usize = 0;
         while (pos < chunk.len) {
             const c = chunk[pos];
@@ -140,7 +140,7 @@ const StatusLineSplitter = struct {
 };
 
 const testing = std.testing;
-const FieldsEndFinder = @import("fields_end_finder.zig").FieldsEndFinder;
+const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 
 test "RecvResponse - 200 OK" {
     const version = "HTTP/1.1";
@@ -151,10 +151,10 @@ test "RecvResponse - 200 OK" {
         "\r\n";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n" ++ headers;
 
-    var splitter = StatusLineSplitter{};
-    try testing.expect(try splitter.parse(input));
-    var finder = FieldsEndFinder{};
-    try testing.expect(try finder.parse(input[splitter.result.total_bytes_read..]));
+    var splitter = StatusLineScanner{};
+    try testing.expect(try splitter.scan(input));
+    var finder = FieldsScanner{};
+    try testing.expect(try finder.scan(input[splitter.result.total_bytes_read..]));
     try testing.expectEqual(input.len, splitter.result.total_bytes_read + finder.total_bytes_read);
 
     const allocator = testing.allocator;
@@ -168,14 +168,14 @@ test "RecvResponse - 200 OK" {
     try testing.expectEqualStrings(headers, resp.headers);
 }
 
-test "StatusLineSplitter - whole in one buf with reason phrase" {
+test "StatusLineScanner - whole in one buf with reason phrase" {
     const version = "HTTP/1.1";
     const status_code = "200";
     const reason_phrase = "OK";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expect(try splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expect(try splitter.scan(input));
     const result = splitter.result;
     try testing.expectEqual(version.len, result.version_len);
     try testing.expectEqual(version.len + 1, result.status_code_start_pos);
@@ -185,14 +185,14 @@ test "StatusLineSplitter - whole in one buf with reason phrase" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "StatusLineSplitter - whole in one buf without reason phrase" {
+test "StatusLineScanner - whole in one buf without reason phrase" {
     const version = "HTTP/1.1";
     const status_code = "200";
     const reason_phrase = "";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expect(try splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expect(try splitter.scan(input));
     const result = splitter.result;
     try testing.expectEqual(version.len, result.version_len);
     try testing.expectEqual(version.len + 1, result.status_code_start_pos);
@@ -202,18 +202,18 @@ test "StatusLineSplitter - whole in one buf without reason phrase" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "StatusLineSplitter - one byte at time" {
+test "StatusLineScanner - one byte at time" {
     const version = "HTTP/1.1";
     const status_code = "200";
     const reason_phrase = "OK";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
+    var splitter = StatusLineScanner{};
     var i: usize = 0;
     while (i < input.len - 2) : (i += 1) {
-        try testing.expect(!try splitter.parse(input[i .. i + 1]));
+        try testing.expect(!try splitter.scan(input[i .. i + 1]));
     }
-    try testing.expect(try splitter.parse(input[i..]));
+    try testing.expect(try splitter.scan(input[i..]));
     const result = splitter.result;
     try testing.expectEqual(version.len, result.version_len);
     try testing.expectEqual(version.len + 1, result.status_code_start_pos);
@@ -223,7 +223,7 @@ test "StatusLineSplitter - one byte at time" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "StatusLineSplitter - variable length chunks" {
+test "StatusLineScanner - variable length chunks" {
     const version = "HTTP/1.1";
     const status_code = "200";
     const reason_phrase = "OK";
@@ -235,11 +235,11 @@ test "StatusLineSplitter - variable length chunks" {
         version.len + " ".len + status_code.len + " ".len + reason_phrase.len - 1,
         input.len,
     };
-    var splitter = StatusLineSplitter{};
+    var splitter = StatusLineScanner{};
 
     var start: usize = 0;
     for (ends) |end| {
-        try testing.expect((try splitter.parse(input[start..end])) == (end == input.len));
+        try testing.expect((try splitter.scan(input[start..end])) == (end == input.len));
         start = end;
     }
     const result = splitter.result;
@@ -251,44 +251,44 @@ test "StatusLineSplitter - variable length chunks" {
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "StatusLineSplitter - too long version" {
+test "StatusLineScanner - too long version" {
     const version = "HTTP/3.14";
     const status_code = "200";
     const reason_phrase = "";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expectError(error.BadGateway, splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, splitter.scan(input));
 }
 
-test "StatusLineSplitter - too short status code" {
+test "StatusLineScanner - too short status code" {
     const version = "HTTP/1.1";
     const status_code = "20";
     const reason_phrase = "";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expectError(error.BadGateway, splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, splitter.scan(input));
 }
 
-test "StatusLineSplitter - too long status code" {
+test "StatusLineScanner - too long status code" {
     const version = "HTTP/1.1";
     const status_code = "2000";
     const reason_phrase = "";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expectError(error.BadGateway, splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, splitter.scan(input));
 }
 
-test "StatusLineSplitter - invalid status code character must be handled later" {
+test "StatusLineScanner - invalid status code character must be handled later" {
     const version = "HTTP/1.1";
     const status_code = "20A";
     const reason_phrase = "";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expect(try splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expect(try splitter.scan(input));
     const result = splitter.result;
     try testing.expectEqual(version.len, result.version_len);
     try testing.expectEqual(version.len + 1, result.status_code_start_pos);
@@ -298,12 +298,12 @@ test "StatusLineSplitter - invalid status code character must be handled later" 
     try testing.expectEqual(input.len, result.total_bytes_read);
 }
 
-test "StatusLineSplitter - too long reason phrase" {
+test "StatusLineScanner - too long reason phrase" {
     const version = "HTTP/1.1";
     const status_code = "2000";
     const reason_phrase = "a" ** (config.reason_phrase_max_len + 1);
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
-    var splitter = StatusLineSplitter{};
-    try testing.expectError(error.BadGateway, splitter.parse(input));
+    var splitter = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, splitter.scan(input));
 }
