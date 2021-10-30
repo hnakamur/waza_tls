@@ -7,6 +7,10 @@ const config = @import("config.zig");
 
 /// A receiving response.
 pub const RecvResponse = struct {
+    const Error = error{
+        BadGateway,
+    };
+
     buf: []const u8,
     version: Version,
     status_code: StatusCode,
@@ -16,7 +20,7 @@ pub const RecvResponse = struct {
 
     /// `buf` must be allocated with `allocator`.
     /// It will be freed in `deinit`.
-    pub fn init(allocator: *mem.Allocator, buf: []const u8, scanner: *const RecvResponseScanner) !RecvResponse {
+    pub fn init(allocator: *mem.Allocator, buf: []const u8, scanner: *const RecvResponseScanner) Error!RecvResponse {
         std.debug.assert(scanner.headers.state == .done);
         const result = scanner.status_line.result;
         const headers_len = scanner.headers.total_bytes_read;
@@ -44,23 +48,31 @@ pub const RecvResponse = struct {
 };
 
 pub const RecvResponseScanner = struct {
+    const Error = error{
+        BadGateway,
+    };
+
     status_line: StatusLineScanner = StatusLineScanner{},
     headers: FieldsScanner = FieldsScanner{},
 
-    pub fn scan(self: *RecvResponseScanner, chunk: []const u8) !bool {
+    pub fn scan(self: *RecvResponseScanner, chunk: []const u8) Error!bool {
         if (self.status_line.state != .done) {
             const old = self.status_line.result.total_bytes_read;
             if (!try self.status_line.scan(chunk)) {
                 return false;
             }
             const read = self.status_line.result.total_bytes_read - old;
-            return self.headers.scan(chunk[read..]);
+            return self.headers.scan(chunk[read..]) catch |_| error.BadGateway;
         }
-        return self.headers.scan(chunk);
+        return self.headers.scan(chunk) catch |_| error.BadGateway;
     }
 };
 
 const StatusLineScanner = struct {
+    const Error = error{
+        BadGateway,
+    };
+
     const State = enum {
         on_version,
         post_version,
@@ -87,7 +99,7 @@ const StatusLineScanner = struct {
     state: State = .on_version,
     result: Result = Result{},
 
-    pub fn scan(self: *StatusLineScanner, chunk: []const u8) !bool {
+    pub fn scan(self: *StatusLineScanner, chunk: []const u8) Error!bool {
         var pos: usize = 0;
         while (pos < chunk.len) {
             const c = chunk[pos];
@@ -154,7 +166,7 @@ const StatusLineScanner = struct {
                     }
                     return error.BadGateway;
                 },
-                .done => return error.InvalidState,
+                .done => return true,
             }
         }
         return false;

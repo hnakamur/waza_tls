@@ -1,6 +1,10 @@
 const std = @import("std");
 
 pub const FieldsScanner = struct {
+    const Error = error{
+        InvalidInput,
+    };
+
     const State = enum {
         initial,
         seen_cr,
@@ -12,7 +16,7 @@ pub const FieldsScanner = struct {
     state: State = .initial,
     total_bytes_read: usize = 0,
 
-    pub fn scan(self: *FieldsScanner, buf: []const u8) !bool {
+    pub fn scan(self: *FieldsScanner, buf: []const u8) Error!bool {
         var pos: usize = 0;
         while (pos < buf.len) {
             switch (self.state) {
@@ -49,7 +53,7 @@ pub const FieldsScanner = struct {
                         return error.InvalidInput;
                     }
                 },
-                .done => return error.InvalidState,
+                .done => return true,
             }
         }
         return false;

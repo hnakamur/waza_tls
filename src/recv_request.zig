@@ -8,6 +8,11 @@ const config = @import("config.zig");
 
 /// A receiving request.
 pub const RecvRequest = struct {
+    const Error = error{
+        BadRequest,
+        UriTooLong,
+    };
+
     buf: []const u8,
     method: Method,
     uri: []const u8,
@@ -17,7 +22,7 @@ pub const RecvRequest = struct {
 
     /// `buf` must be allocated with `allocator`.
     /// It will be freed in `deinit`.
-    pub fn init(allocator: *mem.Allocator, buf: []const u8, scanner: *const RecvRequestScanner) !RecvRequest {
+    pub fn init(allocator: *mem.Allocator, buf: []const u8, scanner: *const RecvRequestScanner) Error!RecvRequest {
         std.debug.assert(scanner.headers.state == .done);
         const result = scanner.request_line.result;
         const headers_len = scanner.headers.total_bytes_read;
@@ -44,19 +49,24 @@ pub const RecvRequest = struct {
 };
 
 pub const RecvRequestScanner = struct {
+    const Error = error{
+        BadRequest,
+        UriTooLong,
+    };
+
     request_line: RequestLineScanner = RequestLineScanner{},
     headers: FieldsScanner = FieldsScanner{},
 
-    pub fn scan(self: *RecvRequestScanner, chunk: []const u8) !bool {
+    pub fn scan(self: *RecvRequestScanner, chunk: []const u8) Error!bool {
         if (self.request_line.state != .done) {
             const old = self.request_line.result.total_bytes_read;
             if (!try self.request_line.scan(chunk)) {
                 return false;
             }
             const read = self.request_line.result.total_bytes_read - old;
-            return self.headers.scan(chunk[read..]);
+            return self.headers.scan(chunk[read..]) catch |_| error.BadRequest;
         }
-        return self.headers.scan(chunk);
+        return self.headers.scan(chunk) catch |_| error.BadRequest;
     }
 
     pub fn total_bytes_read(self: *const RecvRequestScanner) usize {
@@ -66,6 +76,11 @@ pub const RecvRequestScanner = struct {
 };
 
 const RequestLineScanner = struct {
+    const Error = error{
+        BadRequest,
+        UriTooLong,
+    };
+
     const State = enum {
         on_method,
         post_method,
@@ -92,7 +107,7 @@ const RequestLineScanner = struct {
     state: State = .on_method,
     result: Result = Result{},
 
-    pub fn scan(self: *RequestLineScanner, chunk: []const u8) !bool {
+    pub fn scan(self: *RequestLineScanner, chunk: []const u8) Error!bool {
         var pos: usize = 0;
         while (pos < chunk.len) {
             const c = chunk[pos];
@@ -154,7 +169,7 @@ const RequestLineScanner = struct {
                     }
                     return error.BadRequest;
                 },
-                .done => return error.InvalidState,
+                .done => return true,
             }
         }
         return false;
