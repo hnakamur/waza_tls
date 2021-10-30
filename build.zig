@@ -22,6 +22,7 @@ pub fn build(b: *std.build.Builder) void {
         "http_server",
     }) |example_name| {
         const example = b.addExecutable(example_name, "examples/" ++ example_name ++ ".zig");
+        example.addPackagePath("http", "src/main.zig");
         example.setBuildMode(mode);
         example.setTarget(target);
         pkgs.addAllTo(example);

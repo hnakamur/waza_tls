@@ -6,7 +6,7 @@ pub const FieldsScanner = struct {
         seen_cr,
         seen_cr_lf,
         seen_cr_lf_cr,
-        seen_cr_lf_cr_lf,
+        done,
     };
 
     state: State = .initial,
@@ -43,13 +43,13 @@ pub const FieldsScanner = struct {
                 .seen_cr_lf_cr => {
                     self.total_bytes_read += 1;
                     if (buf[pos] == '\n') {
-                        self.state = .seen_cr_lf_cr_lf;
+                        self.state = .done;
                         return true;
                     } else {
                         return error.InvalidInput;
                     }
                 },
-                .seen_cr_lf_cr_lf => return error.InvalidState,
+                .done => return error.InvalidState,
             }
         }
         return false;

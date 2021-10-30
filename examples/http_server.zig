@@ -13,17 +13,19 @@ const ClientHandler = struct {
     send_buf: []u8,
     allocator: *mem.Allocator,
     completion: IO.Completion = undefined,
-    request: *http.RcvRequest = null,
-    response: *http.SendResponse = null,
-    keep_alive: bool = true,
+    request_scanner: *http.RecvRequestScanner,
+    request: ?*http.RecvRequest = null,
 
     fn init(allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
+        const req_scanner = try allocator.create(http.RecvRequestScanner);
+        req_scanner.* = http.RecvRequestScanner{};
         const recv_buf = try allocator.alloc(u8, 8192);
         const send_buf = try allocator.alloc(u8, 8192);
         var self = try allocator.create(ClientHandler);
         self.* = ClientHandler{
             .io = io,
             .sock = sock,
+            .request_scanner = req_scanner,
             .recv_buf = recv_buf,
             .send_buf = send_buf,
             .allocator = allocator,
@@ -32,6 +34,7 @@ const ClientHandler = struct {
     }
 
     fn deinit(self: *ClientHandler) !void {
+        self.allocator.destroy(self.request_scanner);
         self.allocator.free(self.send_buf);
         self.allocator.free(self.recv_buf);
         self.allocator.destroy(self);
@@ -66,83 +69,55 @@ const ClientHandler = struct {
             return;
         }
 
-        if (http.Request.parseBuf(self.recv_buf[0..received])) |req| {
-            self.request = req;
-            self.response = http.Response{
-                .version = .Http11,
-                .status_code = 200,
-                .status_text = "OK",
-                .body = "Hello from my HTTP server\n",
-            };
-            switch (self.request.version) {
-                // TODO: Handle connection request header.
-                .Http09, .Http10 => {
-                    self.response.version = self.request.version;
-                    self.keep_alive = false;
-                },
-                else => {},
+        const old = self.request_scanner.total_bytes_read();
+        if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
+            if (done) {
+                const num_read = self.request_scanner.total_bytes_read();
+                self.request = self.allocator.create(http.RecvRequest) catch unreachable;
+                self.request.?.* = http.RecvRequest.init(self.allocator, self.recv_buf[0..num_read], self.request_scanner) catch unreachable;
+                // TODO read request body chunk from self.recv_buf[num_read..]
+
+                var fbs = std.io.fixedBufferStream(self.send_buf);
+                var w = fbs.writer();
+                std.fmt.format(w, "{s} {d} {s}\r\n", .{
+                    http.Version.http1_1.toText(),
+                    http.StatusCode.ok.code(),
+                    http.StatusCode.ok.toText(),
+                }) catch unreachable;
+                var now = datetime.datetime.Datetime.now();
+                std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
+                    now.date.weekdayName()[0..3],
+                    now.date.day,
+                    now.date.monthName()[0..3],
+                    now.date.year,
+                    now.time.hour,
+                    now.time.minute,
+                    now.time.second,
+                    now.zone.name,
+                }) catch unreachable;
+                const body = "Hello http server\n";
+                std.fmt.format(w, "Content-Length: {d}\r\n", .{body.len}) catch unreachable;
+                std.fmt.format(w, "\r\n", .{}) catch unreachable;
+                if (body.len > 0) {
+                    std.fmt.format(w, "{s}", .{body}) catch unreachable;
+                }
+                self.io.send(
+                    *ClientHandler,
+                    self,
+                    send_callback,
+                    completion,
+                    self.sock,
+                    fbs.getWritten(),
+                    if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+                );
+            } else {
+                // TODO: implement
+                unreachable;
             }
         } else |err| {
-            self.keep_alive = false;
-            switch (err) {
-                http.RequestLineParseError.UriTooLong => {
-                    self.response = http.Response{
-                        .version = .Http11,
-                        .status_code = 414,
-                        .status_text = "URI Too Long",
-                        .body = "",
-                    };
-                },
-                http.RequestLineParseError.BadRequest => {
-                    self.response = http.Response{
-                        .version = .Http11,
-                        .status_code = 400,
-                        .status_text = "Bad Request",
-                        .body = "",
-                    };
-                },
-            }
+            // TODO: implement
+            unreachable;
         }
-        var fbs = std.io.fixedBufferStream(self.send_buf);
-        var w = fbs.writer();
-        std.fmt.format(w, "{s} {d} {s}\r\n", .{
-            self.response.version.to_bytes(),
-            self.response.status_code,
-            self.response.status_text,
-        }) catch unreachable;
-        var now = datetime.datetime.Datetime.now();
-        std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-            now.date.weekdayName()[0..3],
-            now.date.day,
-            now.date.monthName()[0..3],
-            now.date.year,
-            now.time.hour,
-            now.time.minute,
-            now.time.second,
-            now.zone.name,
-        }) catch unreachable;
-
-        if (self.keep_alive) {
-            if (self.request.version == .Http10) {
-                std.fmt.format(w, "Connection: keep-alive\r\n", .{}) catch unreachable;
-            }
-        } else {
-            std.fmt.format(w, "Connection: close\r\n", .{}) catch unreachable;
-        }
-        std.fmt.format(w, "Content-Length: {d}\r\n", .{self.response.body.len}) catch unreachable;
-        std.fmt.format(w, "\r\n", .{}) catch unreachable;
-        if (self.response.body.len > 0) {
-            std.fmt.format(w, "{s}", .{self.response.body}) catch unreachable;
-        }
-        self.io.send(
-            *ClientHandler,
-            self,
-            send_callback,
-            completion,
-            self.sock,
-            fbs.getWritten(),
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-        );
     }
 
     fn send_callback(
@@ -151,25 +126,16 @@ const ClientHandler = struct {
         result: IO.SendError!usize,
     ) void {
         _ = result catch @panic("send error");
-        if (self.keep_alive) {
-            self.io.recv(
-                *ClientHandler,
-                self,
-                recv_callback,
-                completion,
-                self.sock,
-                self.recv_buf,
-                if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-            );
-        } else {
-            self.io.close(
-                *ClientHandler,
-                self,
-                close_callback,
-                completion,
-                self.sock,
-            );
-        }
+        self.request_scanner.* = http.RecvRequestScanner{};
+        self.io.recv(
+            *ClientHandler,
+            self,
+            recv_callback,
+            completion,
+            self.sock,
+            self.recv_buf,
+            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+        );
     }
 
     fn close_callback(
