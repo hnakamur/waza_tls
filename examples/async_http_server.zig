@@ -17,6 +17,7 @@ const ClientHandler = struct {
     send_result: IO.SendError!usize = undefined,
     recv_result: IO.RecvError!usize = undefined,
     close_result: IO.CloseError!void = undefined,
+    timeout_result: IO.TimeoutError!void = undefined,
     request_scanner: *http.RecvRequestScanner,
     request: ?*http.RecvRequest = null,
 
@@ -51,14 +52,16 @@ const ClientHandler = struct {
         errdefer self.close(self.sock) catch unreachable; // TODO: log error
 
         while (true) {
-            const received = try self.recv(self.sock, self.recv_buf);
+            const old = self.request_scanner.total_bytes_read();
+            const received = try self.recv(self.sock, self.recv_buf[old..]);
             if (received == 0) {
                 return;
             }
 
-            const old = self.request_scanner.total_bytes_read();
             if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
                 if (done) {
+                    _ = try self.timeout(std.time.ns_per_s);
+
                     const num_read = self.request_scanner.total_bytes_read();
                     self.request = try self.allocator.create(http.RecvRequest);
                     self.request.?.* = try http.RecvRequest.init(self.allocator, self.recv_buf[0..num_read], self.request_scanner);
@@ -168,6 +171,28 @@ const ClientHandler = struct {
         result: IO.CloseError!void,
     ) void {
         self.close_result = result;
+        resume self.frame;
+    }
+
+    fn timeout(self: *ClientHandler, nanoseconds: u63) IO.TimeoutError!void {
+        self.io.timeout(
+            *ClientHandler,
+            self,
+            timeout_callback,
+            &self.completion,
+            nanoseconds,
+        );
+        suspend {
+            self.frame = @frame();
+        }
+        return self.timeout_result;
+    }
+    fn timeout_callback(
+        self: *ClientHandler,
+        completion: *IO.Completion,
+        result: IO.TimeoutError!void,
+    ) void {
+        self.timeout_result = result;
         resume self.frame;
     }
 };
