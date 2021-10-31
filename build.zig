@@ -19,6 +19,8 @@ pub fn build(b: *std.build.Builder) void {
 
     const example_step = b.step("examples", "Build examples");
     inline for (.{
+        "async_http_client",
+        "async_http_server",
         "http_client",
         "http_server",
     }) |example_name| {
