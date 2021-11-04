@@ -4,7 +4,7 @@ pub const StatusCode = enum(u10) {
     // based on 2021-10-01 version of
     // https://www.iana.org/assignments/http-status-codes/http-status-codes.txt
 
-    continue_ = 100, // trailing underscore needed to avoid conflict with zig reserved word.
+    @"continue" = 100,
     switching_protocols = 101,
     processing = 102,
     early_hints = 103,
@@ -105,7 +105,7 @@ pub const StatusCode = enum(u10) {
 
     pub fn toText(self: StatusCode) []const u8 {
         return switch (self) {
-            .continue_ => "Continue",
+            .@"continue" => "Continue",
             .switching_protocols => "Switching Protocols",
             .processing => "Processing",
             .early_hints => "Early Hints",
@@ -199,10 +199,10 @@ pub const StatusCode = enum(u10) {
 const testing = std.testing;
 
 test "StatusCode" {
-    try testing.expectEqual(@as(u10, 100), StatusCode.continue_.code());
+    try testing.expectEqual(@as(u10, 100), StatusCode.@"continue".code());
     try testing.expectEqual(@as(u10, 499), @intToEnum(StatusCode, 499).code());
 
-    try testing.expectEqual(StatusCode.continue_, try StatusCode.fromText("100"));
+    try testing.expectEqual(StatusCode.@"continue", try StatusCode.fromText("100"));
     try testing.expectEqual(StatusCode.network_authentication_required, try StatusCode.fromText("511"));
     try testing.expectError(error.InvalidInput, StatusCode.fromText("5110"));
     try testing.expectError(error.InvalidCharacter, StatusCode.fromText("51A"));
