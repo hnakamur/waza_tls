@@ -298,9 +298,21 @@ const Client = struct {
     }
 };
 
+const port_max = 65535;
+
 pub fn main() anyerror!void {
     const allocator = std.heap.page_allocator;
-    const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
+
+    var port: u16 = 3131;
+    if (os.getenv("PORT")) |port_str| {
+        if (std.fmt.parseInt(u16, port_str, 10)) |v| {
+            if (v <= port_max) port = v;
+        } else |err| {
+            std.debug.print("bad port value={s}, err={s}\n", .{port_str, @errorName(err)});
+        }
+    }
+    std.debug.print("port={d}\n", .{port});
+    const address = try std.net.Address.parseIp4("127.0.0.1", port);
     var client = try Client.init(allocator, address);
     defer client.deinit();
     try client.run();
