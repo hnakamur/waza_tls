@@ -12,6 +12,8 @@ const Server = struct {
     server: os.socket_t,
     allocator: *mem.Allocator,
     client_handlers: std.ArrayList(?*ClientHandler),
+    shutdown_requested: bool = false,
+    done: bool = false,
 
     fn init(allocator: *mem.Allocator, address: std.net.Address) !Server {
         const kernel_backlog = 513;
@@ -50,19 +52,22 @@ const Server = struct {
 
     pub fn run(self: *Server) !void {
         var server_completion: IO.Completion = undefined;
-        self.io.accept(*Server, self, accept_callback, &server_completion, self.server, 0);
-        while (true) try self.io.tick();
+        self.io.accept(*Server, self, acceptCallback, &server_completion, self.server, 0);
+        while (!self.done) {
+            try self.io.run_for_ns(time.ns_per_ms);
+        }
     }
 
-    fn accept_callback(
+    fn acceptCallback(
         self: *Server,
         completion: *IO.Completion,
         result: IO.AcceptError!os.socket_t,
     ) void {
+        std.debug.print("acceptCallback\n", .{});
         const accepted_sock = result catch @panic("accept error");
         var handler = self.createClientHandler(accepted_sock) catch @panic("handler create error");
         handler.start() catch @panic("handler");
-        self.io.accept(*Server, self, accept_callback, completion, self.server, 0);
+        self.io.accept(*Server, self, acceptCallback, completion, self.server, 0);
     }
 
     fn createClientHandler(self: *Server, accepted_sock: os.socket_t) !*ClientHandler {
@@ -79,7 +84,10 @@ const Server = struct {
 
     fn findEmptyClientHandlerId(self: *Server) ?usize {
         for (self.client_handlers.items) |h, i| {
-            if (h) |_| {} else {
+            std.debug.print("findEmptyClientHandlerId, i={d}\n", .{i});
+            if (h) |_| {
+                std.debug.print("handler is running, i={d}\n", .{i});
+            } else {
                 return i;
             }
         }
@@ -88,6 +96,37 @@ const Server = struct {
 
     fn removeClientHandlerId(self: *Server, handler_id: usize) void {
         self.client_handlers.items[handler_id] = null;
+        if (self.shutdown_requested) {
+            self.setDoneIfNoClient();
+        }
+    }
+
+    pub fn requestShutdown(self: *Server) void {
+        self.shutdown_requested = true;
+        std.debug.print("set Server.shutdown_requested to true\n", .{});
+        for (self.client_handlers.items) |handler, i| {
+            if (handler) |h| {
+                if (!h.processing) {
+                    h.close();
+                    std.debug.print("closed client_handler id={d}\n", .{i});
+                }
+            }
+        }
+        self.setDoneIfNoClient();
+    }
+
+    fn setDoneIfNoClient(self: *Server) void {
+        var running = false;
+        for (self.client_handlers.items) |h, i| {
+            if (h) |_| {
+                running = true;
+                break;
+            }
+        }
+
+        if (!running) {
+            self.done = true;
+        }
     }
 };
 
@@ -105,6 +144,7 @@ const ClientHandler = struct {
     send_timeout_ns: u63 = 5 * time.ns_per_s,
     request_scanner: *http.RecvRequestScanner,
     request: ?*http.RecvRequest = null,
+    processing: bool = false,
 
     fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
@@ -146,6 +186,7 @@ const ClientHandler = struct {
     }
 
     fn recvWithTimeout(self: *ClientHandler) void {
+        std.debug.print("recvWithTimeout handler_id={d}\n", .{self.handler_id});
         self.io.recv(
             *ClientHandler,
             self,
@@ -231,6 +272,7 @@ const ClientHandler = struct {
     }
 
     fn handleStreamingRequest(self: *ClientHandler, received: usize) void {
+        self.processing = true;
         const old = self.request_scanner.total_bytes_read();
         if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
             if (done) {
@@ -269,6 +311,7 @@ const ClientHandler = struct {
             now.time.second,
             now.zone.name,
         }) catch unreachable;
+        // std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
         const body = "Hello http server\n";
         std.fmt.format(w, "Content-Length: {d}\r\n", .{body.len}) catch unreachable;
         std.fmt.format(w, "\r\n", .{}) catch unreachable;
@@ -348,7 +391,15 @@ const ClientHandler = struct {
     ) void {
         if (result) |_| {
             std.debug.print("sendTimeoutCancelCallback ok\n", .{});
-            self.recvWithTimeout();
+
+            // self.close();
+
+            if (self.server.shutdown_requested) {
+                self.close();
+            } else {
+                self.processing = false;
+                self.recvWithTimeout();
+            }
         } else |err| {
             std.debug.print("sendTimeoutCancelCallback err={s}\n", .{@errorName(err)});
         }
@@ -366,6 +417,13 @@ fn getEnvUint(comptime T: type, name: []const u8, default: T, max: T) T {
     return default;
 }
 
+var global_server: Server = undefined;
+
+fn sigchld(signo: i32) callconv(.C) void {
+    std.debug.print("got signal, signo={d}\n", .{signo});
+    global_server.requestShutdown();
+}
+
 pub fn main() anyerror!void {
     const allocator = std.heap.page_allocator;
 
@@ -373,7 +431,12 @@ pub fn main() anyerror!void {
     const port_default = 3131;
     const port = getEnvUint(u16, "PORT", port_default, port_max);
     const address = try std.net.Address.parseIp4("127.0.0.1", port);
-    var server = try Server.init(allocator, address);
-    defer server.deinit();
-    try server.run();
+    global_server = try Server.init(allocator, address);
+    os.sigaction(os.SIGINT, &.{
+        .handler = .{ .handler = sigchld },
+        .mask = os.system.empty_sigset,
+        .flags = os.system.SA_NOCLDSTOP,
+    }, null);
+    defer global_server.deinit();
+    try global_server.run();
 }
