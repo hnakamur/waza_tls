@@ -11,6 +11,7 @@ const Server = struct {
     io: IO,
     server: os.socket_t,
     allocator: *mem.Allocator,
+    client_handlers: std.ArrayList(?*ClientHandler),
 
     fn init(allocator: *mem.Allocator, address: std.net.Address) !Server {
         const kernel_backlog = 513;
@@ -36,13 +37,14 @@ const Server = struct {
             .io = try IO.init(256, 0),
             .server = server,
             .allocator = allocator,
+            .client_handlers = std.ArrayList(?*ClientHandler).init(allocator),
         };
-
         return self;
     }
 
     pub fn deinit(self: *Server) void {
         os.close(self.server);
+        self.client_handlers.deinit();
         self.io.deinit();
     }
 
@@ -58,13 +60,40 @@ const Server = struct {
         result: IO.AcceptError!os.socket_t,
     ) void {
         const accepted_sock = result catch @panic("accept error");
-        var handler = ClientHandler.init(self.allocator, &self.io, accepted_sock) catch @panic("handler create error");
+        var handler = self.createClientHandler(accepted_sock) catch @panic("handler create error");
         handler.start() catch @panic("handler");
         self.io.accept(*Server, self, accept_callback, completion, self.server, 0);
+    }
+
+    fn createClientHandler(self: *Server, accepted_sock: os.socket_t) !*ClientHandler {
+        const handler_id = if (self.findEmptyClientHandlerId()) |id| id else self.client_handlers.items.len;
+        std.debug.print("client_handler_id={d}\n", .{handler_id});
+        const handler = try ClientHandler.init(self, handler_id, self.allocator, &self.io, accepted_sock);
+        if (handler_id < self.client_handlers.items.len) {
+            self.client_handlers.items[handler_id] = handler;
+        } else {
+            try self.client_handlers.append(handler);
+        }
+        return handler;
+    }
+
+    fn findEmptyClientHandlerId(self: *Server) ?usize {
+        for (self.client_handlers.items) |h, i| {
+            if (h) |_| {} else {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    fn removeClientHandlerId(self: *Server, handler_id: usize) void {
+        self.client_handlers.items[handler_id] = null;
     }
 };
 
 const ClientHandler = struct {
+    server: *Server,
+    handler_id: usize,
     io: *IO,
     sock: os.socket_t,
     received: usize = undefined,
@@ -77,13 +106,15 @@ const ClientHandler = struct {
     request_scanner: *http.RecvRequestScanner,
     request: ?*http.RecvRequest = null,
 
-    fn init(allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
+    fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
         req_scanner.* = http.RecvRequestScanner{};
         const recv_buf = try allocator.alloc(u8, 8192);
         const send_buf = try allocator.alloc(u8, 8192);
         var self = try allocator.create(ClientHandler);
         self.* = ClientHandler{
+            .server = server,
+            .handler_id = handler_id,
             .io = io,
             .sock = sock,
             .request_scanner = req_scanner,
@@ -95,6 +126,7 @@ const ClientHandler = struct {
     }
 
     fn deinit(self: *ClientHandler) !void {
+        self.server.removeClientHandlerId(self.handler_id);
         self.allocator.destroy(self.request_scanner);
         self.allocator.free(self.send_buf);
         self.allocator.free(self.recv_buf);
