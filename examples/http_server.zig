@@ -7,6 +7,63 @@ const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
 const datetime = @import("datetime");
 
+const Server = struct {
+    io: IO,
+    server: os.socket_t,
+    allocator: *mem.Allocator,
+
+    fn init(allocator: *mem.Allocator, address: std.net.Address) !Server {
+        const kernel_backlog = 513;
+        const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+
+        try os.setsockopt(
+            server,
+            os.SOL_SOCKET,
+            os.SO_REUSEADDR,
+            &std.mem.toBytes(@as(c_int, 1)),
+        );
+        try os.bind(server, &address.any, address.getOsSockLen());
+        if (address.getPort() == 0) {
+            var bound_addr: std.net.Address = address;
+            var bound_socklen: os.socklen_t = address.getOsSockLen();
+            try os.getsockname(server, &bound_addr.any, &bound_socklen);
+            std.debug.print("bound port={d}\n", .{bound_addr.getPort()});
+        }
+
+        try os.listen(server, kernel_backlog);
+
+        var self: Server = .{
+            .io = try IO.init(256, 0),
+            .server = server,
+            .allocator = allocator,
+        };
+
+        return self;
+    }
+
+    pub fn deinit(self: *Server) void {
+        os.close(self.server);
+        self.io.deinit();
+    }
+
+    pub fn run(self: *Server) !void {
+        var server_completion: IO.Completion = undefined;
+        self.io.accept(*Server, self, accept_callback, &server_completion, self.server, 0);
+        while (true) try self.io.tick();
+    }
+
+    fn accept_callback(
+        self: *Server,
+        completion: *IO.Completion,
+        result: IO.AcceptError!os.socket_t,
+    ) void {
+        const accepted_sock = result catch @panic("accept error");
+        var handler = ClientHandler.init(self.allocator, &self.io, accepted_sock) catch @panic("handler create error");
+        handler.start() catch @panic("handler");
+        self.io.accept(*Server, self, accept_callback, completion, self.server, 0);
+    }
+};
+
 const ClientHandler = struct {
     io: *IO,
     sock: os.socket_t,
@@ -266,76 +323,23 @@ const ClientHandler = struct {
     }
 };
 
-const Server = struct {
-    io: IO,
-    server: os.socket_t,
-    allocator: *mem.Allocator,
-
-    fn init(allocator: *mem.Allocator, address: std.net.Address) !Server {
-        const kernel_backlog = 513;
-        const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
-
-        try os.setsockopt(
-            server,
-            os.SOL_SOCKET,
-            os.SO_REUSEADDR,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
-        try os.bind(server, &address.any, address.getOsSockLen());
-        if (address.getPort() == 0) {
-            var bound_addr: std.net.Address = address;
-            var bound_socklen: os.socklen_t = address.getOsSockLen();
-            try os.getsockname(server, &bound_addr.any, &bound_socklen);
-            std.debug.print("bound port={d}\n", .{bound_addr.getPort()});
+fn getEnvUint(comptime T: type, name: []const u8, default: T, max: T) T {
+    if (os.getenv(name)) |s| {
+        if (std.fmt.parseInt(T, s, 10)) |v| {
+            if (v <= max) return v;
+        } else |err| {
+            std.debug.print("bad environment variable \"{s}\" value={s}, err={s}\n", .{ name, s, @errorName(err) });
         }
-
-        try os.listen(server, kernel_backlog);
-
-        var self: Server = .{
-            .io = try IO.init(256, 0),
-            .server = server,
-            .allocator = allocator,
-        };
-
-        return self;
     }
-
-    pub fn deinit(self: *Server) void {
-        os.close(self.server);
-        self.io.deinit();
-    }
-
-    pub fn run(self: *Server) !void {
-        var server_completion: IO.Completion = undefined;
-        self.io.accept(*Server, self, accept_callback, &server_completion, self.server, 0);
-        while (true) try self.io.tick();
-    }
-
-    fn accept_callback(
-        self: *Server,
-        completion: *IO.Completion,
-        result: IO.AcceptError!os.socket_t,
-    ) void {
-        const accepted_sock = result catch @panic("accept error");
-        var handler = ClientHandler.init(self.allocator, &self.io, accepted_sock) catch @panic("handler create error");
-        handler.start() catch @panic("handler");
-        self.io.accept(*Server, self, accept_callback, completion, self.server, 0);
-    }
-};
-
-const port_max = 65535;
+    return default;
+}
 
 pub fn main() anyerror!void {
     const allocator = std.heap.page_allocator;
 
-    var port: u16 = 3131;
-    if (os.getenv("PORT")) |port_str| {
-        if (std.fmt.parseInt(u16, port_str, 10)) |v| {
-            if (v <= port_max) port = v;
-        } else |err| {
-            std.debug.print("bad port value={s}, err={s}\n", .{ port_str, @errorName(err) });
-        }
-    }
+    const port_max = 65535;
+    const port_default = 3131;
+    const port = getEnvUint(u16, "PORT", port_default, port_max);
     const address = try std.net.Address.parseIp4("127.0.0.1", port);
     var server = try Server.init(allocator, address);
     defer server.deinit();
