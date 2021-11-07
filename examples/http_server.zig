@@ -116,17 +116,13 @@ const Server = struct {
     }
 
     fn setDoneIfNoClient(self: *Server) void {
-        var running = false;
-        for (self.client_handlers.items) |h, i| {
+        for (self.client_handlers.items) |h| {
             if (h) |_| {
-                running = true;
-                break;
+                return;
             }
         }
 
-        if (!running) {
-            self.done = true;
-        }
+        self.done = true;
     }
 };
 
