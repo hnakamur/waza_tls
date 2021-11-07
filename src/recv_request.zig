@@ -44,15 +44,15 @@ pub const RecvRequest = struct {
 
     pub fn isKeepAlive(self: *const RecvRequest) !bool {
         return switch (self.version) {
-            .http1_1 => !try self.hasConnectionValue("close"),
-            .http1_0 => try self.hasConnectionValue("keep-alive"),
+            .http1_1 => !self.hasConnectionValue("close"),
+            .http1_0 => self.hasConnectionValue("keep-alive"),
             else => error.httpVersionNotSupported,
         };
     }
 
-    fn hasConnectionValue(self: *const RecvRequest, value: []const u8) !bool {
+    fn hasConnectionValue(self: *const RecvRequest, value: []const u8) bool {
         var it = FieldIterator.init(self.headers);
-        if (try it.nextForName("connection")) |f| {
+        if (it.nextForName("connection")) |f| {
             const v = f.value();
             if (std.ascii.eqlIgnoreCase(v, value)) {
                 return true;
