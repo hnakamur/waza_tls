@@ -11,18 +11,16 @@ pub const RecvResponse = struct {
         BadGateway,
     };
 
-    buf: []const u8,
     version: Version,
     status_code: StatusCode,
     reason_phrase: []const u8,
     headers: []const u8,
-    allocator: *mem.Allocator,
 
-    /// `buf` must be allocated with `allocator`.
-    /// It will be freed in `deinit`.
-    pub fn init(allocator: *mem.Allocator, buf: []const u8, scanner: *const RecvResponseScanner) Error!RecvResponse {
+    /// Caller owns `buf`. Returned request is valid for use only while `buf` is valid.
+    pub fn init(buf: []const u8, scanner: *const RecvResponseScanner) Error!RecvResponse {
         std.debug.assert(scanner.headers.state == .done);
         const result = scanner.status_line.result;
+        const status_line_len = result.total_bytes_read;
         const headers_len = scanner.headers.total_bytes_read;
 
         const ver_buf = buf[0..result.version_len];
@@ -30,20 +28,15 @@ pub const RecvResponse = struct {
         const code_buf = buf[result.status_code_start_pos .. result.status_code_start_pos + result.status_code_len];
         const status_code = StatusCode.fromText(code_buf) catch |_| return error.BadGateway;
         const reason_phrase = buf[result.reason_phrase_start_pos .. result.reason_phrase_start_pos + result.reason_phrase_len];
-        const headers = buf[result.total_bytes_read .. result.total_bytes_read + headers_len];
+        const headers = buf[status_line_len .. status_line_len + headers_len];
+        // TODO: validate headers
 
         return RecvResponse{
-            .buf = buf,
             .version = version,
             .status_code = status_code,
             .reason_phrase = reason_phrase,
             .headers = headers,
-            .allocator = allocator,
         };
-    }
-
-    pub fn deinit(self: *RecvResponse) void {
-        self.allocator.free(self.buf);
     }
 };
 
@@ -184,14 +177,9 @@ test "RecvResponse - 200 OK" {
         "\r\n";
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n" ++ headers;
 
-    const allocator = testing.allocator;
-    const buf = try allocator.dupe(u8, input);
-
     var scanner = RecvResponseScanner{};
-    try testing.expect(try scanner.scan(buf));
-    var resp = try RecvResponse.init(allocator, buf, &scanner);
-    defer resp.deinit();
-
+    try testing.expect(try scanner.scan(input));
+    var resp = try RecvResponse.init(input, &scanner);
     try testing.expectEqual(Version.http1_1, resp.version);
     try testing.expectEqual(StatusCode.ok, resp.status_code);
     try testing.expectEqualStrings(reason_phrase, resp.reason_phrase);

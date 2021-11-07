@@ -278,7 +278,7 @@ const ClientHandler = struct {
         if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
             if (done) {
                 const total = self.request_scanner.totalBytesRead();
-                if (http.RecvRequest.init(self.allocator, self.recv_buf[0..total], self.request_scanner)) |req| {
+                if (http.RecvRequest.init(self.recv_buf[0..total], self.request_scanner)) |req| {
                     self.request = req;
                     std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{ req.method.toText(), req.version.toText(), req.uri, req.headers });
                     if (self.request.?.isKeepAlive()) |keep_alive| {

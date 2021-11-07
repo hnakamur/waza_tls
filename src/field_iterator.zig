@@ -10,6 +10,7 @@ pub const FieldIterator = struct {
         return .{ .buf = buf };
     }
 
+    // TODO: create no error version with assert.
     pub fn next(self: *FieldIterator) !?Field {
         if (std.mem.startsWith(u8, self.buf, crlf)) {
             self.buf = self.buf[crlf.len..];

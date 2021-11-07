@@ -14,45 +14,38 @@ pub const RecvRequest = struct {
         UriTooLong,
     };
 
-    buf: []const u8,
     method: Method,
     uri: []const u8,
     version: Version,
     headers: []const u8,
-    allocator: *mem.Allocator,
 
-    /// `buf` must be allocated with `allocator`.
-    /// It will be freed in `deinit`.
-    pub fn init(allocator: *mem.Allocator, buf: []const u8, scanner: *const RecvRequestScanner) Error!RecvRequest {
+    /// Caller owns `buf`. Returned request is valid for use only while `buf` is valid.
+    pub fn init(buf: []const u8, scanner: *const RecvRequestScanner) Error!RecvRequest {
         std.debug.assert(scanner.headers.state == .done);
         const result = scanner.request_line.result;
+        const method_len = result.method_len;
+        const request_line_len = result.total_bytes_read;
         const headers_len = scanner.headers.total_bytes_read;
 
-        const method = Method.fromText(buf[0..result.method_len]) catch unreachable;
+        const method = Method.fromText(buf[0..method_len]) catch unreachable;
         const uri = buf[result.uri_start_pos .. result.uri_start_pos + result.uri_len];
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
         const version = Version.fromText(ver_buf) catch |_| return error.BadRequest;
-        const headers = buf[result.total_bytes_read .. result.total_bytes_read + headers_len];
+        const headers = buf[request_line_len .. request_line_len + headers_len];
+        // TODO: validate headers
 
         return RecvRequest{
-            .buf = buf,
             .method = method,
             .uri = uri,
             .version = version,
             .headers = headers,
-            .allocator = allocator,
         };
-    }
-
-    pub fn deinit(self: *RecvRequest) void {
-        self.allocator.free(self.buf);
     }
 
     pub fn isKeepAlive(self: *const RecvRequest) !bool {
         return switch (self.version) {
             .http1_1 => !try self.hasConnectionValue("close"),
             .http1_0 => try self.hasConnectionValue("keep-alive"),
-            .http0_9 => false,
             else => error.httpVersionNotSupported,
         };
     }
@@ -61,7 +54,6 @@ pub const RecvRequest = struct {
         var it = FieldIterator.init(self.headers);
         if (try it.nextForName("connection")) |f| {
             const v = f.value();
-            std.debug.print("connection value={s}\n", .{v});
             if (std.ascii.eqlIgnoreCase(v, value)) {
                 return true;
             }
@@ -209,15 +201,10 @@ test "RecvRequest - GET method" {
         "\r\n";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n" ++ headers;
 
-    const allocator = testing.allocator;
-    const buf = try allocator.dupe(u8, input);
-
     var scanner = RecvRequestScanner{};
-    try testing.expect(try scanner.scan(buf));
+    try testing.expect(try scanner.scan(input));
 
-    var req = try RecvRequest.init(allocator, buf, &scanner);
-    defer req.deinit();
-
+    var req = try RecvRequest.init(input, &scanner);
     try testing.expectEqual(Method{ .get = undefined }, req.method);
     try testing.expectEqualStrings(uri, req.uri);
     try testing.expectEqual(try Version.fromText(version), req.version);
@@ -233,15 +220,10 @@ test "RecvRequest - custom method" {
         "\r\n";
     const input = method ++ " " ++ uri ++ " " ++ version ++ "\r\n" ++ headers;
 
-    const allocator = testing.allocator;
-    const buf = try allocator.dupe(u8, input);
-
     var scanner = RecvRequestScanner{};
-    try testing.expect(try scanner.scan(buf));
+    try testing.expect(try scanner.scan(input));
 
-    var req = try RecvRequest.init(allocator, buf, &scanner);
-    defer req.deinit();
-
+    var req = try RecvRequest.init(input, &scanner);
     switch (req.method) {
         .custom => |v| try testing.expectEqualStrings(method, v),
         else => unreachable,

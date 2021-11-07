@@ -64,7 +64,7 @@ const ClientHandler = struct {
 
                     const num_read = self.request_scanner.totalBytesRead();
                     self.request = try self.allocator.create(http.RecvRequest);
-                    self.request.?.* = try http.RecvRequest.init(self.allocator, self.recv_buf[0..num_read], self.request_scanner);
+                    self.request.?.* = try http.RecvRequest.init(self.recv_buf[0..num_read], self.request_scanner);
                     // TODO read request body chunk from self.recv_buf[num_read..]
 
                     var fbs = std.io.fixedBufferStream(self.send_buf);
