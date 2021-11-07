@@ -52,7 +52,7 @@ const ClientHandler = struct {
         errdefer self.close(self.sock) catch unreachable; // TODO: log error
 
         while (true) {
-            const old = self.request_scanner.total_bytes_read();
+            const old = self.request_scanner.totalBytesRead();
             const received = try self.recv(self.sock, self.recv_buf[old..]);
             if (received == 0) {
                 return;
@@ -62,7 +62,7 @@ const ClientHandler = struct {
                 if (done) {
                     _ = try self.timeout(std.time.ns_per_s);
 
-                    const num_read = self.request_scanner.total_bytes_read();
+                    const num_read = self.request_scanner.totalBytesRead();
                     self.request = try self.allocator.create(http.RecvRequest);
                     self.request.?.* = try http.RecvRequest.init(self.allocator, self.recv_buf[0..num_read], self.request_scanner);
                     // TODO read request body chunk from self.recv_buf[num_read..]

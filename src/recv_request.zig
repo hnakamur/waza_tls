@@ -3,6 +3,7 @@ const mem = std.mem;
 const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 const isTokenChar = @import("token_char.zig").isTokenChar;
+const FieldIterator = @import("field_iterator.zig").FieldIterator;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 const config = @import("config.zig");
 
@@ -46,6 +47,27 @@ pub const RecvRequest = struct {
     pub fn deinit(self: *RecvRequest) void {
         self.allocator.free(self.buf);
     }
+
+    pub fn isKeepAlive(self: *const RecvRequest) !bool {
+        return switch (self.version) {
+            .http1_1 => !try self.hasConnectionValue("close"),
+            .http1_0 => try self.hasConnectionValue("keep-alive"),
+            .http0_9 => false,
+            else => error.httpVersionNotSupported,
+        };
+    }
+
+    fn hasConnectionValue(self: *const RecvRequest, value: []const u8) !bool {
+        var it = FieldIterator.init(self.headers);
+        if (try it.nextForName("connection")) |f| {
+            const v = f.value();
+            std.debug.print("connection value={s}\n", .{v});
+            if (std.ascii.eqlIgnoreCase(v, value)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 pub const RecvRequestScanner = struct {
@@ -69,7 +91,7 @@ pub const RecvRequestScanner = struct {
         return self.headers.scan(chunk) catch |_| error.BadRequest;
     }
 
-    pub fn total_bytes_read(self: *const RecvRequestScanner) usize {
+    pub fn totalBytesRead(self: *const RecvRequestScanner) usize {
         return self.request_line.result.total_bytes_read +
             self.headers.total_bytes_read;
     }

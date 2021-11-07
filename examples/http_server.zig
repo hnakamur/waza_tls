@@ -54,7 +54,7 @@ const Server = struct {
         var server_completion: IO.Completion = undefined;
         self.io.accept(*Server, self, acceptCallback, &server_completion, self.server, 0);
         while (!self.done) {
-            try self.io.run_for_ns(time.ns_per_ms);
+            try self.io.run_for_ns(time.ns_per_s);
         }
     }
 
@@ -143,7 +143,8 @@ const ClientHandler = struct {
     recv_timeout_ns: u63 = 5 * time.ns_per_s,
     send_timeout_ns: u63 = 5 * time.ns_per_s,
     request_scanner: *http.RecvRequestScanner,
-    request: ?*http.RecvRequest = null,
+    request: ?http.RecvRequest = undefined,
+    keep_alive: bool = true,
     processing: bool = false,
 
     fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
@@ -273,9 +274,25 @@ const ClientHandler = struct {
 
     fn handleStreamingRequest(self: *ClientHandler, received: usize) void {
         self.processing = true;
-        const old = self.request_scanner.total_bytes_read();
+        const old = self.request_scanner.totalBytesRead();
         if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
             if (done) {
+                const total = self.request_scanner.totalBytesRead();
+                if (http.RecvRequest.init(self.allocator, self.recv_buf[0..total], self.request_scanner)) |req| {
+                    self.request = req;
+                    std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{ req.method.toText(), req.version.toText(), req.uri, req.headers });
+                    if (self.request.?.isKeepAlive()) |keep_alive| {
+                        self.keep_alive = keep_alive;
+                    } else |err| {
+                        // TODO: Write error response and close.
+                        std.debug.print("TODO: handle unsupported HTTP version.\n", .{});
+                    }
+
+                    // TODO read request body chunk from self.recv_buf[total..]
+                } else |err| {
+                    // TODO: Write error response and close.
+                    std.debug.print("bad request: err={s}.\n", .{@errorName(err)});
+                }
                 self.sendResponseWithTimeout();
             } else {
                 // TODO: implement
@@ -288,11 +305,6 @@ const ClientHandler = struct {
     }
 
     fn sendResponseWithTimeout(self: *ClientHandler) void {
-        const num_read = self.request_scanner.total_bytes_read();
-        self.request = self.allocator.create(http.RecvRequest) catch unreachable;
-        self.request.?.* = http.RecvRequest.init(self.allocator, self.recv_buf[0..num_read], self.request_scanner) catch unreachable;
-        // TODO read request body chunk from self.recv_buf[num_read..]
-
         var fbs = std.io.fixedBufferStream(self.send_buf);
         var w = fbs.writer();
         std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -311,7 +323,18 @@ const ClientHandler = struct {
             now.time.second,
             now.zone.name,
         }) catch unreachable;
-        // std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
+
+        switch (self.request.?.version) {
+            .http1_1 => if (!self.keep_alive) {
+                std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
+                std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
+            },
+            .http1_0 => if (self.keep_alive) {
+                std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
+                std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
+            },
+            else => {},
+        }
         const body = "Hello http server\n";
         std.fmt.format(w, "Content-Length: {d}\r\n", .{body.len}) catch unreachable;
         std.fmt.format(w, "\r\n", .{}) catch unreachable;
@@ -392,14 +415,14 @@ const ClientHandler = struct {
         if (result) |_| {
             std.debug.print("sendTimeoutCancelCallback ok\n", .{});
 
-            // self.close();
-
-            if (self.server.shutdown_requested) {
+            if (!self.keep_alive or self.server.shutdown_requested) {
                 self.close();
-            } else {
-                self.processing = false;
-                self.recvWithTimeout();
+                return;
             }
+
+            self.processing = false;
+            self.request_scanner.* = http.RecvRequestScanner{};
+            self.recvWithTimeout();
         } else |err| {
             std.debug.print("sendTimeoutCancelCallback err={s}\n", .{@errorName(err)});
         }
