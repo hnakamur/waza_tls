@@ -357,26 +357,3 @@ test "RequestLineScanner - version too long" {
     const expected_total_len = method.len + " ".len + uri.len + " ".len + "HTTP/1.1".len + 1;
     try testing.expectEqual(expected_total_len, scanner.result.total_bytes_read);
 }
-
-test "FieldsScanner - whole in one buf" {
-    const input = "Host: www.example.com\r\n" ++
-        "Accept: */*\r\n" ++
-        "\r\n";
-    var finder = FieldsScanner{};
-    try testing.expect(try finder.scan(input));
-    try testing.expectEqual(input.len, finder.totalBytesRead());
-}
-
-test "FieldsScanner - splitted case" {
-    const input = "Host: www.example.com\r\n" ++
-        "Accept: */*\r\n" ++
-        "\r\n";
-    var pos: usize = 0;
-    while (pos < input.len) : (pos += 1) {
-        var finder = FieldsScanner{};
-        try testing.expect(!try finder.scan(input[0..pos]));
-        try testing.expectEqual(pos, finder.totalBytesRead());
-        try testing.expect(try finder.scan(input[pos..]));
-        try testing.expectEqual(input.len, finder.totalBytesRead());
-    }
-}
