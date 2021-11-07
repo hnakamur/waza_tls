@@ -337,13 +337,19 @@ const ClientHandler = struct {
         if (body.len > 0) {
             std.fmt.format(w, "{s}", .{body}) catch unreachable;
         }
+        self.sendWithTimeout(fbs.getWritten());
+    }
+    pub fn sendWithTimeout(
+        self: *ClientHandler,
+        buf: []const u8
+    ) void {
         self.io.send(
             *ClientHandler,
             self,
             sendCallback,
             &self.completions[0],
             self.sock,
-            fbs.getWritten(),
+            buf,
             if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
         );
         self.io.timeout(
