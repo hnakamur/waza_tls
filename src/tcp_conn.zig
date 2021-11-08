@@ -10,13 +10,14 @@ pub const TCPConn = struct {
     address: std.net.Address,
     socket: os.socket_t,
     context: ?*c_void = undefined,
-    result: ConnectWithTimeoutError!void = undefined,
-    connect_callback: fn (
+    result: union(enum) {
+        connect: ConnectWithTimeoutError!void,
+    } = undefined,
+    callback: fn (
         ctx: ?*c_void,
         res: *const c_void,
     ) void = undefined,
     completions: [2]IO.Completion = undefined,
-    connect_timeout_ns: u63 = 500 * time.ns_per_ms,
 
     const Self = @This();
 
@@ -40,13 +41,14 @@ pub const TCPConn = struct {
         self: *Self,
         comptime Context: type,
         context: Context,
+        timeout_ns: u63,
         comptime callback: fn (
             context: Context,
             result: ConnectWithTimeoutError!void,
         ) void,
     ) void {
         self.context = context;
-        self.connect_callback = struct {
+        self.callback = struct {
             fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                 callback(
                     @intToPtr(Context, @ptrToInt(ctx)),
@@ -67,7 +69,7 @@ pub const TCPConn = struct {
             self,
             connectTimeoutCallback,
             &self.completions[1],
-            self.connect_timeout_ns,
+            timeout_ns,
         );
     }
     fn connectCallback(
@@ -75,7 +77,7 @@ pub const TCPConn = struct {
         completion: *IO.Completion,
         result: IO.ConnectError!void,
     ) void {
-        self.result = result;
+        self.result = .{ .connect = result };
         std.debug.print("connectCallback set self.result={}\n", .{self.result});
         if (result) |_| {
             std.debug.print("connectCallback ok\n", .{});
@@ -106,7 +108,7 @@ pub const TCPConn = struct {
                 &self.completions[0],
             );
 
-            // self.connect_callback(self.context, &result);
+            // self.callback(self.context, &result);
         } else |err| {
             std.debug.print("connectTimeoutCallback err={s}\n", .{@errorName(err)});
         }
@@ -121,9 +123,9 @@ pub const TCPConn = struct {
         } else |err| {
             std.debug.print("connectCancelCallback err={s}\n", .{@errorName(err)});
         }
-        std.debug.print("connectCancelCallback calling connect_callback\n", .{});
-        self.connect_callback(self.context, &self.result);
-        std.debug.print("connectCancelCallback called connect_callback\n", .{});
+        std.debug.print("connectCancelCallback calling callback\n", .{});
+        self.callback(self.context, &self.result);
+        std.debug.print("connectCancelCallback called callback\n", .{});
     }
     fn connectTimeoutCancelCallback(
         self: *Self,
@@ -135,9 +137,9 @@ pub const TCPConn = struct {
         } else |err| {
             std.debug.print("connectTimeoutCancelCallback err={s}\n", .{@errorName(err)});
         }
-        std.debug.print("connectTimeoutCancelCallback calling connect_callback\n", .{});
-        self.connect_callback(self.context, &self.result);
-        std.debug.print("connectTimeoutCancelCallback called connect_callback\n", .{});
+        std.debug.print("connectTimeoutCancelCallback calling callback\n", .{});
+        self.callback(self.context, &self.result);
+        std.debug.print("connectTimeoutCancelCallback called callback\n", .{});
     }
 
     // pub const SendError = IO.SendError || IO.TimeoutError;
@@ -353,7 +355,7 @@ test "TCPConn" {
         const Self = @This();
 
         fn connect(self: *Self) void {
-            self.conn.connectWithTimeout(*Self, self, connectCallback);
+            self.conn.connectWithTimeout(*Self, self, 500 * time.ns_per_ms, connectCallback);
         }
         fn connectCallback(
             self: *Self,

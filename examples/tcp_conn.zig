@@ -20,7 +20,7 @@ pub fn main() !void {
         const Self = @This();
 
         fn connect(self: *Self) void {
-            self.conn.connectWithTimeout(*Self, self, connectCallback);
+            self.conn.connectWithTimeout(*Self, self, 500 * time.ns_per_ms, connectCallback);
         }
         fn connectCallback(
             self: *Self,
