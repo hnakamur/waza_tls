@@ -1,5 +1,24 @@
 const std = @import("std");
-const pkgs = @import("deps.zig").pkgs;
+
+const pkgs = struct {
+    const http = std.build.Pkg{
+        .name = "http",
+        .path = "./src/main.zig",
+        .dependencies = &[_]std.build.Pkg{
+            @"tigerbeetle-io",
+        },
+    };
+
+    const @"tigerbeetle-io" = std.build.Pkg{
+        .name = "tigerbeetle-io",
+        .path = "./lib/tigerbeetle-io/src/main.zig",
+    };
+
+    const datetime = std.build.Pkg{
+        .name = "datetime",
+        .path = "./lib/zig-datetime/src/main.zig",
+    };
+};
 
 pub fn build(b: *std.build.Builder) void {
     // Standard release options allow the person running `zig build` to select
@@ -8,10 +27,12 @@ pub fn build(b: *std.build.Builder) void {
     const target = b.standardTargetOptions(.{});
 
     const lib = b.addStaticLibrary("http", "src/main.zig");
+    lib.addPackage(pkgs.@"tigerbeetle-io");
     lib.setBuildMode(mode);
     lib.install();
 
     var main_tests = b.addTest("src/main.zig");
+    main_tests.addPackage(pkgs.@"tigerbeetle-io");
     main_tests.setBuildMode(mode);
 
     const test_step = b.step("test", "Run library tests");
@@ -25,10 +46,11 @@ pub fn build(b: *std.build.Builder) void {
         "http_server",
     }) |example_name| {
         const example = b.addExecutable(example_name, "examples/" ++ example_name ++ ".zig");
-        example.addPackagePath("http", "src/main.zig");
+        example.addPackage(pkgs.http);
+        example.addPackage(pkgs.@"tigerbeetle-io");
+        example.addPackage(pkgs.datetime);
         example.setBuildMode(mode);
         example.setTarget(target);
-        pkgs.addAllTo(example);
         example.install();
         example_step.dependOn(&example.step);
     }

@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const Client = @import("client.zig").Client;
+
 pub const Version = @import("version.zig").Version;
 pub const Method = @import("method.zig").Method;
 pub const StatusCode = @import("status_code.zig").StatusCode;
