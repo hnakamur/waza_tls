@@ -90,8 +90,10 @@ pub const TCPConn = struct {
             );
         } else |err| {
             std.debug.print("connectCallback err={s}\n", .{@errorName(err)});
-            // self.close();
         }
+        std.debug.print("connectCallback calling callback\n", .{});
+        self.callback(self.context, &self.result);
+        std.debug.print("connectCallback called callback\n", .{});
     }
     fn connectTimeoutCallback(
         self: *Self,
@@ -107,8 +109,6 @@ pub const TCPConn = struct {
                 &self.completions[1],
                 &self.completions[0],
             );
-
-            // self.callback(self.context, &result);
         } else |err| {
             std.debug.print("connectTimeoutCallback err={s}\n", .{@errorName(err)});
         }
@@ -123,9 +123,6 @@ pub const TCPConn = struct {
         } else |err| {
             std.debug.print("connectCancelCallback err={s}\n", .{@errorName(err)});
         }
-        std.debug.print("connectCancelCallback calling callback\n", .{});
-        self.callback(self.context, &self.result);
-        std.debug.print("connectCancelCallback called callback\n", .{});
     }
     fn connectTimeoutCancelCallback(
         self: *Self,
@@ -137,9 +134,6 @@ pub const TCPConn = struct {
         } else |err| {
             std.debug.print("connectTimeoutCancelCallback err={s}\n", .{@errorName(err)});
         }
-        std.debug.print("connectTimeoutCancelCallback calling callback\n", .{});
-        self.callback(self.context, &self.result);
-        std.debug.print("connectTimeoutCancelCallback called callback\n", .{});
     }
 
     // pub const SendError = IO.SendError || IO.TimeoutError;
