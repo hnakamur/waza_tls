@@ -118,26 +118,32 @@ pub const Client = struct {
     ) void {
         if (result) |_| {
             std.debug.print("connectTimeoutCancelCallback ok\n", .{});
-            self.sendWithTimeout();
+            self._sendWithTimeout();
         } else |err| {
             std.debug.print("connectTimeoutCancelCallback err={s}\n", .{@errorName(err)});
         }
     }
 
+    pub const SendError = IO.SendError || IO.TimeoutError;
+
     pub fn send(
         self: *Client,
         comptime Context: type,
         context: Context,
+        sock: os.socket_t,
+        buf: []const u8,
         callback: fn (
             context: Context,
             client: *Client,
-            result: IO.SendError!usize,
+            result: SendError!usize,
         ) void,
     ) void {
+        std.debug.print("Client.send start\n", .{});
         callback(context, self, 1);
+        std.debug.print("Client.send exit\n", .{});
     }
 
-    fn sendWithTimeout(self: *Client) void {
+    fn _sendWithTimeout(self: *Client) void {
         var fbs = std.io.fixedBufferStream(self.send_buf);
         var w = fbs.writer();
         std.fmt.format(w, "{s} {s} {s}\r\n", .{
@@ -314,11 +320,31 @@ pub const Client = struct {
 
 const testing = std.testing;
 
-test "Client" {
-    const allocator = std.heap.page_allocator;
-    const port = 0;
-    const address = try std.net.Address.parseIp4("127.0.0.1", port);
-    var client = try Client.init(allocator, address);
-    defer client.deinit();
-    try testing.expectEqual(1, 1);
-}
+// test "Client" {
+//     const allocator = std.heap.page_allocator;
+//     const port = 0;
+//     const address = try std.net.Address.parseIp4("127.0.0.1", port);
+//     var client = try Client.init(allocator, address);
+//     defer client.deinit();
+
+//     const Context = struct {
+//         client: Client = undefined,
+
+//         const Self = @This();
+
+//         fn send(self: *Self) void {
+//             const buf = [_]u8{0} ** 64;
+//             std.debug.print("Context.send start\n", .{});
+//             self.client.send(*Self, self, 0, &buf, sendCallback);
+//             std.debug.print("Context.send exit\n", .{});
+//         }
+//         fn sendCallback(self: *Self, cli: *Client, result: Client.SendError!usize) void {
+//             std.debug.print("Context.sendCallback, result={d}\n", .{result});
+//             testing.expectEqual(@as(usize, 1), result catch unreachable) catch unreachable;
+//         }
+//     };
+
+//     var ctx = Context{ .client = client };
+//     ctx.send();
+//     // try testing.expectEqual(1, 1);
+// }

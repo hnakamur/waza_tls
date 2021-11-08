@@ -16,6 +16,8 @@ pub const RecvRequestScanner = @import("recv_request.zig").RecvRequestScanner;
 pub const RecvResponse = @import("recv_response.zig").RecvResponse;
 pub const RecvResponseScanner = @import("recv_response.zig").RecvResponseScanner;
 
+pub const TCPConn = @import("tcp_conn.zig").TCPConn;
+
 comptime {
     std.testing.refAllDecls(@This());
 }

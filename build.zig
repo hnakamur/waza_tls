@@ -44,6 +44,7 @@ pub fn build(b: *std.build.Builder) void {
         "async_http_server",
         "http_client",
         "http_server",
+        "tcp_conn",
     }) |example_name| {
         const example = b.addExecutable(example_name, "examples/" ++ example_name ++ ".zig");
         example.addPackage(pkgs.http);
