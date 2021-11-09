@@ -179,9 +179,22 @@ const ClientHandler = struct {
     }
 
     fn start(self: *ClientHandler) !void {
+        self.io.io.timeout(
+            *ClientHandler,
+            self,
+            timeoutCallback,
+            &self.completion.completion1,
+            time.ns_per_s,
+        );
+    }
+    fn timeoutCallback(
+        self: *ClientHandler,
+        io_completion: *IO.Completion,
+        result: IO.TimeoutError!void,
+    ) void {
+        std.debug.print("timeoutCallback result={}\n", .{result});
         self.recvWithTimeout(self.recv_buf);
     }
-
     fn recvWithTimeout(
         self: *ClientHandler,
         buf: []u8,
