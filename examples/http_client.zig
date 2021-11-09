@@ -1,32 +1,96 @@
 const std = @import("std");
-const mem = std.mem;
-const net = std.net;
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
-const Client = http.Client;
+const TimeoutIo = http.TimeoutIo;
 
-
-const port_max = 65535;
-
-const MyContext = struct {
-    client: Client = undefined,
+const Client = struct {
+    io: TimeoutIo,
+    completion: TimeoutIo.Completion = undefined,
+    socket: os.socket_t = undefined,
+    send_buf: [1024]u8 = [_]u8{0} ** 1024,
+    recv_buf: [1024]u8 = [_]u8{0} ** 1024,
+    connect_timeout: u63 = 500 * time.ns_per_ms,
+    send_timeout: u63 = 500 * time.ns_per_ms,
+    recv_timeout: u63 = 500 * time.ns_per_ms,
+    done: bool = false,
 
     const Self = @This();
 
-    fn sendCallback(self: *Self, client: *Client, result: IO.SendError!usize) void {
-        std.debug.print("Context.sendCallback, result={d}\n", .{result});
-    }
+    fn connect(self: *Self, addr: std.net.Address) !void {
+        self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
 
-    fn send(self: *Self) void {
-        self.client.send(*Self, self, sendCallback);
+        self.io.connectWithTimeout(
+            *Self,
+            self,
+            connectCallback,
+            &self.completion,
+            self.socket,
+            addr,
+            self.connect_timeout,
+        );
+    }
+    fn connectCallback(
+        self: *Self,
+        comp: *TimeoutIo.Completion,
+        result: TimeoutIo.ConnectError!void,
+    ) void {
+        std.debug.print("MyContext.connectCallback, result={}\n", .{result});
+
+        var fbs = std.io.fixedBufferStream(&self.send_buf);
+        var w = fbs.writer();
+        std.fmt.format(w, "{s} {s} {s}\r\n", .{
+            (http.Method{ .get = undefined }).toText(),
+            "/",
+            http.Version.http1_1.toText(),
+        }) catch unreachable;
+        std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
+        self.io.sendWithTimeout(
+            *Self,
+            self,
+            sendCallback,
+            &self.completion,
+            self.socket,
+            fbs.getWritten(),
+            self.send_timeout,
+        );
+    }
+    fn sendCallback(
+        self: *Self,
+        comp: *TimeoutIo.Completion,
+        result: TimeoutIo.SendError!usize,
+    ) void {
+        std.debug.print("MyContext.sendCallback, result={}\n", .{result});
+        self.io.recvWithTimeout(
+            *Self,
+            self,
+            recvCallback,
+            &self.completion,
+            self.socket,
+            &self.recv_buf,
+            self.recv_timeout,
+        );
+    }
+    fn recvCallback(
+        self: *Self,
+        comp: *TimeoutIo.Completion,
+        result: TimeoutIo.RecvError!usize,
+    ) void {
+        std.debug.print("MyContext.recvCallback, result={}\n", .{result});
+        if (result) |received| {
+            std.debug.print("response={s}", .{self.recv_buf[0..received]});
+        } else |err| {
+            std.debug.print("MyContext.recvCallback, err={s}\n", .{@errorName(err)});
+        }
+        os.closeSocket(self.socket);
+        self.done = true;
     }
 };
 
-pub fn main() anyerror!void {
-    const allocator = std.heap.page_allocator;
+const port_max = 65535;
 
+pub fn main() anyerror!void {
     var port: u16 = 3131;
     if (os.getenv("PORT")) |port_str| {
         if (std.fmt.parseInt(u16, port_str, 10)) |v| {
@@ -37,11 +101,13 @@ pub fn main() anyerror!void {
     }
     std.debug.print("port={d}\n", .{port});
     const address = try std.net.Address.parseIp4("127.0.0.1", port);
-    var client = try Client.init(allocator, address);
-    defer client.deinit();
 
-    var ctx = MyContext{.client = client};
-    // ctx.send();
+    var io = try IO.init(32, 0);
+    defer io.deinit();
 
-    try client.run();
+    var client = Client{ .io = TimeoutIo.init(&io) };
+    try client.connect(address);
+    while (!client.done) {
+        try io.run_for_ns(100 * time.ns_per_ms);
+    }
 }

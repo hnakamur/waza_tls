@@ -1,14 +1,10 @@
 const std = @import("std");
-const mem = std.mem;
-const net = std.net;
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 
-pub const TCPConn = struct {
+pub const TimeoutIo = struct {
     io: *IO,
-    address: std.net.Address,
-    socket: os.socket_t,
 
     pub const Completion = struct {
         context: ?*c_void,
@@ -26,18 +22,8 @@ pub const TCPConn = struct {
 
     const Self = @This();
 
-    pub fn init(io: *IO, address: std.net.Address) !TCPConn {
-        const socket = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
-
-        return TCPConn{
-            .io = io,
-            .address = address,
-            .socket = socket,
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        os.closeSocket(self.socket);
+    pub fn init(io: *IO) TimeoutIo {
+        return .{ .io = io };
     }
 
     pub const ConnectError = IO.ConnectError;
@@ -52,6 +38,8 @@ pub const TCPConn = struct {
             result: ConnectError!void,
         ) void,
         completion: *Completion,
+        sock: os.socket_t,
+        address: std.net.Address,
         timeout_ns: u63,
     ) void {
         completion.context = context;
@@ -69,8 +57,8 @@ pub const TCPConn = struct {
             self,
             connectCallback,
             &completion.completion1,
-            self.socket,
-            self.address,
+            sock,
+            address,
         );
         self.io.timeout(
             *Self,
@@ -163,6 +151,7 @@ pub const TCPConn = struct {
             result: SendError!usize,
         ) void,
         completion: *Completion,
+        sock: os.socket_t,
         buf: []const u8,
         timeout_ns: u63,
     ) void {
@@ -181,7 +170,7 @@ pub const TCPConn = struct {
             self,
             sendCallback,
             &completion.completion1,
-            self.socket,
+            sock,
             buf,
             if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
         );
@@ -277,6 +266,7 @@ pub const TCPConn = struct {
             result: RecvError!usize,
         ) void,
         completion: *Completion,
+        sock: os.socket_t,
         buf: []u8,
         timeout_ns: u63,
     ) void {
@@ -295,7 +285,7 @@ pub const TCPConn = struct {
             self,
             recvCallback,
             &completion.completion1,
-            self.socket,
+            sock,
             buf,
             if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
         );
@@ -377,43 +367,3 @@ pub const TCPConn = struct {
         std.debug.print("TCPConn.recvTimeoutCancelCallback called callback\n", .{});
     }
 };
-
-const testing = std.testing;
-
-// test "TCPConn" {
-//     const allocator = std.heap.page_allocator;
-//     const port = 3131;
-
-//     var io = try IO.init(512, 0);
-//     defer io.deinit();
-//     const address = try std.net.Address.parseIp4("127.0.0.1", port);
-
-//     var conn = try TCPConn.init(&io, address);
-//     defer conn.deinit();
-
-//     const MyContext = struct {
-//         conn: TCPConn,
-
-//         const Self = @This();
-
-//         fn connect(self: *Self) void {
-//             self.conn.connectWithTimeout(*Self, self, 500 * time.ns_per_ms, connectCallback);
-//         }
-//         fn connectCallback(
-//             self: *Self,
-//             result: TCPConn.ConnectWithTimeoutError!void,
-//         ) void {
-//             std.debug.print("MyContext.connectCallback, result={}\n", .{result});
-//         }
-//     };
-//     var ctx = MyContext{ .conn = conn };
-//     ctx.connect();
-
-//     try io.run_for_ns(time.ns_per_s);
-// }
-
-// test "TCPConn Completion" {
-//     var c = TCPConn.Completion{};
-//     var ioc = &c.completions[1];
-//     try testing.expectEqual(&c, @fieldParentPtr(TCPConn.Completion, "completions[1]", ioc));
-// }
