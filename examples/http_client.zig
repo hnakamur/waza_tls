@@ -36,32 +36,35 @@ const Client = struct {
         comp: *TimeoutIo.Completion,
         result: TimeoutIo.ConnectError!void,
     ) void {
-        std.debug.print("MyContext.connectCallback, result={}\n", .{result});
-
-        var fbs = std.io.fixedBufferStream(&self.send_buf);
-        var w = fbs.writer();
-        std.fmt.format(w, "{s} {s} {s}\r\n", .{
-            (http.Method{ .get = undefined }).toText(),
-            "/",
-            http.Version.http1_1.toText(),
-        }) catch unreachable;
-        std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-        self.io.sendWithTimeout(
-            *Self,
-            self,
-            sendCallback,
-            &self.completion,
-            self.socket,
-            fbs.getWritten(),
-            self.send_timeout,
-        );
+        if (result) |_| {
+            var fbs = std.io.fixedBufferStream(&self.send_buf);
+            var w = fbs.writer();
+            std.fmt.format(w, "{s} {s} {s}\r\n", .{
+                (http.Method{ .get = undefined }).toText(),
+                "/",
+                http.Version.http1_1.toText(),
+            }) catch unreachable;
+            std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
+            self.io.sendWithTimeout(
+                *Self,
+                self,
+                sendCallback,
+                &self.completion,
+                self.socket,
+                fbs.getWritten(),
+                self.send_timeout,
+            );
+        } else |err| {
+            std.debug.print("MyContext.connectCallback, err={s}\n", .{@errorName(err)});
+            self.close();
+        }
     }
     fn sendCallback(
         self: *Self,
         comp: *TimeoutIo.Completion,
         result: TimeoutIo.SendError!usize,
     ) void {
-        std.debug.print("MyContext.sendCallback, result={}\n", .{result});
+        if (result) |_| {
         self.io.recvWithTimeout(
             *Self,
             self,
@@ -71,18 +74,25 @@ const Client = struct {
             &self.recv_buf,
             self.recv_timeout,
         );
+        } else |err| {
+            std.debug.print("MyContext.sendCallback, err={s}\n", .{@errorName(err)});
+            self.close();
+        }
     }
     fn recvCallback(
         self: *Self,
         comp: *TimeoutIo.Completion,
         result: TimeoutIo.RecvError!usize,
     ) void {
-        std.debug.print("MyContext.recvCallback, result={}\n", .{result});
         if (result) |received| {
             std.debug.print("response={s}", .{self.recv_buf[0..received]});
         } else |err| {
             std.debug.print("MyContext.recvCallback, err={s}\n", .{@errorName(err)});
         }
+        self.close();
+    }
+
+    fn close(self: *Self) void {
         os.closeSocket(self.socket);
         self.done = true;
     }
