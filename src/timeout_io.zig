@@ -73,11 +73,9 @@ pub const TimeoutIo = struct {
         io_completion: *IO.Completion,
         result: IO.ConnectError!void,
     ) void {
-        std.debug.print("connectCallback self.result={}\n", .{result});
         var completion = @fieldParentPtr(Completion, "completion1", io_completion);
         completion.result = .{ .connect = result };
         if (result) |_| {
-            std.debug.print("connectCallback ok\n", .{});
             self.io.cancelTimeout(
                 *Self,
                 self,
@@ -85,9 +83,7 @@ pub const TimeoutIo = struct {
                 &completion.completion1,
                 &completion.completion2,
             );
-        } else |err| {
-            std.debug.print("connectCallback err={s}\n", .{@errorName(err)});
-        }
+        } else |_| {}
     }
     fn connectTimeoutCallback(
         self: *Self,
@@ -95,7 +91,6 @@ pub const TimeoutIo = struct {
         result: IO.TimeoutError!void,
     ) void {
         if (result) |_| {
-            std.debug.print("connectTimeoutCallback ok\n", .{});
             var completion = @fieldParentPtr(Completion, "completion2", io_completion);
             self.io.cancel(
                 *Self,
@@ -104,39 +99,23 @@ pub const TimeoutIo = struct {
                 &completion.completion2,
                 &completion.completion1,
             );
-        } else |err| {
-            std.debug.print("connectTimeoutCallback err={s}\n", .{@errorName(err)});
-        }
+        } else |_| {}
     }
     fn connectCancelCallback(
         self: *Self,
         io_completion: *IO.Completion,
-        result: IO.CancelError!void,
+        _: IO.CancelError!void,
     ) void {
-        if (result) |_| {
-            std.debug.print("connectCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("connectCancelCallback err={s}\n", .{@errorName(err)});
-        }
         var completion = @fieldParentPtr(Completion, "completion2", io_completion);
-        std.debug.print("connectCancelCallback calling callback, result={}\n", .{completion.result});
         completion.callback(completion.context, completion, completion.result);
-        std.debug.print("connectCancelCallback called callback\n", .{});
     }
     fn connectTimeoutCancelCallback(
         self: *Self,
         io_completion: *IO.Completion,
-        result: IO.CancelTimeoutError!void,
+        _: IO.CancelTimeoutError!void,
     ) void {
-        if (result) |_| {
-            std.debug.print("connectTimeoutCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("connectTimeoutCancelCallback err={s}\n", .{@errorName(err)});
-        }
         var completion = @fieldParentPtr(Completion, "completion1", io_completion);
-        std.debug.print("connectTimeoutCancelCallback calling callback, result={}\n", .{completion.result});
         completion.callback(completion.context, completion, completion.result);
-        std.debug.print("connectTimeoutCancelCallback called callback\n", .{});
     }
 
     pub const SendError = IO.SendError;
@@ -187,7 +166,6 @@ pub const TimeoutIo = struct {
         io_completion: *IO.Completion,
         result: IO.SendError!usize,
     ) void {
-        std.debug.print("TCPConn.sendCallback result={}\n", .{result});
         var completion = @fieldParentPtr(Completion, "completion1", io_completion);
         completion.result = .{ .send = result };
         if (result) |sent| {
@@ -198,9 +176,7 @@ pub const TimeoutIo = struct {
                 &completion.completion1,
                 &completion.completion2,
             );
-        } else |err| {
-            std.debug.print("send error: {s}\n", .{@errorName(err)});
-        }
+        } else |_| {}
     }
     fn sendTimeoutCallback(
         self: *Self,
@@ -208,7 +184,6 @@ pub const TimeoutIo = struct {
         result: IO.TimeoutError!void,
     ) void {
         if (result) |_| {
-            std.debug.print("sendTimeoutCallback ok\n", .{});
             var completion = @fieldParentPtr(Completion, "completion2", io_completion);
             self.io.cancel(
                 *Self,
@@ -217,41 +192,23 @@ pub const TimeoutIo = struct {
                 &completion.completion2,
                 &completion.completion1,
             );
-        } else |err| {
-            if (err != error.Canceled) {
-                std.debug.print("sendTimeoutCallback err={s}\n", .{@errorName(err)});
-            }
-        }
+        } else |_| {}
     }
     fn sendCancelCallback(
         self: *Self,
         io_completion: *IO.Completion,
-        result: IO.CancelError!void,
+        _: IO.CancelError!void,
     ) void {
-        if (result) |_| {
-            std.debug.print("sendCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("sendCancelCallback err={s}\n", .{@errorName(err)});
-        }
         var completion = @fieldParentPtr(Completion, "completion2", io_completion);
-        std.debug.print("TCPConn.sendCancelCallback calling callback, result={}\n", .{completion.result});
         completion.callback(completion.context, completion, completion.result);
-        std.debug.print("TCPConn.sendCancelCallback called callback\n", .{});
     }
     fn sendTimeoutCancelCallback(
         self: *Self,
         io_completion: *IO.Completion,
-        result: IO.CancelTimeoutError!void,
+        _: IO.CancelTimeoutError!void,
     ) void {
-        if (result) |_| {
-            std.debug.print("sendTimeoutCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("sendTimeoutCancelCallback err={s}\n", .{@errorName(err)});
-        }
         var completion = @fieldParentPtr(Completion, "completion1", io_completion);
-        std.debug.print("TCPConn.sendTimeoutCancelCallback calling callback, result={}\n", .{completion.result});
         completion.callback(completion.context, completion, completion.result);
-        std.debug.print("TCPConn.sendTimeoutCancelCallback called callback\n", .{});
     }
 
     pub const RecvError = IO.RecvError;
@@ -303,7 +260,6 @@ pub const TimeoutIo = struct {
         result: IO.RecvError!usize,
     ) void {
         if (result) |received| {
-            std.debug.print("TCPConn.recvCallback result={}", .{result});
             var completion = @fieldParentPtr(Completion, "completion1", io_completion);
             completion.result = .{ .recv = result };
             self.io.cancelTimeout(
@@ -313,9 +269,7 @@ pub const TimeoutIo = struct {
                 &completion.completion1,
                 &completion.completion2,
             );
-        } else |err| {
-            std.debug.print("recv error: {s}\n", .{@errorName(err)});
-        }
+        } else |_| {}
     }
     fn recvTimeoutCallback(
         self: *Self,
@@ -323,7 +277,6 @@ pub const TimeoutIo = struct {
         result: IO.TimeoutError!void,
     ) void {
         if (result) |_| {
-            std.debug.print("recvTimeoutCallback ok\n", .{});
             var completion = @fieldParentPtr(Completion, "completion2", io_completion);
             self.io.cancel(
                 *Self,
@@ -332,38 +285,22 @@ pub const TimeoutIo = struct {
                 &completion.completion2,
                 &completion.completion1,
             );
-        } else |err| {
-            std.debug.print("recvTimeoutCallback err={s}\n", .{@errorName(err)});
-        }
+        } else |_| {}
     }
     fn recvCancelCallback(
         self: *Self,
         io_completion: *IO.Completion,
-        result: IO.CancelError!void,
+        _: IO.CancelError!void,
     ) void {
-        if (result) |_| {
-            std.debug.print("recvCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("recvCancelCallback err={s}\n", .{@errorName(err)});
-        }
         var completion = @fieldParentPtr(Completion, "completion2", io_completion);
-        std.debug.print("TCPConn.recvCancelCallback calling callback, result={}\n", .{completion.result});
         completion.callback(completion.context, completion, completion.result);
-        std.debug.print("TCPConn.recvCancelCallback called callback\n", .{});
     }
     fn recvTimeoutCancelCallback(
         self: *Self,
         io_completion: *IO.Completion,
-        result: IO.CancelTimeoutError!void,
+        _: IO.CancelTimeoutError!void,
     ) void {
-        if (result) |_| {
-            std.debug.print("recvTimeoutCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("recvTimeoutCancelCallback error: {s}\n", .{@errorName(err)});
-        }
         var completion = @fieldParentPtr(Completion, "completion1", io_completion);
-        std.debug.print("TCPConn.recvTimeoutCancelCallback calling callback, result={}\n", .{completion.result});
         completion.callback(completion.context, completion, completion.result);
-        std.debug.print("TCPConn.recvTimeoutCancelCallback called callback\n", .{});
     }
 };
