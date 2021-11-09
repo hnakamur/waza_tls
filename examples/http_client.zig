@@ -65,15 +65,15 @@ const Client = struct {
         result: TimeoutIo.SendError!usize,
     ) void {
         if (result) |_| {
-        self.io.recvWithTimeout(
-            *Self,
-            self,
-            recvCallback,
-            &self.completion,
-            self.socket,
-            &self.recv_buf,
-            self.recv_timeout,
-        );
+            self.io.recvWithTimeout(
+                *Self,
+                self,
+                recvCallback,
+                &self.completion,
+                self.socket,
+                &self.recv_buf,
+                self.recv_timeout,
+            );
         } else |err| {
             std.debug.print("MyContext.sendCallback, err={s}\n", .{@errorName(err)});
             self.close();
