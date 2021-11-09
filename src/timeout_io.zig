@@ -259,9 +259,9 @@ pub const TimeoutIo = struct {
         io_completion: *IO.Completion,
         result: IO.RecvError!usize,
     ) void {
+        var completion = @fieldParentPtr(Completion, "completion1", io_completion);
+        completion.result = .{ .recv = result };
         if (result) |received| {
-            var completion = @fieldParentPtr(Completion, "completion1", io_completion);
-            completion.result = .{ .recv = result };
             self.io.cancelTimeout(
                 *Self,
                 self,
