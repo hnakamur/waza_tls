@@ -5,6 +5,7 @@ const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
+const TimeoutIo = http.TimeoutIo;
 const datetime = @import("datetime");
 
 const Server = struct {
@@ -129,13 +130,12 @@ const Server = struct {
 const ClientHandler = struct {
     server: *Server,
     handler_id: usize,
-    io: *IO,
+    io: TimeoutIo,
+    completion: TimeoutIo.Completion = undefined,
     sock: os.socket_t,
-    received: usize = undefined,
     recv_buf: []u8,
     send_buf: []u8,
     allocator: *mem.Allocator,
-    completions: [2]IO.Completion = undefined,
     recv_timeout_ns: u63 = 5 * time.ns_per_s,
     send_timeout_ns: u63 = 5 * time.ns_per_s,
     request_scanner: *http.RecvRequestScanner,
@@ -152,7 +152,7 @@ const ClientHandler = struct {
         self.* = ClientHandler{
             .server = server,
             .handler_id = handler_id,
-            .io = io,
+            .io = TimeoutIo{ .io = io },
             .sock = sock,
             .request_scanner = req_scanner,
             .recv_buf = recv_buf,
@@ -171,7 +171,7 @@ const ClientHandler = struct {
     }
 
     fn close(self: *ClientHandler) void {
-        os.close(self.sock);
+        os.closeSocket(self.sock);
         if (self.deinit()) |_| {} else |err| {
             std.debug.print("ClientHandler deinit err={s}\n", .{@errorName(err)});
         }
@@ -179,92 +179,40 @@ const ClientHandler = struct {
     }
 
     fn start(self: *ClientHandler) !void {
-        self.recvWithTimeout();
+        self.recvWithTimeout(self.recv_buf);
     }
 
-    fn recvWithTimeout(self: *ClientHandler) void {
+    fn recvWithTimeout(
+        self: *ClientHandler,
+        buf: []u8,
+    ) void {
         std.debug.print("recvWithTimeout handler_id={d}\n", .{self.handler_id});
-        self.io.recv(
+        self.io.recvWithTimeout(
             *ClientHandler,
             self,
             recvCallback,
-            &self.completions[0],
+            &self.completion,
             self.sock,
-            self.recv_buf,
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-        );
-        self.io.timeout(
-            *ClientHandler,
-            self,
-            recvTimeoutCallback,
-            &self.completions[1],
+            buf,
             self.recv_timeout_ns,
         );
     }
     fn recvCallback(
         self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.RecvError!usize,
+        completion: *TimeoutIo.Completion,
+        result: TimeoutIo.RecvError!usize,
     ) void {
         if (result) |received| {
-            self.received = received;
             std.debug.print("received={d}\n", .{received});
-            self.io.cancelTimeout(
-                *ClientHandler,
-                self,
-                recvTimeoutCancelCallback,
-                &self.completions[0],
-                &self.completions[1],
-            );
-        } else |err| {
-            std.debug.print("recv error: {s}\n", .{@errorName(err)});
-        }
-    }
-    fn recvTimeoutCallback(
-        self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.TimeoutError!void,
-    ) void {
-        if (result) |_| {
-            std.debug.print("recvTimeoutCallback ok\n", .{});
-            completion.io.cancel(
-                *ClientHandler,
-                self,
-                recvCancelCallback,
-                &self.completions[1],
-                &self.completions[0],
-            );
-        } else |err| {
-            std.debug.print("recvTimeoutCallback err={s}\n", .{@errorName(err)});
-        }
-    }
-    fn recvCancelCallback(
-        self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.CancelError!void,
-    ) void {
-        if (result) |_| {
-            std.debug.print("recvCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("recvCancelCallback err={s}\n", .{@errorName(err)});
-        }
-    }
-    fn recvTimeoutCancelCallback(
-        self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.CancelTimeoutError!void,
-    ) void {
-        if (result) |_| {
-            std.debug.print("recvTimeoutCancelCallback ok\n", .{});
 
-            if (self.received == 0) {
+            if (received == 0) {
                 self.close();
                 return;
             }
 
-            self.handleStreamingRequest(self.received);
+            self.handleStreamingRequest(received);
         } else |err| {
-            std.debug.print("recvTimeoutCancelCallback error: {s}\n", .{@errorName(err)});
+            std.debug.print("recv error: {s}\n", .{@errorName(err)});
         }
     }
 
@@ -337,85 +285,23 @@ const ClientHandler = struct {
         if (body.len > 0) {
             std.fmt.format(w, "{s}", .{body}) catch unreachable;
         }
-        self.sendWithTimeout(fbs.getWritten());
-    }
-    pub fn sendWithTimeout(
-        self: *ClientHandler,
-        buf: []const u8
-    ) void {
-        self.io.send(
+        self.io.sendWithTimeout(
             *ClientHandler,
             self,
             sendCallback,
-            &self.completions[0],
+            &self.completion,
             self.sock,
-            buf,
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-        );
-        self.io.timeout(
-            *ClientHandler,
-            self,
-            sendTimeoutCallback,
-            &self.completions[1],
+            fbs.getWritten(),
             self.send_timeout_ns,
         );
     }
     fn sendCallback(
         self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.SendError!usize,
+        completion: *TimeoutIo.Completion,
+        result: TimeoutIo.SendError!usize,
     ) void {
         if (result) |sent| {
             std.debug.print("sent request bytes={d}\n", .{sent});
-            self.io.cancelTimeout(
-                *ClientHandler,
-                self,
-                sendTimeoutCancelCallback,
-                &self.completions[0],
-                &self.completions[1],
-            );
-        } else |err| {
-            std.debug.print("send error: {s}\n", .{@errorName(err)});
-        }
-    }
-    fn sendTimeoutCallback(
-        self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.TimeoutError!void,
-    ) void {
-        if (result) |_| {
-            std.debug.print("sendTimeoutCallback ok\n", .{});
-            completion.io.cancel(
-                *ClientHandler,
-                self,
-                sendCancelCallback,
-                &self.completions[1],
-                &self.completions[0],
-            );
-        } else |err| {
-            if (err != error.Canceled) {
-                std.debug.print("sendTimeoutCallback err={s}\n", .{@errorName(err)});
-            }
-        }
-    }
-    fn sendCancelCallback(
-        self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.CancelError!void,
-    ) void {
-        if (result) |_| {
-            std.debug.print("sendCancelCallback ok\n", .{});
-        } else |err| {
-            std.debug.print("sendCancelCallback err={s}\n", .{@errorName(err)});
-        }
-    }
-    fn sendTimeoutCancelCallback(
-        self: *ClientHandler,
-        completion: *IO.Completion,
-        result: IO.CancelTimeoutError!void,
-    ) void {
-        if (result) |_| {
-            std.debug.print("sendTimeoutCancelCallback ok\n", .{});
 
             if (!self.keep_alive or self.server.shutdown_requested) {
                 self.close();
@@ -424,9 +310,9 @@ const ClientHandler = struct {
 
             self.processing = false;
             self.request_scanner.* = http.RecvRequestScanner{};
-            self.recvWithTimeout();
+            self.recvWithTimeout(self.recv_buf);
         } else |err| {
-            std.debug.print("sendTimeoutCancelCallback err={s}\n", .{@errorName(err)});
+            std.debug.print("send error: {s}\n", .{@errorName(err)});
         }
     }
 };
