@@ -130,7 +130,7 @@ pub const StatusCode = enum(u10) {
             .temporary_redirect => "Temporary Redirect",
             .permanent_redirect => "Permanent Redirect",
 
-            .bad_request => "Bad Reques",
+            .bad_request => "Bad Request",
             .unauthorized => "Unauthorized",
             .payment_required => "Payment Required",
             .forbidden => "Forbidden",

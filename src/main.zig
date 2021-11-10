@@ -18,6 +18,8 @@ pub const RecvResponseScanner = @import("recv_response.zig").RecvResponseScanner
 
 pub const TimeoutIo = @import("timeout_io.zig").TimeoutIo;
 
+pub const config = @import("config.zig");
+
 comptime {
     std.testing.refAllDecls(@This());
 }

@@ -7,6 +7,7 @@ const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
 const TimeoutIo = http.TimeoutIo;
 const datetime = @import("datetime");
+const config = http.config;
 
 const Server = struct {
     io: IO,
@@ -146,7 +147,7 @@ const ClientHandler = struct {
     fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
         req_scanner.* = http.RecvRequestScanner{};
-        const recv_buf = try allocator.alloc(u8, 8192);
+        const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
         const send_buf = try allocator.alloc(u8, 8192);
         var self = try allocator.create(ClientHandler);
         self.* = ClientHandler{
@@ -219,6 +220,8 @@ const ClientHandler = struct {
     fn handleStreamingRequest(self: *ClientHandler, received: usize) void {
         self.processing = true;
         const old = self.request_scanner.totalBytesRead();
+        std.debug.print("handleStreamingRequest old={}, received={}\n", .{ old, received });
+        std.debug.print("handleStreamingRequest scan data={s}\n", .{self.recv_buf[old .. old + received]});
         if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
             if (done) {
                 const total = self.request_scanner.totalBytesRead();
@@ -239,13 +242,66 @@ const ClientHandler = struct {
                 }
                 self.sendResponseWithTimeout();
             } else {
-                // TODO: implement
-                unreachable;
+                std.debug.print("handleStreamingRequest not done\n", .{});
+                if (old + received == self.recv_buf.len) {
+                    const new_len = self.recv_buf.len + config.recv_buf_ini_len;
+                    if (config.recv_buf_max_len < new_len) {
+                        std.debug.print("request header fields too long.\n", .{});
+                        self.sendBadRequest();
+                        return;
+                    }
+                    self.recv_buf = self.allocator.realloc(self.recv_buf, new_len) catch unreachable;
+                }
+                self.io.recvWithTimeout(
+                    *ClientHandler,
+                    self,
+                    recvCallback,
+                    &self.completion,
+                    self.sock,
+                    self.recv_buf[old + received ..],
+                    self.recv_timeout_ns,
+                );
             }
         } else |err| {
             // TODO: implement
-            unreachable;
+            std.debug.print("handleStreamingRequest scan failed with {s}\n", .{@errorName(err)});
+            self.close();
         }
+    }
+
+    fn sendBadRequest(self: *ClientHandler) void {
+        var fbs = std.io.fixedBufferStream(self.send_buf);
+        var w = fbs.writer();
+        std.fmt.format(w, "{s} {d} {s}\r\n", .{
+            http.Version.http1_1.toText(),
+            http.StatusCode.bad_request.code(),
+            http.StatusCode.bad_request.toText(),
+        }) catch unreachable;
+        var now = datetime.datetime.Datetime.now();
+        std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
+            now.date.weekdayName()[0..3],
+            now.date.day,
+            now.date.monthName()[0..3],
+            now.date.year,
+            now.time.hour,
+            now.time.minute,
+            now.time.second,
+            now.zone.name,
+        }) catch unreachable;
+
+        self.keep_alive = false;
+        std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
+        std.fmt.format(w, "Content-Length: 0\r\n", .{}) catch unreachable;
+        std.fmt.format(w, "\r\n", .{}) catch unreachable;
+        self.io.sendWithTimeout(
+            *ClientHandler,
+            self,
+            sendCallback,
+            &self.completion,
+            self.sock,
+            fbs.getWritten(),
+            self.send_timeout_ns,
+        );
     }
 
     fn sendResponseWithTimeout(self: *ClientHandler) void {

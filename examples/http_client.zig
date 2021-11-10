@@ -15,6 +15,12 @@ const Client = struct {
     send_timeout: u63 = 500 * time.ns_per_ms,
     recv_timeout: u63 = 500 * time.ns_per_ms,
     done: bool = false,
+    state: enum {
+        Initial,
+        Sending1,
+        Sending2,
+        Receiving,
+    } = .Initial,
 
     const Self = @This();
 
@@ -37,6 +43,7 @@ const Client = struct {
         result: TimeoutIo.ConnectError!void,
     ) void {
         if (result) |_| {
+            self.state = .Sending1;
             var fbs = std.io.fixedBufferStream(&self.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
@@ -44,14 +51,22 @@ const Client = struct {
                 "/",
                 http.Version.http1_1.toText(),
             }) catch unreachable;
-            std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
+            std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
+
+            std.fmt.format(w, "X-Foo: ", .{}) catch unreachable;
+            var pos = fbs.getPos() catch unreachable;
+            std.debug.print("pos={}, self.send_buf.len={}\n", .{ pos, self.send_buf.len });
+            while (pos < self.send_buf.len) : (pos += 1) {
+                self.send_buf[pos] = 'f';
+            }
+            std.debug.print("self.send_buf={s}\n", .{ self.send_buf });
             self.io.sendWithTimeout(
                 *Self,
                 self,
                 sendCallback,
                 &self.completion,
                 self.socket,
-                fbs.getWritten(),
+                &self.send_buf,
                 self.send_timeout,
             );
         } else |err| {
@@ -65,15 +80,33 @@ const Client = struct {
         result: TimeoutIo.SendError!usize,
     ) void {
         if (result) |_| {
-            self.io.recvWithTimeout(
-                *Self,
-                self,
-                recvCallback,
-                &self.completion,
-                self.socket,
-                &self.recv_buf,
-                self.recv_timeout,
-            );
+            switch (self.state) {
+                .Sending1 => {
+                    self.state = .Sending2;
+                    self.io.sendWithTimeout(
+                        *Self,
+                        self,
+                        sendCallback,
+                        &self.completion,
+                        self.socket,
+                        "\r\n\r\n",
+                        self.send_timeout,
+                    );
+                },
+                .Sending2 => {
+                    self.state = .Receiving;
+                    self.io.recvWithTimeout(
+                        *Self,
+                        self,
+                        recvCallback,
+                        &self.completion,
+                        self.socket,
+                        &self.recv_buf,
+                        self.recv_timeout,
+                    );
+                },
+                else => @panic("unexpected state sendCallback"),
+            }
         } else |err| {
             std.debug.print("MyContext.sendCallback, err={s}\n", .{@errorName(err)});
             self.close();
