@@ -9,7 +9,7 @@ const Client = struct {
     io: TimeoutIo,
     completion: TimeoutIo.Completion = undefined,
     socket: os.socket_t = undefined,
-    send_buf: [65536]u8 = [_]u8{0} ** 65536,
+    send_buf: [32768]u8 = [_]u8{0} ** 32768,
     recv_buf: [1024]u8 = [_]u8{0} ** 1024,
     connect_timeout: u63 = 500 * time.ns_per_ms,
     send_timeout: u63 = 500 * time.ns_per_ms,
