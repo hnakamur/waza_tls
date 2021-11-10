@@ -9,7 +9,7 @@ const Client = struct {
     io: TimeoutIo,
     completion: TimeoutIo.Completion = undefined,
     socket: os.socket_t = undefined,
-    send_buf: [16384]u8 = [_]u8{0} ** 16384,
+    send_buf: [65536]u8 = [_]u8{0} ** 65536,
     recv_buf: [1024]u8 = [_]u8{0} ** 1024,
     connect_timeout: u63 = 500 * time.ns_per_ms,
     send_timeout: u63 = 500 * time.ns_per_ms,
@@ -48,7 +48,8 @@ const Client = struct {
             var w = fbs.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
                 (http.Method{ .get = undefined }).toText(),
-                "/" ++ "a" ** 8192,
+                "/",
+                // "/" ++ "a" ** 8192,
                 http.Version.http1_1.toText(),
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
