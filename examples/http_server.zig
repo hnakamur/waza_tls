@@ -231,14 +231,14 @@ const ClientHandler = struct {
                     if (self.request.?.isKeepAlive()) |keep_alive| {
                         self.keep_alive = keep_alive;
                     } else |err| {
-                        // TODO: Write error response and close.
-                        std.debug.print("TODO: handle unsupported HTTP version.\n", .{});
+                        self.sendError(.http_version_not_supported);
+                        return;
                     }
 
                     // TODO read request body chunk from self.recv_buf[total..]
                 } else |err| {
-                    // TODO: Write error response and close.
-                    std.debug.print("bad request: err={s}.\n", .{@errorName(err)});
+                    self.sendError(.bad_request);
+                    return;
                 }
                 self.sendResponseWithTimeout();
             } else {
@@ -264,7 +264,11 @@ const ClientHandler = struct {
             }
         } else |err| {
             std.debug.print("handleStreamingRequest scan failed with {s}\n", .{@errorName(err)});
-            self.sendError(if (err == error.UriTooLong) .uri_too_long else .bad_request);
+            self.sendError(switch (err) {
+                error.UriTooLong => .uri_too_long,
+                error.VersionNotSupported => .http_version_not_supported,
+                else => .bad_request,
+            });
         }
     }
 

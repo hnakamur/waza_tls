@@ -63,10 +63,7 @@ pub const RecvRequest = struct {
 };
 
 pub const RecvRequestScanner = struct {
-    const Error = error{
-        BadRequest,
-        UriTooLong,
-    };
+    const Error = RequestLineScanner.Error || FieldsScanner.Error;
 
     request_line: RequestLineScanner = RequestLineScanner{},
     headers: FieldsScanner = FieldsScanner{},
@@ -93,6 +90,7 @@ const RequestLineScanner = struct {
     const Error = error{
         BadRequest,
         UriTooLong,
+        VersionNotSupported,
     };
 
     const State = enum {
@@ -150,6 +148,11 @@ const RequestLineScanner = struct {
                 .on_uri => {
                     if (c == ' ') {
                         self.state = .post_uri;
+                    } else if (c == '\r') {
+                        // HTTP/0.9 is not supported.
+                        // https://www.ietf.org/rfc/rfc1945.txt
+                        // Simple-Request  = "GET" SP Request-URI CRLF
+                        return error.VersionNotSupported;
                     } else {
                         self.result.uri_len += 1;
                         if (self.result.uri_len > self.uri_max_len) {

@@ -5,7 +5,7 @@ const isFieldVisibleChar = token_char.isFieldVisibleChar;
 const isWhiteSpaceChar = token_char.isWhiteSpaceChar;
 
 pub const FieldsScanner = struct {
-    const Error = error{
+    pub const Error = error{
         InvalidInput,
         InvalidState,
     };
