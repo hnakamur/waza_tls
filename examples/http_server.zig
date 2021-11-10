@@ -247,7 +247,7 @@ const ClientHandler = struct {
                     const new_len = self.recv_buf.len + config.recv_buf_ini_len;
                     if (config.recv_buf_max_len < new_len) {
                         std.debug.print("request header fields too long.\n", .{});
-                        self.sendBadRequest();
+                        self.sendError(.bad_request);
                         return;
                     }
                     self.recv_buf = self.allocator.realloc(self.recv_buf, new_len) catch unreachable;
@@ -263,19 +263,18 @@ const ClientHandler = struct {
                 );
             }
         } else |err| {
-            // TODO: implement
             std.debug.print("handleStreamingRequest scan failed with {s}\n", .{@errorName(err)});
-            self.close();
+            self.sendError(if (err == error.UriTooLong) .uri_too_long else .bad_request);
         }
     }
 
-    fn sendBadRequest(self: *ClientHandler) void {
+    fn sendError(self: *ClientHandler, status_code: http.StatusCode) void {
         var fbs = std.io.fixedBufferStream(self.send_buf);
         var w = fbs.writer();
         std.fmt.format(w, "{s} {d} {s}\r\n", .{
             http.Version.http1_1.toText(),
-            http.StatusCode.bad_request.code(),
-            http.StatusCode.bad_request.toText(),
+            status_code.code(),
+            status_code.toText(),
         }) catch unreachable;
         var now = datetime.datetime.Datetime.now();
         std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
