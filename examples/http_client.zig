@@ -3,13 +3,12 @@ const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
-const TimeoutIo = http.TimeoutIo;
 
 const Client = struct {
-    io: TimeoutIo,
-    completion: TimeoutIo.Completion = undefined,
+    io: *IO,
+    linked_completion: IO.LinkedCompletion = undefined,
     socket: os.socket_t = undefined,
-    send_buf: [32768]u8 = [_]u8{0} ** 32768,
+    send_buf: [1024]u8 = [_]u8{0} ** 1024,
     recv_buf: [1024]u8 = [_]u8{0} ** 1024,
     connect_timeout: u63 = 500 * time.ns_per_ms,
     send_timeout: u63 = 500 * time.ns_per_ms,
@@ -31,7 +30,7 @@ const Client = struct {
             *Self,
             self,
             connectCallback,
-            &self.completion,
+            &self.linked_completion,
             self.socket,
             addr,
             self.connect_timeout,
@@ -39,8 +38,8 @@ const Client = struct {
     }
     fn connectCallback(
         self: *Self,
-        comp: *TimeoutIo.Completion,
-        result: TimeoutIo.ConnectError!void,
+        comp: *IO.LinkedCompletion,
+        result: IO.ConnectError!void,
     ) void {
         if (result) |_| {
             self.state = .Sending1;
@@ -60,14 +59,15 @@ const Client = struct {
             while (pos < self.send_buf.len) : (pos += 1) {
                 self.send_buf[pos] = 'f';
             }
-            std.debug.print("self.send_buf={s}\n", .{ self.send_buf });
+            std.debug.print("self.send_buf={s}\n", .{self.send_buf});
             self.io.sendWithTimeout(
                 *Self,
                 self,
                 sendCallback,
-                &self.completion,
+                &self.linked_completion,
                 self.socket,
                 &self.send_buf,
+                0,
                 self.send_timeout,
             );
         } else |err| {
@@ -77,8 +77,8 @@ const Client = struct {
     }
     fn sendCallback(
         self: *Self,
-        comp: *TimeoutIo.Completion,
-        result: TimeoutIo.SendError!usize,
+        comp: *IO.LinkedCompletion,
+        result: IO.SendError!usize,
     ) void {
         if (result) |_| {
             switch (self.state) {
@@ -88,9 +88,10 @@ const Client = struct {
                         *Self,
                         self,
                         sendCallback,
-                        &self.completion,
+                        &self.linked_completion,
                         self.socket,
                         "\r\n\r\n",
+                        0,
                         self.send_timeout,
                     );
                 },
@@ -100,9 +101,10 @@ const Client = struct {
                         *Self,
                         self,
                         recvCallback,
-                        &self.completion,
+                        &self.linked_completion,
                         self.socket,
                         &self.recv_buf,
+                        0,
                         self.recv_timeout,
                     );
                 },
@@ -115,8 +117,8 @@ const Client = struct {
     }
     fn recvCallback(
         self: *Self,
-        comp: *TimeoutIo.Completion,
-        result: TimeoutIo.RecvError!usize,
+        comp: *IO.LinkedCompletion,
+        result: IO.RecvError!usize,
     ) void {
         if (result) |received| {
             std.debug.print("response={s}", .{self.recv_buf[0..received]});
@@ -149,7 +151,7 @@ pub fn main() anyerror!void {
     var io = try IO.init(32, 0);
     defer io.deinit();
 
-    var client = Client{ .io = TimeoutIo.init(&io) };
+    var client = Client{ .io = &io };
     try client.connect(address);
     while (!client.done) {
         try io.run_for_ns(100 * time.ns_per_ms);
