@@ -5,7 +5,6 @@ const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
-const TimeoutIo = http.TimeoutIo;
 const datetime = @import("datetime");
 const config = http.config;
 
@@ -131,8 +130,8 @@ const Server = struct {
 const ClientHandler = struct {
     server: *Server,
     handler_id: usize,
-    io: TimeoutIo,
-    completion: TimeoutIo.Completion = undefined,
+    io: *IO,
+    linked_completion: IO.LinkedCompletion = undefined,
     sock: os.socket_t,
     recv_buf: []u8,
     send_buf: []u8,
@@ -153,7 +152,7 @@ const ClientHandler = struct {
         self.* = ClientHandler{
             .server = server,
             .handler_id = handler_id,
-            .io = TimeoutIo{ .io = io },
+            .io = io,
             .sock = sock,
             .request_scanner = req_scanner,
             .recv_buf = recv_buf,
@@ -192,16 +191,17 @@ const ClientHandler = struct {
             *ClientHandler,
             self,
             recvCallback,
-            &self.completion,
+            &self.linked_completion,
             self.sock,
             buf,
+            0,
             self.recv_timeout_ns,
         );
     }
     fn recvCallback(
         self: *ClientHandler,
-        completion: *TimeoutIo.Completion,
-        result: TimeoutIo.RecvError!usize,
+        completion: *IO.LinkedCompletion,
+        result: IO.RecvError!usize,
     ) void {
         if (result) |received| {
             std.debug.print("received={d}\n", .{received});
@@ -256,9 +256,10 @@ const ClientHandler = struct {
                     *ClientHandler,
                     self,
                     recvCallback,
-                    &self.completion,
+                    &self.linked_completion,
                     self.sock,
                     self.recv_buf[old + received ..],
+                    0,
                     self.recv_timeout_ns,
                 );
             }
@@ -300,9 +301,10 @@ const ClientHandler = struct {
             *ClientHandler,
             self,
             sendCallback,
-            &self.completion,
+            &self.linked_completion,
             self.sock,
             fbs.getWritten(),
+            0,
             self.send_timeout_ns,
         );
     }
@@ -348,16 +350,17 @@ const ClientHandler = struct {
             *ClientHandler,
             self,
             sendCallback,
-            &self.completion,
+            &self.linked_completion,
             self.sock,
             fbs.getWritten(),
+            0,
             self.send_timeout_ns,
         );
     }
     fn sendCallback(
         self: *ClientHandler,
-        completion: *TimeoutIo.Completion,
-        result: TimeoutIo.SendError!usize,
+        completion: *IO.LinkedCompletion,
+        result: IO.SendError!usize,
     ) void {
         if (result) |sent| {
             std.debug.print("sent request bytes={d}\n", .{sent});
