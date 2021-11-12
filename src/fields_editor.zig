@@ -35,7 +35,7 @@ pub const FieldsEditor = struct {
     pub fn parseOwnedSlice(allocator: *Allocator, buf: []u8) !FieldsEditor {
         var line_count: usize = 0;
         var it = FieldIterator.init(buf);
-        while (try it.next()) |_| {
+        while (it.next()) |_| {
             line_count += 1;
         }
         const len = @ptrToInt(it.rest().ptr) - @ptrToInt(buf.ptr);
@@ -415,18 +415,6 @@ test "FieldsEditor get" {
 }
 
 test "FieldsEditor parseOwnedSlice" {
-    const bad_input = try testing.allocator.dupe(
-        u8,
-        "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
-            "Cache-Control: public, s-maxage=60\r\n" ++
-            "Vary: Accept-Encoding\r\n",
-    );
-    defer testing.allocator.free(bad_input);
-    try testing.expectError(
-        error.InvalidField,
-        FieldsEditor.parseOwnedSlice(testing.allocator, bad_input),
-    );
-
     const input_fields =
         "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
         "Cache-Control: public, s-maxage=60\r\n" ++

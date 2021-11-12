@@ -10,7 +10,7 @@ pub const FieldIterator = struct {
         return .{ .buf = buf };
     }
 
-    pub fn next(self: *FieldIterator) !?Field {
+    pub fn next(self: *FieldIterator) ?Field {
         if (std.mem.startsWith(u8, self.buf, crlf)) {
             self.buf = self.buf[crlf.len..];
             return null;
@@ -26,11 +26,11 @@ pub const FieldIterator = struct {
                 };
             }
         }
-        return error.InvalidField;
+        @panic("FieldIterator must be initialized with valid fields in buf.");
     }
 
-    pub fn nextForName(self: *FieldIterator, name: []const u8) !?Field {
-        while (try self.next()) |f| {
+    pub fn nextForName(self: *FieldIterator, name: []const u8) ?Field {
+        while (self.next()) |f| {
             if (std.ascii.eqlIgnoreCase(f.name(), name)) {
                 return f;
             }
@@ -79,7 +79,7 @@ test "FieldIterator valid fields and body" {
     };
     var it = FieldIterator.init(input);
     var i: usize = 0;
-    while (try it.next()) |f| {
+    while (it.next()) |f| {
         try testing.expectEqualStrings(names[i], f.name());
         try testing.expectEqualStrings(values[i], f.value());
         i += 1;
@@ -93,7 +93,7 @@ test "FieldIterator trim value" {
         "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
         "\r\n";
     var it = FieldIterator.init(input);
-    while (try it.next()) |f| {
+    while (it.next()) |f| {
         try testing.expectEqualStrings("Mon, 27 Jul 2009 12:28:53 GMT", f.value());
     }
 }
@@ -113,7 +113,7 @@ test "FieldIterator nextForName" {
 
     var it = FieldIterator.init(input);
     var i: usize = 0;
-    while (try it.nextForName("cache-control")) |f| {
+    while (it.nextForName("cache-control")) |f| {
         try testing.expectEqualStrings(values[i], f.value());
         i += 1;
     }
