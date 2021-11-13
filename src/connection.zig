@@ -31,7 +31,6 @@ pub const SocketConnection = struct {
         ) void,
         completion: *Completion,
         buffer: []u8,
-        recv_flags: u32,
         timeout_ns: u63,
     ) void {
         std.debug.print("recvWithTimeout self=0x{x}, context=0x{x}\n", .{ @ptrToInt(self), @ptrToInt(context) });
@@ -51,7 +50,7 @@ pub const SocketConnection = struct {
             &completion.linked_completion,
             self.sock,
             buffer,
-            recv_flags,
+            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
             timeout_ns,
         );
     }
@@ -164,7 +163,6 @@ test "SocketConnection" {
                 recvWithTimeoutCallback,
                 &self.server_completion,
                 &self.recv_buf,
-                if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 time.ns_per_ms,
             );
         }
