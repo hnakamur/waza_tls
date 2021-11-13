@@ -200,7 +200,7 @@ test "RecvRequest - GET method" {
     try testing.expectEqual(Method{ .get = undefined }, req.method);
     try testing.expectEqualStrings(uri, req.uri);
     try testing.expectEqual(try Version.fromText(version), req.version);
-    try testing.expectEqualStrings(headers, req.headers);
+    try testing.expectEqualStrings(headers, req.headers.fields);
 }
 
 test "RecvRequest - custom method" {
@@ -222,7 +222,7 @@ test "RecvRequest - custom method" {
     }
     try testing.expectEqualStrings(uri, req.uri);
     try testing.expectEqual(try Version.fromText(version), req.version);
-    try testing.expectEqualStrings(headers, req.headers);
+    try testing.expectEqualStrings(headers, req.headers.fields);
 }
 
 test "RecvRequestScanner - GET method" {

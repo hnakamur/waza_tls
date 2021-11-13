@@ -1,8 +1,9 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const Field = @import("field.zig").Field;
-const FieldIterator = @import("field_iterator.zig").FieldIterator;
+const FieldLine = @import("fields.zig").FieldLine;
+const FieldLineIterator = @import("fields.zig").FieldLineIterator;
+const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 
 const crlf_crlf = "\r\n\r\n";
 const crlf = "\r\n";
@@ -34,11 +35,15 @@ pub const FieldsEditor = struct {
     /// Deinitialize with `deinit` or use `toOwnedSlice`.
     pub fn parseOwnedSlice(allocator: *Allocator, buf: []u8) !FieldsEditor {
         var line_count: usize = 0;
-        var it = FieldIterator.init(buf);
+        var scanner = FieldsScanner{};
+        if (!try scanner.scan(buf)) {
+            return error.Invalid;
+        }
+        const len = scanner.totalBytesRead();
+        var it = FieldLineIterator.init(buf[0..len]);
         while (it.next()) |_| {
             line_count += 1;
         }
-        const len = @ptrToInt(it.rest().ptr) - @ptrToInt(buf.ptr);
 
         return FieldsEditor{
             .buf = buf,
@@ -151,13 +156,13 @@ pub const FieldsEditor = struct {
     /// FieldsEditor owns the returned memory. The name and value of the
     /// returned Field is valid for use only until the next modification of
     /// this FieldsEditor.
-    pub fn get(self: *const FieldsEditor, i: usize) !Field {
+    pub fn get(self: *const FieldsEditor, i: usize) !FieldLine {
         try self.validateLineIndex(i);
 
         const pos = self.posForLineIndex(i);
         const colon_pos = std.mem.indexOfScalarPos(u8, self.buf, pos, ':').?;
         const end_pos = std.mem.indexOfPos(u8, self.buf, colon_pos + 1, crlf).?;
-        return Field{
+        return FieldLine{
             .line = self.buf[pos..end_pos],
             .colon_pos = colon_pos - pos,
         };
@@ -376,7 +381,7 @@ test "FieldsEditor get" {
         const result = try editor.indexOfNamePos("cache-control", start);
         if (result) |i| {
             const f = try editor.get(i);
-            try testing.expectEqualStrings(wants[j], f.lineValue());
+            try testing.expectEqualStrings(wants[j], f.value());
             j += 1;
             start = i + 1;
         } else {
