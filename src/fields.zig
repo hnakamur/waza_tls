@@ -1,23 +1,9 @@
 const std = @import("std");
 const fmt = std.fmt;
 const math = std.math;
+const assert = std.debug.assert;
 const FieldIterator = @import("field_iterator.zig").FieldIterator;
 const isWhiteSpaceChar = @import("token_char.zig").isWhiteSpaceChar;
-
-pub const FieldLine = struct {
-    line: []const u8,
-    colon_pos: usize,
-
-    pub fn name(self: *const FieldLine) []const u8 {
-        return self.line[0..self.colon_pos];
-    }
-
-    // return a single header line's value.
-    // https://www.ietf.org/archive/id/draft-ietf-httpbis-semantics-19.html#appendix-B.2-6
-    pub fn value(self: *const FieldLine) []const u8 {
-        return std.mem.trim(u8, self.line[self.colon_pos + 1 ..], &[_]u8{ ' ', '\t' });
-    }
-};
 
 pub const Fields = struct {
     fields: []const u8,
@@ -28,75 +14,11 @@ pub const Fields = struct {
         return .{ .fields = fields };
     }
 
-    const crlf = "\r\n";
-
-    pub const FieldLineIterator = struct {
-        buf: []const u8,
-
-        pub fn next(self: *FieldLineIterator) ?FieldLine {
-            if (std.mem.startsWith(u8, self.buf, crlf)) {
-                self.buf = self.buf[crlf.len..];
-                return null;
-            }
-
-            if (std.mem.indexOfScalar(u8, self.buf, ':')) |colon_pos| {
-                if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
-                    const line = self.buf[0..crlf_pos];
-                    self.buf = self.buf[crlf_pos + crlf.len ..];
-                    return FieldLine{
-                        .line = line,
-                        .colon_pos = colon_pos,
-                    };
-                }
-            }
-            @panic("FieldLineIterator must be initialized with valid fields in buf.");
-        }
-    };
-
-    pub fn fieldLineIterator(self: *const Fields) FieldLineIterator {
-        return .{ .buf = self.fields };
-    }
-
-    pub const FieldNameLineIterator = struct {
-        buf: []const u8,
-        field_name: []const u8,
-
-        pub fn next(self: *FieldNameLineIterator) ?FieldLine {
-            while (true) {
-                if (std.mem.startsWith(u8, self.buf, crlf)) {
-                    self.buf = self.buf[crlf.len..];
-                    return null;
-                }
-
-                if (std.mem.indexOfScalar(u8, self.buf, ':')) |colon_pos| {
-                    if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
-                        if (std.ascii.eqlIgnoreCase(self.buf[0..colon_pos], self.field_name)) {
-                            const line = self.buf[0..crlf_pos];
-                            self.buf = self.buf[crlf_pos + crlf.len ..];
-                            return FieldLine{
-                                .line = line,
-                                .colon_pos = colon_pos,
-                            };
-                        } else {
-                            self.buf = self.buf[crlf_pos + crlf.len ..];
-                            continue;
-                        }
-                    }
-                }
-                @panic("FieldNameLineIterator must be initialized with valid fields in buf.");
-            }
-        }
-    };
-
-    pub fn fieldNameLineIterator(self: *const Fields, field_name: []const u8) FieldNameLineIterator {
-        return .{ .buf = self.fields, .field_name = field_name };
-    }
-
     pub const ContentLengthError = error{Inconsistent} || DecimalDigitsParseError;
 
     pub fn getContentLength(self: *const Fields) ContentLengthError!?u64 {
         var result: ?u64 = null;
-        var it = self.fieldNameLineIterator("content-length");
+        var it = FieldNameLineIterator.init(self.fields, "content-length");
         while (it.next()) |field_line| {
             var v_it = SimpleCSVIterator.init(field_line.value());
             while (v_it.next()) |v| {
@@ -111,6 +33,83 @@ pub const Fields = struct {
             }
         }
         return result;
+    }
+};
+
+const whiteSpaceChars = [_]u8{ ' ', '\t' };
+
+pub const FieldLine = struct {
+    line: []const u8,
+    colon_pos: usize,
+
+    pub fn name(self: *const FieldLine) []const u8 {
+        return self.line[0..self.colon_pos];
+    }
+
+    // return a single header line's value.
+    // https://www.ietf.org/archive/id/draft-ietf-httpbis-semantics-19.html#appendix-B.2-6
+    pub fn value(self: *const FieldLine) []const u8 {
+        return std.mem.trim(u8, self.line[self.colon_pos + 1 ..], &whiteSpaceChars);
+    }
+};
+
+const crlf = "\r\n";
+
+pub const FieldLineIterator = struct {
+    buf: []const u8,
+
+    pub fn init(buf: []const u8) FieldLineIterator {
+        return .{ .buf = buf };
+    }
+
+    pub fn next(self: *FieldLineIterator) ?FieldLine {
+        while (self.buf.len > crlf.len) {
+            if (std.mem.indexOfScalar(u8, self.buf, ':')) |colon_pos| {
+                if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
+                    const line = self.buf[0..crlf_pos];
+                    self.buf = self.buf[crlf_pos + crlf.len ..];
+                    return FieldLine{
+                        .line = line,
+                        .colon_pos = colon_pos,
+                    };
+                }
+            }
+            @panic("FieldLineIterator must be initialized with valid fields in buf.");
+        }
+        assert(self.buf.len == 0 or std.mem.eql(u8, self.buf, crlf));
+        return null;
+    }
+};
+
+pub const FieldNameLineIterator = struct {
+    buf: []const u8,
+    field_name: []const u8,
+
+    pub fn init(buf: []const u8, field_name: []const u8) FieldNameLineIterator {
+        return .{ .buf = buf, .field_name = field_name };
+    }
+
+    pub fn next(self: *FieldNameLineIterator) ?FieldLine {
+        while (self.buf.len > crlf.len) {
+            if (std.mem.indexOfScalar(u8, self.buf, ':')) |colon_pos| {
+                if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
+                    if (std.ascii.eqlIgnoreCase(self.buf[0..colon_pos], self.field_name)) {
+                        const line = self.buf[0..crlf_pos];
+                        self.buf = self.buf[crlf_pos + crlf.len ..];
+                        return FieldLine{
+                            .line = line,
+                            .colon_pos = colon_pos,
+                        };
+                    } else {
+                        self.buf = self.buf[crlf_pos + crlf.len ..];
+                        continue;
+                    }
+                }
+            }
+            @panic("FieldNameLineIterator must be initialized with valid fields in buf.");
+        }
+        assert(self.buf.len == 0 or std.mem.eql(u8, self.buf, crlf));
+        return null;
     }
 };
 
@@ -178,12 +177,12 @@ const SimpleCSVIterator = struct {
     }
 };
 
-const DecimalDigitsParseError = error{
+pub const DecimalDigitsParseError = error{
     InvalidCharacter,
     Overflow,
 };
 
-fn parseDecimalDigits(digits: []const u8) DecimalDigitsParseError!u64 {
+pub fn parseDecimalDigits(digits: []const u8) DecimalDigitsParseError!u64 {
     var result: u64 = 0;
     for (digits) |c| {
         const d = try fmt.charToDigit(c, 10);
@@ -285,7 +284,7 @@ test "fieldLineIterator" {
         "text/plain",
     };
 
-    var it = Fields.init(input).fieldLineIterator();
+    var it = FieldLineIterator.init(input);
     var i: usize = 0;
     while (it.next()) |f| {
         try testing.expectEqualStrings(names[i], f.name());
@@ -307,7 +306,7 @@ test "fieldNameLineIterator" {
         "maxage=120",
     };
 
-    var it = Fields.init(input).fieldNameLineIterator("cache-control");
+    var it = FieldNameLineIterator.init(input, "cache-control");
     var i: usize = 0;
     while (it.next()) |f| {
         if (!std.ascii.eqlIgnoreCase(f.name(), "cache-control")) {

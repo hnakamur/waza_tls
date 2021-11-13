@@ -13,18 +13,5 @@ pub const Field = struct {
     pub fn lineValue(self: *const Field) []const u8 {
         return std.mem.trim(u8, self.line[self.colon_pos + 1 ..], &[_]u8{ ' ', '\t' });
     }
-
-    pub const ValueCommaIterator = struct {
-        buf: []const u8,
-        pos: usize = 0,
-
-        pub fn next(self: *ValueCommaIterator) ?[]const u8 {
-
-        }
-    };
-
-    pub fn valueCommaIterator(self: *const Field) ValueCommaIterator {
-        return .{ .buf = self.lineValue() };
-    }
 };
 
