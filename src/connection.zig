@@ -114,9 +114,6 @@ test "SocketConnection" {
         recv_buf: [1024]u8 = [_]u8{1} ** 1024,
         send_buf: [1024]u8 = [_]u8{0} ** 1024,
         done: bool = false,
-        server_sock: os.socket_t = undefined,
-        client_sock: os.socket_t = undefined,
-        accepted_sock: os.socket_t = undefined,
         accepted_conn: SocketConnection = undefined,
         server_completion: SocketConnection.Completion = undefined,
         client_conn: SocketConnection = undefined,
@@ -132,24 +129,24 @@ test "SocketConnection" {
 
             const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
             const kernel_backlog = 1;
-            self.server_sock = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
-            defer os.close(self.server_sock);
+            const server_sock = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+            defer os.close(server_sock);
 
-            self.client_sock = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
-            defer os.close(self.client_sock);
+            const client_sock = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+            defer os.close(client_sock);
             self.client_conn = .{
                 .io = &io,
-                .sock = self.client_sock,
+                .sock = client_sock,
             };
 
             try os.setsockopt(
-                self.server_sock,
+                server_sock,
                 os.SOL_SOCKET,
                 os.SO_REUSEADDR,
                 &std.mem.toBytes(@as(c_int, 1)),
             );
-            try os.bind(self.server_sock, &address.any, address.getOsSockLen());
-            try os.listen(self.server_sock, kernel_backlog);
+            try os.bind(server_sock, &address.any, address.getOsSockLen());
+            try os.listen(server_sock, kernel_backlog);
 
             var client_completion: IO.Completion = undefined;
             self.io.connect(
@@ -157,7 +154,7 @@ test "SocketConnection" {
                 &self,
                 connectCallback,
                 &client_completion,
-                self.client_sock,
+                client_sock,
                 address,
             );
 
@@ -167,7 +164,7 @@ test "SocketConnection" {
                 &self,
                 acceptCallback,
                 &server_completion,
-                self.server_sock,
+                server_sock,
                 0,
             );
 
