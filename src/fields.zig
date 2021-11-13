@@ -57,9 +57,10 @@ const crlf = "\r\n";
 
 pub const FieldLineIterator = struct {
     buf: []const u8,
+    total_bytes_read: usize,
 
     pub fn init(buf: []const u8) FieldLineIterator {
-        return .{ .buf = buf };
+        return .{ .buf = buf, .total_bytes_read = 0 };
     }
 
     pub fn next(self: *FieldLineIterator) ?FieldLine {
@@ -67,6 +68,7 @@ pub const FieldLineIterator = struct {
             if (std.mem.indexOfScalar(u8, self.buf, ':')) |colon_pos| {
                 if (std.mem.indexOfPos(u8, self.buf, colon_pos, crlf)) |crlf_pos| {
                     const line = self.buf[0..crlf_pos];
+                    self.total_bytes_read += crlf_pos + crlf.len;
                     self.buf = self.buf[crlf_pos + crlf.len ..];
                     return FieldLine{
                         .line = line,
@@ -77,7 +79,12 @@ pub const FieldLineIterator = struct {
             @panic("FieldLineIterator must be initialized with valid fields in buf.");
         }
         assert(self.buf.len == 0 or std.mem.eql(u8, self.buf, crlf));
+        self.total_bytes_read += self.buf.len;
         return null;
+    }
+
+    pub fn totalBytesRead(self: *const FieldLineIterator) usize {
+        return self.total_bytes_read;
     }
 };
 
@@ -283,15 +290,30 @@ test "fieldLineIterator" {
         "Accept-Encoding",
         "text/plain",
     };
+    var lineLengths = [_]usize{
+        "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n".len,
+        "Server: Apache\r\n".len,
+        "Last-Modified:  Wed, 22 Jul 2009 19:15:56 GMT\t \r\n".len,
+        "ETag: \"34aa387-d-1568eb00\"\r\n".len,
+        "Accept-Ranges: bytes\r\n".len,
+        "Content-Length: 51\r\n".len,
+        "Vary: Accept-Encoding\r\n".len,
+        "Content-Type: text/plain\r\n".len,
+    };
 
     var it = FieldLineIterator.init(input);
     var i: usize = 0;
+    var total: usize = 0;
     while (it.next()) |f| {
         try testing.expectEqualStrings(names[i], f.name());
         try testing.expectEqualStrings(values[i], f.value());
+        total += lineLengths[i];
+        try testing.expectEqual(total, it.totalBytesRead());
+
         i += 1;
     }
     try testing.expectEqual(names.len, i);
+    try testing.expectEqual(input.len, it.totalBytesRead());
 }
 
 test "fieldNameLineIterator" {
