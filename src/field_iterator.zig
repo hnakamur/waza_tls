@@ -81,7 +81,7 @@ test "FieldIterator valid fields and body" {
     var i: usize = 0;
     while (it.next()) |f| {
         try testing.expectEqualStrings(names[i], f.name());
-        try testing.expectEqualStrings(values[i], f.value());
+        try testing.expectEqualStrings(values[i], f.lineValue());
         i += 1;
     }
     try testing.expectEqual(names.len, i);
@@ -94,7 +94,7 @@ test "FieldIterator trim value" {
         "\r\n";
     var it = FieldIterator.init(input);
     while (it.next()) |f| {
-        try testing.expectEqualStrings("Mon, 27 Jul 2009 12:28:53 GMT", f.value());
+        try testing.expectEqualStrings("Mon, 27 Jul 2009 12:28:53 GMT", f.lineValue());
     }
 }
 
@@ -114,7 +114,7 @@ test "FieldIterator nextForName" {
     var it = FieldIterator.init(input);
     var i: usize = 0;
     while (it.nextForName("cache-control")) |f| {
-        try testing.expectEqualStrings(values[i], f.value());
+        try testing.expectEqualStrings(values[i], f.lineValue());
         i += 1;
     }
     try testing.expectEqual(values.len, i);

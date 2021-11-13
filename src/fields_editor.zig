@@ -376,7 +376,7 @@ test "FieldsEditor get" {
         const result = try editor.indexOfNamePos("cache-control", start);
         if (result) |i| {
             const f = try editor.get(i);
-            try testing.expectEqualStrings(wants[j], f.value());
+            try testing.expectEqualStrings(wants[j], f.lineValue());
             j += 1;
             start = i + 1;
         } else {

@@ -8,8 +8,16 @@ pub fn isTokenChar(c: u8) bool {
     return tokenCharBitset.isSet(c);
 }
 
+pub inline fn isVisibleChar(c: u8) bool {
+    return '\x21' <= c and c <= '\x7e';
+}
+
+pub inline fn isObsText(c: u8) bool {
+    return '\x80' <= c;
+}
+
 pub inline fn isFieldVisibleChar(c: u8) bool {
-    return c > '\x20';
+    return isVisibleChar(c) || isObsText(c);
 }
 
 pub inline fn isWhiteSpaceChar(c: u8) bool {
