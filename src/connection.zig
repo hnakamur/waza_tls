@@ -8,9 +8,12 @@ pub const Connection = struct {};
 pub const SocketConnection = struct {
     io: *IO,
     sock: os.socket_t,
-    linked_completion: IO.LinkedCompletion = undefined,
-    saved_ctx: ?*c_void = null,
-    saved_callback: fn (ctx: ?*c_void, res: *const c_void) void = undefined,
+
+    const Completion = struct {
+        linked_completion: IO.LinkedCompletion = undefined,
+        ctx: ?*c_void = null,
+        callback: fn (ctx: ?*c_void, res: *const c_void) void = undefined,
+    };
 
     const Self = @This();
 
@@ -26,13 +29,14 @@ pub const SocketConnection = struct {
             context: Context,
             result: IO.RecvError!usize,
         ) void,
+        completion: *Completion,
         buffer: []u8,
         recv_flags: u32,
         timeout_ns: u63,
     ) void {
         std.debug.print("recvWithTimeout self=0x{x}, context=0x{x}\n", .{ @ptrToInt(self), @ptrToInt(context) });
-        self.saved_ctx = context;
-        self.saved_callback = struct {
+        completion.ctx = context;
+        completion.callback = struct {
             fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                 callback(
                     @intToPtr(Context, @ptrToInt(ctx)),
@@ -44,7 +48,7 @@ pub const SocketConnection = struct {
             *Self,
             self,
             recvWithTimeoutCallback,
-            &self.linked_completion,
+            &completion.linked_completion,
             self.sock,
             buffer,
             recv_flags,
@@ -53,11 +57,12 @@ pub const SocketConnection = struct {
     }
     pub fn recvWithTimeoutCallback(
         self: *Self,
-        completion: *IO.LinkedCompletion,
+        linked_completion: *IO.LinkedCompletion,
         result: IO.RecvError!usize,
     ) void {
-        std.debug.print("recvWithTimeoutCallback self=0x{x}, saved_ctx=0x{x}\n", .{ @ptrToInt(self), @ptrToInt(self.saved_ctx) });
-        self.saved_callback(self.saved_ctx, &result);
+        const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+        std.debug.print("recvWithTimeoutCallback comp=0x{x}\n", .{ @ptrToInt(comp) });
+        comp.callback(comp.ctx, &result);
     }
 
     pub fn sendWithTimeout(
@@ -88,6 +93,7 @@ test "SocketConnection" {
         client_sock: os.socket_t = undefined,
         accepted_sock: os.socket_t = undefined,
         accepted_conn: SocketConnection = undefined,
+        server_completion: SocketConnection.Completion = undefined,
 
         fn runTest() !void {
             var io = try IO.init(32, 0);
@@ -156,6 +162,7 @@ test "SocketConnection" {
                 *Context,
                 self,
                 recvWithTimeoutCallback,
+                &self.server_completion,
                 &self.recv_buf,
                 if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 time.ns_per_ms,
