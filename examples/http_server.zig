@@ -75,6 +75,7 @@ const Server = struct {
         const handler_id = if (self.findEmptyClientHandlerId()) |id| id else self.client_handlers.items.len;
         std.debug.print("client_handler_id={d}\n", .{handler_id});
         const handler = try ClientHandler.init(self, handler_id, self.allocator, &self.io, accepted_sock);
+        _ = http.SocketConnection.init(&self.io, accepted_sock);
         if (handler_id < self.client_handlers.items.len) {
             self.client_handlers.items[handler_id] = handler;
         } else {
