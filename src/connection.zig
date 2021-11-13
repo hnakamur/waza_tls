@@ -33,7 +33,6 @@ pub const SocketConnection = struct {
         buffer: []u8,
         timeout_ns: u63,
     ) void {
-        std.debug.print("recvWithTimeout self=0x{x}, context=0x{x}\n", .{ @ptrToInt(self), @ptrToInt(context) });
         completion.ctx = context;
         completion.callback = struct {
             fn wrapper(ctx: ?*c_void, res: *const c_void) void {
@@ -60,7 +59,6 @@ pub const SocketConnection = struct {
         result: IO.RecvError!usize,
     ) void {
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
-        std.debug.print("recvWithTimeoutCallback comp=0x{x}\n", .{ @ptrToInt(comp) });
         comp.callback(comp.ctx, &result);
     }
 
@@ -76,7 +74,6 @@ pub const SocketConnection = struct {
         buffer: []const u8,
         timeout_ns: u63,
     ) void {
-        std.debug.print("sendWithTimeout self=0x{x}, context=0x{x}\n", .{ @ptrToInt(self), @ptrToInt(context) });
         completion.ctx = context;
         completion.callback = struct {
             fn wrapper(ctx: ?*c_void, res: *const c_void) void {
@@ -103,7 +100,6 @@ pub const SocketConnection = struct {
         result: IO.SendError!usize,
     ) void {
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
-        std.debug.print("sendWithTimeoutCallback comp=0x{x}\n", .{ @ptrToInt(comp) });
         comp.callback(comp.ctx, &result);
     }
 };
@@ -175,15 +171,12 @@ test "SocketConnection" {
                 0,
             );
 
-            std.debug.print("main self=0x{x}\n", .{@ptrToInt(&self)});
             while (!self.done) {
                 try self.io.tick();
-                // std.debug.print("after tick, self.done={}\n", .{self.done});
             }
             try testing.expectEqual(self.send_buf.len, self.sent);
             try testing.expectEqual(self.recv_buf.len, self.received);
             try testing.expectEqualSlices(u8, self.send_buf[0..self.received], &self.recv_buf);
-            std.debug.print("exiting runTest\n", .{});
         }
 
         fn acceptCallback(
@@ -191,13 +184,10 @@ test "SocketConnection" {
             completion: *IO.Completion,
             result: IO.AcceptError!os.socket_t,
         ) void {
-            std.debug.print("acceptCallback, result={}\n", .{result});
-            std.debug.print("acceptCallback, self=0x{x}\n", .{@ptrToInt(self)});
             self.accepted_conn = .{
                 .io = completion.io,
                 .sock = result catch @panic("accept error"),
             };
-            std.debug.print("acceptCallback, self.accepted_conn=0x{x}\n", .{@ptrToInt(&self.accepted_conn)});
             self.accepted_conn.recvWithTimeout(
                 *Context,
                 self,
@@ -211,11 +201,8 @@ test "SocketConnection" {
             self: *Context,
             result: IO.RecvError!usize,
         ) void {
-            std.debug.print("recvWithTimeoutCallback result={}\n", .{result});
-            std.debug.print("recvWithTimeoutCallback self=0x{x}\n", .{@ptrToInt(self)});
             self.received = result catch @panic("receive error");
             self.done = true;
-            std.debug.print("set self.done to {}\n", .{self.done});
         }
 
         fn connectCallback(
@@ -223,7 +210,6 @@ test "SocketConnection" {
             completion: *IO.Completion,
             result: IO.ConnectError!void,
         ) void {
-            std.debug.print("connectCallback result={}\n", .{result});
             result catch @panic("connect error");
             self.client_conn.sendWithTimeout(
                 *Context,
@@ -238,9 +224,7 @@ test "SocketConnection" {
             self: *Context,
             result: IO.SendError!usize,
         ) void {
-            std.debug.print("sendWithTimeoutCallback result={}\n", .{result});
             self.sent = result catch @panic("send error");
         }
     }.runTest();
-    std.debug.print("exit SocketConnection test\n", .{});
 }
