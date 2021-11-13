@@ -225,3 +225,145 @@ test "SocketConnection" {
         }
     }.runTest();
 }
+
+pub const MockConnection = struct {
+    const Completion = struct {
+        ctx: ?*c_void = null,
+        callback: fn (ctx: ?*c_void, res: *const c_void) void = undefined,
+    };
+
+    const Self = @This();
+
+    pub fn init() Self {
+        return .{};
+    }
+
+    pub fn recvWithTimeout(
+        self: *Self,
+        comptime Context: type,
+        context: Context,
+        comptime callback: fn (
+            context: Context,
+            result: IO.RecvError!usize,
+        ) void,
+        completion: *Completion,
+        buffer: []u8,
+        timeout_ns: u63,
+    ) void {
+        completion.ctx = context;
+        completion.callback = struct {
+            fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                callback(
+                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @intToPtr(*const IO.RecvError!usize, @ptrToInt(res)).*,
+                );
+            }
+        }.wrapper;
+    }
+    pub fn recvWithTimeoutCallback(
+        self: *Self,
+        comp: *Completion,
+        result: IO.RecvError!usize,
+    ) void {
+        comp.callback(comp.ctx, &result);
+    }
+
+    pub fn sendWithTimeout(
+        self: *Self,
+        comptime Context: type,
+        context: Context,
+        comptime callback: fn (
+            context: Context,
+            result: IO.SendError!usize,
+        ) void,
+        completion: *Completion,
+        buffer: []const u8,
+        timeout_ns: u63,
+    ) void {
+        completion.ctx = context;
+        completion.callback = struct {
+            fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                callback(
+                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,
+                );
+            }
+        }.wrapper;
+    }
+    pub fn sendWithTimeoutCallback(
+        self: *Self,
+        comp: *Completion,
+        result: IO.SendError!usize,
+    ) void {
+        comp.callback(comp.ctx, &result);
+    }
+};
+
+test "MockConnection" {
+    try struct {
+        const Context = @This();
+
+        recv_buf: [1024]u8 = [_]u8{1} ** 1024,
+        send_buf: [1024]u8 = [_]u8{0} ** 1024,
+        done: bool = false,
+        accepted_conn: MockConnection = undefined,
+        server_completion: MockConnection.Completion = undefined,
+        client_conn: MockConnection = undefined,
+        client_completion: MockConnection.Completion = undefined,
+        received: usize = undefined,
+        sent: usize = undefined,
+
+        fn runTest() !void {
+            var self: Context = .{};
+            self.accepted_conn = .{};
+            self.client_conn = .{};
+
+            self.accepted_conn.recvWithTimeout(
+                *Context,
+                &self,
+                recvWithTimeoutCallback,
+                &self.server_completion,
+                &self.recv_buf,
+                time.ns_per_ms,
+            );
+            self.client_conn.sendWithTimeout(
+                *Context,
+                &self,
+                sendWithTimeoutCallback,
+                &self.client_completion,
+                &self.send_buf,
+                time.ns_per_ms,
+            );
+
+            self.client_conn.sendWithTimeoutCallback(
+                &self.client_completion,
+                self.send_buf.len,
+            );
+            self.accepted_conn.sendWithTimeoutCallback(
+                &self.server_completion,
+                self.recv_buf.len,
+            );
+            std.mem.copy(u8, &self.recv_buf, &self.send_buf);
+
+            try testing.expectEqual(self.send_buf.len, self.sent);
+            try testing.expectEqual(self.recv_buf.len, self.received);
+            try testing.expectEqualSlices(u8, self.send_buf[0..self.received], &self.recv_buf);
+            try testing.expect(self.done);
+        }
+
+        fn recvWithTimeoutCallback(
+            self: *Context,
+            result: IO.RecvError!usize,
+        ) void {
+            self.received = result catch @panic("receive error");
+            self.done = true;
+        }
+
+        fn sendWithTimeoutCallback(
+            self: *Context,
+            result: IO.SendError!usize,
+        ) void {
+            self.sent = result catch @panic("send error");
+        }
+    }.runTest();
+}
