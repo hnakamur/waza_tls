@@ -12,12 +12,12 @@ pub inline fn isVisibleChar(c: u8) bool {
     return '\x21' <= c and c <= '\x7e';
 }
 
-pub inline fn isObsText(c: u8) bool {
+pub inline fn isObsTextChar(c: u8) bool {
     return '\x80' <= c;
 }
 
 pub inline fn isFieldVisibleChar(c: u8) bool {
-    return isVisibleChar(c) || isObsText(c);
+    return isVisibleChar(c) or isObsTextChar(c);
 }
 
 pub inline fn isWhiteSpaceChar(c: u8) bool {

@@ -34,6 +34,19 @@ pub const Fields = struct {
         }
         return result;
     }
+
+    pub fn hasConnectionToken(self: *const Fields, token: []const u8) bool {
+        var it = FieldNameLineIterator.init(self.fields, "connection");
+        while (it.next()) |field_line| {
+            var v_it = SimpleCSVIterator.init(field_line.value());
+            while (v_it.next()) |v| {
+                if (std.ascii.eqlIgnoreCase(v, token)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 };
 
 const whiteSpaceChars = [_]u8{ ' ', '\t' };

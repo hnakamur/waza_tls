@@ -3,8 +3,8 @@ const mem = std.mem;
 const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 const isTokenChar = @import("token_char.zig").isTokenChar;
-const FieldIterator = @import("field_iterator.zig").FieldIterator;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
+const Fields = @import("fields.zig").Fields;
 const config = @import("config.zig");
 
 /// A receiving request.
@@ -17,7 +17,7 @@ pub const RecvRequest = struct {
     method: Method,
     uri: []const u8,
     version: Version,
-    headers: []const u8,
+    headers: Fields,
 
     /// Caller owns `buf`. Returned request is valid for use only while `buf` is valid.
     pub fn init(buf: []const u8, scanner: *const RecvRequestScanner) Error!RecvRequest {
@@ -31,7 +31,7 @@ pub const RecvRequest = struct {
         const uri = buf[result.uri_start_pos .. result.uri_start_pos + result.uri_len];
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
         const version = Version.fromText(ver_buf) catch |_| return error.BadRequest;
-        const headers = buf[request_line_len .. request_line_len + headers_len];
+        const headers = Fields.init(buf[request_line_len .. request_line_len + headers_len]);
         // TODO: validate headers
 
         return RecvRequest{
@@ -44,21 +44,10 @@ pub const RecvRequest = struct {
 
     pub fn isKeepAlive(self: *const RecvRequest) !bool {
         return switch (self.version) {
-            .http1_1 => !self.hasConnectionValue("close"),
-            .http1_0 => self.hasConnectionValue("keep-alive"),
+            .http1_1 => !self.headers.hasConnectionToken("close"),
+            .http1_0 => self.headers.hasConnectionToken("keep-alive"),
             else => error.httpVersionNotSupported,
         };
-    }
-
-    fn hasConnectionValue(self: *const RecvRequest, value: []const u8) bool {
-        var it = FieldIterator.init(self.headers);
-        if (it.nextForName("connection")) |f| {
-            const v = f.value();
-            if (std.ascii.eqlIgnoreCase(v, value)) {
-                return true;
-            }
-        }
-        return false;
     }
 };
 
