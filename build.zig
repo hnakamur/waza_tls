@@ -31,13 +31,24 @@ pub fn build(b: *std.build.Builder) void {
     lib.setBuildMode(mode);
     lib.install();
 
+    // tests
     var main_tests = b.addTest("src/main.zig");
     main_tests.addPackage(pkgs.@"tigerbeetle-io");
     main_tests.setBuildMode(mode);
     main_tests.filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
-
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&main_tests.step);
+
+    // tests with mock IO
+    var mock_tests = b.addTest("tests/main.zig");
+    mock_tests.addPackage(std.build.Pkg{
+        .name = "tigerbeetle-io",
+        .path = "tests/mock/mock-io1.zig",
+    });
+    mock_tests.setBuildMode(mode);
+    mock_tests.filter = b.option([]const u8, "mock-test-filter", "Skip tests that do not match filter");
+    const mock_test_step = b.step("mock-test", "Run library tests with mock IO");
+    mock_test_step.dependOn(&mock_tests.step);
 
     const example_step = b.step("examples", "Build examples");
     inline for (.{
