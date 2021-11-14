@@ -34,6 +34,7 @@ pub fn build(b: *std.build.Builder) void {
     var main_tests = b.addTest("src/main.zig");
     main_tests.addPackage(pkgs.@"tigerbeetle-io");
     main_tests.setBuildMode(mode);
+    main_tests.filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&main_tests.step);
