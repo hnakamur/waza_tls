@@ -110,9 +110,8 @@ const RequestLineScanner = struct {
 
     pub fn scan(self: *RequestLineScanner, chunk: []const u8) Error!bool {
         var pos: usize = 0;
-        while (pos < chunk.len) {
+        while (pos < chunk.len) : (pos += 1) {
             const c = chunk[pos];
-            pos += 1;
             self.result.total_bytes_read += 1;
             switch (self.state) {
                 .on_method => {
