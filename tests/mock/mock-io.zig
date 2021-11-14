@@ -1,29 +1,63 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const os = std.os;
 
 const FIFO = @import("fifo.zig").FIFO;
 
 pub const IO = struct {
-    /// Operations not yet submitted to the kernel and waiting on available space in the
-    /// submission queue.
-    unqueued: FIFO(Completion) = .{},
+    /// Operations queued.
+    queued: FIFO(Completion) = .{},
 
     /// Completions that are ready to have their callbacks run.
     completed: FIFO(Completion) = .{},
 
     pub fn init(entries: u12, flags: u32) !IO {
-        std.debug.print("mock IO init, entries={}, flags={}\n", .{entries, flags});
         return IO{};
     }
 
-    pub fn deinit(self: *IO) void {
-        std.debug.print("mock IO deinit\n", .{});
-    }
+    pub fn deinit(self: *IO) void {}
 
     /// Pass all queued submissions to the kernel and peek for completions.
-    pub fn tick(self: *IO) !void {
+    pub fn tick(
+        self: *IO,
+        comptime Context: type,
+        context: Context,
+        setResult: fn (
+            context: Context,
+            completion: *Completion,
+        ) void,
+    ) !void {
+        {
+            var copy = self.queued;
+            self.queued = .{};
+            while (copy.pop()) |completion| {
+                setResult(context, completion);
+                self.completed.push(completion);
+            }
+        }
+
+        // Run completions only after all completions have been flushed:
+        // Loop on a copy of the linked list, having reset the list first, so that any synchronous
+        // append on running a completion is executed only the next time round the event loop,
+        // without creating an infinite loop.
+        {
+            var copy = self.completed;
+            self.completed = .{};
+            while (copy.pop()) |completion| {
+                completion.complete();
+            }
+        }
     }
-    
+
+    fn enqueue(self: *IO, completion: *Completion) void {
+        self.queued.push(completion);
+    }
+
+    fn enqueueLinked(self: *IO, completion1: *Completion, completion2: *Completion) void {
+        self.queued.push(completion1);
+        self.queued.push(completion2);
+    }
+
     /// This struct holds the data needed for a single io_uring operation
     pub const Completion = struct {
         io: *IO,
@@ -36,10 +70,267 @@ pub const IO = struct {
         context: ?*c_void,
         callback: fn (context: ?*c_void, completion: *Completion, result: *const c_void) void,
 
-        fn prep(completion: *Completion, sqe: *io_uring_sqe) void {
-        }
-
         fn complete(completion: *Completion) void {
+            switch (completion.operation) {
+                .accept => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EAGAIN => error.WouldBlock,
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.ECANCELED => error.Canceled,
+                        os.ECONNABORTED => error.ConnectionAborted,
+                        os.EFAULT => unreachable,
+                        os.EINVAL => error.SocketNotListening,
+                        os.EMFILE => error.ProcessFdQuotaExceeded,
+                        os.ENFILE => error.SystemFdQuotaExceeded,
+                        os.ENOBUFS => error.SystemResources,
+                        os.ENOMEM => error.SystemResources,
+                        os.ENOTSOCK => error.FileDescriptorNotASocket,
+                        os.EOPNOTSUPP => error.OperationNotSupported,
+                        os.EPERM => error.PermissionDenied,
+                        os.EPROTO => error.ProtocolFailure,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else @intCast(os.socket_t, completion.result);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .cancel => |*op| {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EALREADY => error.AlreadyInProgress,
+                        os.ENOENT => error.NotFound,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else assert(completion.result == 0);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .close => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {}, // A success, see https://github.com/ziglang/zig/issues/2425
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.ECANCELED => error.Canceled,
+                        os.EDQUOT => error.DiskQuota,
+                        os.EIO => error.InputOutput,
+                        os.ENOSPC => error.NoSpaceLeft,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else assert(completion.result == 0);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .connect => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EACCES => error.AccessDenied,
+                        os.EADDRINUSE => error.AddressInUse,
+                        os.EADDRNOTAVAIL => error.AddressNotAvailable,
+                        os.EAFNOSUPPORT => error.AddressFamilyNotSupported,
+                        os.EAGAIN, os.EINPROGRESS => error.WouldBlock,
+                        os.EALREADY => error.OpenAlreadyInProgress,
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.ECANCELED => error.Canceled,
+                        os.ECONNREFUSED => error.ConnectionRefused,
+                        os.ECONNRESET => error.ConnectionResetByPeer,
+                        os.EFAULT => unreachable,
+                        os.EISCONN => error.AlreadyConnected,
+                        os.ENETUNREACH => error.NetworkUnreachable,
+                        os.ENOENT => error.FileNotFound,
+                        os.ENOTSOCK => error.FileDescriptorNotASocket,
+                        os.EPERM => error.PermissionDenied,
+                        os.EPROTOTYPE => error.ProtocolNotSupported,
+                        os.ETIMEDOUT => error.ConnectionTimedOut,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else assert(completion.result == 0);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .fsync => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.ECANCELED => error.Canceled,
+                        os.EDQUOT => error.DiskQuota,
+                        os.EINVAL => error.ArgumentsInvalid,
+                        os.EIO => error.InputOutput,
+                        os.ENOSPC => error.NoSpaceLeft,
+                        os.EROFS => error.ReadOnlyFileSystem,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else assert(completion.result == 0);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .link_timeout => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.ECANCELED => error.Canceled,
+                        os.ETIME => {}, // A success.
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else unreachable;
+                    completion.callback(completion.context, completion, &result);
+                },
+                .openat => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EACCES => error.AccessDenied,
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.EBUSY => error.DeviceBusy,
+                        os.ECANCELED => error.Canceled,
+                        os.EEXIST => error.PathAlreadyExists,
+                        os.EFAULT => unreachable,
+                        os.EFBIG => error.FileTooBig,
+                        os.EINVAL => error.ArgumentsInvalid,
+                        os.EISDIR => error.IsDir,
+                        os.ELOOP => error.SymLinkLoop,
+                        os.EMFILE => error.ProcessFdQuotaExceeded,
+                        os.ENAMETOOLONG => error.NameTooLong,
+                        os.ENFILE => error.SystemFdQuotaExceeded,
+                        os.ENODEV => error.NoDevice,
+                        os.ENOENT => error.FileNotFound,
+                        os.ENOMEM => error.SystemResources,
+                        os.ENOSPC => error.NoSpaceLeft,
+                        os.ENOTDIR => error.NotDir,
+                        os.EOPNOTSUPP => error.FileLocksNotSupported,
+                        os.EOVERFLOW => error.FileTooBig,
+                        os.EPERM => error.AccessDenied,
+                        os.EWOULDBLOCK => error.WouldBlock,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else @intCast(os.fd_t, completion.result);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .read => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EAGAIN => error.WouldBlock,
+                        os.EBADF => error.NotOpenForReading,
+                        os.ECANCELED => error.Canceled,
+                        os.ECONNRESET => error.ConnectionResetByPeer,
+                        os.EFAULT => unreachable,
+                        os.EINVAL => error.Alignment,
+                        os.EIO => error.InputOutput,
+                        os.EISDIR => error.IsDir,
+                        os.ENOBUFS => error.SystemResources,
+                        os.ENOMEM => error.SystemResources,
+                        os.ENXIO => error.Unseekable,
+                        os.EOVERFLOW => error.Unseekable,
+                        os.ESPIPE => error.Unseekable,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else @intCast(usize, completion.result);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .recv => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EAGAIN => error.WouldBlock,
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.ECANCELED => error.Canceled,
+                        os.ECONNREFUSED => error.ConnectionRefused,
+                        os.EFAULT => unreachable,
+                        os.EINVAL => unreachable,
+                        os.ENOMEM => error.SystemResources,
+                        os.ENOTCONN => error.SocketNotConnected,
+                        os.ENOTSOCK => error.FileDescriptorNotASocket,
+                        os.ECONNRESET => error.ConnectionResetByPeer,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else @intCast(usize, completion.result);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .send => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EACCES => error.AccessDenied,
+                        os.EAGAIN => error.WouldBlock,
+                        os.EALREADY => error.FastOpenAlreadyInProgress,
+                        os.EAFNOSUPPORT => error.AddressFamilyNotSupported,
+                        os.EBADF => error.FileDescriptorInvalid,
+                        os.ECANCELED => error.Canceled,
+                        os.ECONNRESET => error.ConnectionResetByPeer,
+                        os.EDESTADDRREQ => unreachable,
+                        os.EFAULT => unreachable,
+                        os.EINVAL => unreachable,
+                        os.EISCONN => unreachable,
+                        os.EMSGSIZE => error.MessageTooBig,
+                        os.ENOBUFS => error.SystemResources,
+                        os.ENOMEM => error.SystemResources,
+                        os.ENOTCONN => error.SocketNotConnected,
+                        os.ENOTSOCK => error.FileDescriptorNotASocket,
+                        os.EOPNOTSUPP => error.OperationNotSupported,
+                        os.EPIPE => error.BrokenPipe,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else @intCast(usize, completion.result);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .timeout => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.ECANCELED => error.Canceled,
+                        os.ETIME => {}, // A success.
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else unreachable;
+                    completion.callback(completion.context, completion, &result);
+                },
+                .timeout_remove => |*op| {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.ECANCELED => error.Canceled,
+                        os.EBUSY => error.AlreadyInProgress,
+                        os.ENOENT => error.NotFound,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else assert(completion.result == 0);
+                    completion.callback(completion.context, completion, &result);
+                },
+                .write => {
+                    const result = if (completion.result < 0) switch (-completion.result) {
+                        os.EINTR => {
+                            completion.io.enqueue(completion);
+                            return;
+                        },
+                        os.EAGAIN => error.WouldBlock,
+                        os.EBADF => error.NotOpenForWriting,
+                        os.ECANCELED => error.Canceled,
+                        os.EDESTADDRREQ => error.NotConnected,
+                        os.EDQUOT => error.DiskQuota,
+                        os.EFAULT => unreachable,
+                        os.EFBIG => error.FileTooBig,
+                        os.EINVAL => error.Alignment,
+                        os.EIO => error.InputOutput,
+                        os.ENOSPC => error.NoSpaceLeft,
+                        os.ENXIO => error.Unseekable,
+                        os.EOVERFLOW => error.Unseekable,
+                        os.EPERM => error.AccessDenied,
+                        os.EPIPE => error.BrokenPipe,
+                        os.ESPIPE => error.Unseekable,
+                        else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    } else @intCast(usize, completion.result);
+                    completion.callback(completion.context, completion, &result);
+                },
+            }
         }
     };
 

@@ -43,7 +43,7 @@ pub fn build(b: *std.build.Builder) void {
     var mock_tests = b.addTest("tests/main.zig");
     mock_tests.addPackage(std.build.Pkg{
         .name = "tigerbeetle-io",
-        .path = "tests/mock/mock-io1.zig",
+        .path = "tests/mock/mock-io.zig",
     });
     mock_tests.setBuildMode(mode);
     mock_tests.filter = b.option([]const u8, "mock-test-filter", "Skip tests that do not match filter");
