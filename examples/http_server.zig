@@ -75,7 +75,6 @@ const Server = struct {
         const handler_id = if (self.findEmptyClientHandlerId()) |id| id else self.client_handlers.items.len;
         std.debug.print("client_handler_id={d}\n", .{handler_id});
         const handler = try ClientHandler.init(self, handler_id, self.allocator, &self.io, accepted_sock);
-        _ = http.SocketConnection.init(&self.io, accepted_sock);
         if (handler_id < self.client_handlers.items.len) {
             self.client_handlers.items[handler_id] = handler;
         } else {
@@ -228,7 +227,12 @@ const ClientHandler = struct {
                 const total = self.request_scanner.totalBytesRead();
                 if (http.RecvRequest.init(self.recv_buf[0..total], self.request_scanner)) |req| {
                     self.request = req;
-                    std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{ req.method.toText(), req.version.toText(), req.uri, req.headers });
+                    std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
+                        req.method.toText(),
+                        req.version.toText(),
+                        req.uri,
+                        req.headers.fields,
+                    });
                     if (self.request.?.isKeepAlive()) |keep_alive| {
                         self.keep_alive = keep_alive;
                     } else |err| {
