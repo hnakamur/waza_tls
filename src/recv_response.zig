@@ -16,7 +16,7 @@ pub const RecvResponse = struct {
     reason_phrase: []const u8,
     headers: []const u8,
 
-    /// Caller owns `buf`. Returned request is valid for use only while `buf` is valid.
+    /// Caller owns `buf`. Returned response is valid for use only while `buf` is valid.
     pub fn init(buf: []const u8, scanner: *const RecvResponseScanner) Error!RecvResponse {
         std.debug.assert(scanner.headers.state == .done);
         const result = scanner.status_line.result;
