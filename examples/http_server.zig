@@ -142,12 +142,22 @@ const ClientHandler = struct {
     request: ?http.RecvRequest = undefined,
     keep_alive: bool = true,
     processing: bool = false,
+    resp_headers_len: u64 = 0,
+    content_length: u64 = 0,
+    content_len_sent_so_far: u64 = 0,
+    sent_bytes_so_far: u64 = 0,
+    send_buf_data_len: u64 = 0,
+    send_buf_sent_len: u64 = 0,
+    send_state: enum {
+        SendingHeaders,
+        SendingContent,
+    } = .SendingHeaders,
 
     fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
         req_scanner.* = http.RecvRequestScanner{};
         const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
-        const send_buf = try allocator.alloc(u8, 8192);
+        const send_buf = try allocator.alloc(u8, 1024);
         var self = try allocator.create(ClientHandler);
         self.* = ClientHandler{
             .server = server,
@@ -345,19 +355,24 @@ const ClientHandler = struct {
             },
             else => {},
         }
-        const body = "Hello http server\n";
-        std.fmt.format(w, "Content-Length: {d}\r\n", .{body.len}) catch unreachable;
+        self.content_length = 2048;
+        std.fmt.format(w, "Content-Length: {d}\r\n", .{self.content_length}) catch unreachable;
         std.fmt.format(w, "\r\n", .{}) catch unreachable;
-        if (body.len > 0) {
-            std.fmt.format(w, "{s}", .{body}) catch unreachable;
+        var pos = fbs.getPos() catch unreachable;
+        self.resp_headers_len = pos;
+        while (pos < self.send_buf.len) : (pos += 1) {
+            self.send_buf[pos] = 'e';
         }
+        self.send_buf_data_len = self.send_buf.len;
+        self.send_buf_sent_len = 0;
+        self.send_state = .SendingHeaders;
         self.io.sendWithTimeout(
             *ClientHandler,
             self,
             sendCallback,
             &self.linked_completion,
             self.sock,
-            fbs.getWritten(),
+            self.send_buf[0..self.send_buf_data_len],
             0,
             self.send_timeout_ns,
         );
@@ -368,7 +383,72 @@ const ClientHandler = struct {
         result: IO.SendError!usize,
     ) void {
         if (result) |sent| {
-            std.debug.print("sent request bytes={d}\n", .{sent});
+            std.debug.print("sent response bytes={d}\n", .{sent});
+            self.send_buf_sent_len += sent;
+            self.sent_bytes_so_far += sent;
+            if (self.send_buf_sent_len < self.send_buf_data_len) {
+                self.io.sendWithTimeout(
+                    *ClientHandler,
+                    self,
+                    sendCallback,
+                    &self.linked_completion,
+                    self.sock,
+                    self.send_buf[self.send_buf_sent_len..self.send_buf_data_len],
+                    0,
+                    self.send_timeout_ns,
+                );
+                return;
+            }
+
+            switch (self.send_state) {
+                .SendingHeaders => {
+                    self.send_state = .SendingContent;
+                    self.send_buf_data_len = std.math.min(
+                        self.content_length - (self.sent_bytes_so_far - self.resp_headers_len),
+                        self.send_buf.len,
+                    );
+                    self.send_buf_sent_len = 0;
+                    var pos: usize = 0;
+                    while (pos < self.send_buf_data_len) : (pos += 1) {
+                        self.send_buf[pos] = 'f';
+                    }
+                    self.io.sendWithTimeout(
+                        *ClientHandler,
+                        self,
+                        sendCallback,
+                        &self.linked_completion,
+                        self.sock,
+                        self.send_buf[0..self.send_buf_data_len],
+                        0,
+                        self.send_timeout_ns,
+                    );
+                    return;
+                },
+                .SendingContent => {
+                    self.send_buf_data_len = std.math.min(
+                        self.content_length - (self.sent_bytes_so_far - self.resp_headers_len),
+                        self.send_buf.len,
+                    );
+                    if (self.send_buf_data_len > 0) {
+                        self.send_buf_sent_len = 0;
+                        var pos: usize = 0;
+                        while (pos < self.send_buf_data_len) : (pos += 1) {
+                            self.send_buf[pos] = 'g';
+                        }
+                        self.io.sendWithTimeout(
+                            *ClientHandler,
+                            self,
+                            sendCallback,
+                            &self.linked_completion,
+                            self.sock,
+                            self.send_buf[0..self.send_buf_data_len],
+                            0,
+                            self.send_timeout_ns,
+                        );
+                        return;
+                    }
+                },
+            }
 
             if (!self.keep_alive or self.server.shutdown_requested) {
                 self.close();

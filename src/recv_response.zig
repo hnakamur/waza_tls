@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const Version = @import("version.zig").Version;
 const StatusCode = @import("status_code.zig").StatusCode;
+const Fields = @import("fields.zig").Fields;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 const config = @import("config.zig");
 
@@ -14,7 +15,7 @@ pub const RecvResponse = struct {
     version: Version,
     status_code: StatusCode,
     reason_phrase: []const u8,
-    headers: []const u8,
+    headers: Fields,
 
     /// Caller owns `buf`. Returned response is valid for use only while `buf` is valid.
     pub fn init(buf: []const u8, scanner: *const RecvResponseScanner) Error!RecvResponse {
@@ -28,8 +29,7 @@ pub const RecvResponse = struct {
         const code_buf = buf[result.status_code_start_pos .. result.status_code_start_pos + result.status_code_len];
         const status_code = StatusCode.fromText(code_buf) catch |_| return error.BadGateway;
         const reason_phrase = buf[result.reason_phrase_start_pos .. result.reason_phrase_start_pos + result.reason_phrase_len];
-        const headers = buf[status_line_len .. status_line_len + headers_len];
-        // TODO: validate headers
+        const headers = Fields.init(buf[status_line_len .. status_line_len + headers_len]);
 
         return RecvResponse{
             .version = version,
@@ -59,6 +59,11 @@ pub const RecvResponseScanner = struct {
         }
         return self.headers.scan(chunk) catch |_| error.BadGateway;
     }
+
+    pub fn totalBytesRead(self: *const RecvResponseScanner) usize {
+        return self.status_line.result.total_bytes_read +
+            self.headers.total_bytes_read;
+    }
 };
 
 const StatusLineScanner = struct {
@@ -87,8 +92,8 @@ const StatusLineScanner = struct {
 
     const version_max_len: usize = Version.http1_1.toText().len;
     const status_code_expected_len: usize = 3;
+    const reason_phrase_max_len: usize = config.reason_phrase_max_len;
 
-    reason_phrase_max_len: usize = config.reason_phrase_max_len,
     state: State = .on_version,
     result: Result = Result{},
 
@@ -146,7 +151,7 @@ const StatusLineScanner = struct {
                         self.state = .seen_cr;
                     } else {
                         self.result.reason_phrase_len += 1;
-                        if (self.result.reason_phrase_len > self.reason_phrase_max_len) {
+                        if (self.result.reason_phrase_len > reason_phrase_max_len) {
                             return error.BadGateway;
                         }
                     }
@@ -182,7 +187,7 @@ test "RecvResponse - 200 OK" {
     try testing.expectEqual(Version.http1_1, resp.version);
     try testing.expectEqual(StatusCode.ok, resp.status_code);
     try testing.expectEqualStrings(reason_phrase, resp.reason_phrase);
-    try testing.expectEqualStrings(headers, resp.headers);
+    try testing.expectEqualStrings(headers, resp.headers.fields);
 }
 
 test "RecvResponseScanner" {
