@@ -1,15 +1,24 @@
 const std = @import("std");
+const mem = std.mem;
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 const http = @import("http");
 
 const Client = struct {
+    pub const Config = struct {
+        recv_buf_ini_len: usize = 1024,
+        recv_buf_max_len: usize = 8192,
+        send_buf_len: usize = 4096,
+    };
+
     io: *IO,
+    allocator: *mem.Allocator,
+    config: *const Config,
     linked_completion: IO.LinkedCompletion = undefined,
     socket: os.socket_t = undefined,
-    send_buf: [1024]u8 = [_]u8{0} ** 1024,
-    recv_buf: [1024]u8 = [_]u8{0} ** 1024,
+    send_buf: []u8,
+    recv_buf: []u8,
     connect_timeout: u63 = 500 * time.ns_per_ms,
     send_timeout: u63 = 500 * time.ns_per_ms,
     recv_timeout: u63 = 500 * time.ns_per_ms,
@@ -22,6 +31,27 @@ const Client = struct {
     } = .Initial,
 
     const Self = @This();
+
+    pub fn init(
+        allocator: *mem.Allocator,
+        io: *IO,
+        config: *const Config,
+    ) !Self {
+        const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
+        const send_buf = try allocator.alloc(u8, config.send_buf_len);
+        return Self{
+            .allocator = allocator,
+            .io = io,
+            .config = config,
+            .recv_buf = recv_buf,
+            .send_buf = send_buf,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.send_buf);
+        self.allocator.free(self.recv_buf);
+    }
 
     fn connect(self: *Self, addr: std.net.Address) !void {
         self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
@@ -43,7 +73,7 @@ const Client = struct {
     ) void {
         if (result) |_| {
             self.state = .Sending1;
-            var fbs = std.io.fixedBufferStream(&self.send_buf);
+            var fbs = std.io.fixedBufferStream(self.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
                 (http.Method{ .get = undefined }).toText(),
@@ -66,7 +96,7 @@ const Client = struct {
                 sendCallback,
                 &self.linked_completion,
                 self.socket,
-                &self.send_buf,
+                self.send_buf,
                 0,
                 self.send_timeout,
             );
@@ -103,7 +133,7 @@ const Client = struct {
                         recvCallback,
                         &self.linked_completion,
                         self.socket,
-                        &self.recv_buf,
+                        self.recv_buf,
                         0,
                         self.recv_timeout,
                     );
@@ -151,7 +181,11 @@ pub fn main() anyerror!void {
     var io = try IO.init(32, 0);
     defer io.deinit();
 
-    var client = Client{ .io = &io };
+    const allocator = std.heap.page_allocator;
+    const config = Client.Config{};
+    var client = try Client.init(allocator, &io, &config);
+    defer client.deinit();
+
     try client.connect(address);
     while (!client.done) {
         try io.run_for_ns(100 * time.ns_per_ms);
