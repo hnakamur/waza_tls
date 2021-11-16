@@ -338,6 +338,7 @@ const ClientHandler = struct {
                     );
                     return;
                 }
+                self.sendResponseWithTimeout();
             },
             else => @panic("unexpected state in recvCallback"),
         }
