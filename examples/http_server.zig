@@ -215,17 +215,16 @@ const ClientHandler = struct {
     ) void {
         if (result) |received| {
             std.debug.print("received={d}\n", .{received});
-            self.close();
 
-            // if (received == 0) {
-            //     if (self.request_scanner.totalBytesRead() > 0) {
-            //         std.debug.print("closed from client during request, close connection.\n", .{});
-            //     }
-            //     self.close();
-            //     return;
-            // }
+            if (received == 0) {
+                if (self.request_scanner.totalBytesRead() > 0) {
+                    std.debug.print("closed from client during request, close connection.\n", .{});
+                }
+                self.close();
+                return;
+            }
 
-            // self.handleStreamingRequest(received);
+            self.handleStreamingRequest(received);
         } else |err| {
             std.debug.print("recv error: {s}\n", .{@errorName(err)});
         }
