@@ -255,7 +255,9 @@ const ClientHandler = struct {
                     self.sendError(.bad_request);
                     return;
                 }
-                self.sendResponseWithTimeout();
+                // self.sendResponseWithTimeout();
+                self.close();
+                return;
             } else {
                 std.debug.print("handleStreamingRequest not done\n", .{});
                 if (old + received == self.recv_buf.len) {

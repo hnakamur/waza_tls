@@ -157,6 +157,12 @@ const Client = struct {
         result: IO.RecvError!usize,
     ) void {
         if (result) |received| {
+            if (received == 0) {
+                std.debug.print("recvCallback, closed from server\n", .{});
+                self.close();
+                return;
+            }
+
             switch (self.state) {
                 .ReceivingHeaders => {
                     const old = self.resp_scanner.totalBytesRead();
@@ -172,7 +178,7 @@ const Client = struct {
                                     resp.headers.fields,
                                 });
                                 self.content_length = if (resp.headers.getContentLength()) |len| len else |err| {
-                                    std.debug.print("bad response, invalid content-length, err=={s}\n", .{@errorName(err)});
+                                    std.debug.print("bad response, invalid content-length, err={s}\n", .{@errorName(err)});
                                     self.close();
                                     return;
                                 };
