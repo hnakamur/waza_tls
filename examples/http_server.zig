@@ -217,6 +217,9 @@ const ClientHandler = struct {
             std.debug.print("received={d}\n", .{received});
 
             if (received == 0) {
+                if (self.request_scanner.totalBytesRead() > 0) {
+                    std.debug.print("closed from client during request, close connection.\n", .{});
+                }
                 self.close();
                 return;
             }
@@ -460,6 +463,7 @@ const ClientHandler = struct {
             self.recvWithTimeout(self.recv_buf);
         } else |err| {
             std.debug.print("send error: {s}\n", .{@errorName(err)});
+            self.close();
         }
     }
 };

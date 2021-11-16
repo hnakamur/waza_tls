@@ -132,17 +132,18 @@ const Client = struct {
                     );
                 },
                 .Sending2 => {
-                    self.state = .ReceivingHeaders;
-                    self.io.recvWithTimeout(
-                        *Self,
-                        self,
-                        recvCallback,
-                        &self.linked_completion,
-                        self.socket,
-                        self.recv_buf,
-                        0,
-                        self.recv_timeout_ns,
-                    );
+                    self.close();
+                    // self.state = .ReceivingHeaders;
+                    // self.io.recvWithTimeout(
+                    //     *Self,
+                    //     self,
+                    //     recvCallback,
+                    //     &self.linked_completion,
+                    //     self.socket,
+                    //     self.recv_buf,
+                    //     0,
+                    //     self.recv_timeout_ns,
+                    // );
                 },
                 else => @panic("unexpected state sendCallback"),
             }
