@@ -116,21 +116,21 @@ const Client = struct {
         comp: *IO.LinkedCompletion,
         result: IO.SendError!usize,
     ) void {
+        // std.debug.print("MyContext.sendCallback, result={}\n", .{result});
         if (result) |_| {
             switch (self.state) {
                 .Sending1 => {
-                    self.close();
-                    // self.state = .Sending2;
-                    // self.io.sendWithTimeout(
-                    //     *Self,
-                    //     self,
-                    //     sendCallback,
-                    //     &self.linked_completion,
-                    //     self.socket,
-                    //     "\r\n\r\n",
-                    //     0,
-                    //     self.send_timeout_ns,
-                    // );
+                    self.state = .Sending2;
+                    self.io.sendWithTimeout(
+                        *Self,
+                        self,
+                        sendCallback,
+                        &self.linked_completion,
+                        self.socket,
+                        "\r\n\r\n",
+                        0,
+                        self.send_timeout_ns,
+                    );
                 },
                 .Sending2 => {
                     self.state = .ReceivingHeaders;
@@ -157,6 +157,7 @@ const Client = struct {
         comp: *IO.LinkedCompletion,
         result: IO.RecvError!usize,
     ) void {
+        // std.debug.print("MyContext.recvCallback, result={}\n", .{result});
         if (result) |received| {
             if (received == 0) {
                 std.debug.print("recvCallback, closed from server\n", .{});
