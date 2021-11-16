@@ -119,31 +119,31 @@ const Client = struct {
         if (result) |_| {
             switch (self.state) {
                 .Sending1 => {
-                    self.state = .Sending2;
-                    self.io.sendWithTimeout(
-                        *Self,
-                        self,
-                        sendCallback,
-                        &self.linked_completion,
-                        self.socket,
-                        "\r\n\r\n",
-                        0,
-                        self.send_timeout_ns,
-                    );
-                },
-                .Sending2 => {
                     self.close();
-                    // self.state = .ReceivingHeaders;
-                    // self.io.recvWithTimeout(
+                    // self.state = .Sending2;
+                    // self.io.sendWithTimeout(
                     //     *Self,
                     //     self,
-                    //     recvCallback,
+                    //     sendCallback,
                     //     &self.linked_completion,
                     //     self.socket,
-                    //     self.recv_buf,
+                    //     "\r\n\r\n",
                     //     0,
-                    //     self.recv_timeout_ns,
+                    //     self.send_timeout_ns,
                     // );
+                },
+                .Sending2 => {
+                    self.state = .ReceivingHeaders;
+                    self.io.recvWithTimeout(
+                        *Self,
+                        self,
+                        recvCallback,
+                        &self.linked_completion,
+                        self.socket,
+                        self.recv_buf,
+                        0,
+                        self.recv_timeout_ns,
+                    );
                 },
                 else => @panic("unexpected state sendCallback"),
             }
