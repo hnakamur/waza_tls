@@ -139,8 +139,10 @@ const ClientHandler = struct {
     recv_timeout_ns: u63 = 5 * time.ns_per_s,
     send_timeout_ns: u63 = 5 * time.ns_per_s,
     request_scanner: *http.RecvRequestScanner,
-    request: ?http.RecvRequest = undefined,
+    request_version: http.Version = undefined,
     keep_alive: bool = true,
+    req_content_length: ?u64 = null,
+    content_length_read_so_far: u64 = 0,
     processing: bool = false,
     resp_headers_len: u64 = 0,
     content_length: u64 = 0,
@@ -148,10 +150,12 @@ const ClientHandler = struct {
     sent_bytes_so_far: u64 = 0,
     send_buf_data_len: u64 = 0,
     send_buf_sent_len: u64 = 0,
-    send_state: enum {
+    state: enum {
+        ReceivingHeaders,
+        ReceivingContent,
         SendingHeaders,
         SendingContent,
-    } = .SendingHeaders,
+    } = .ReceivingHeaders,
 
     fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
@@ -231,63 +235,111 @@ const ClientHandler = struct {
     }
 
     fn handleStreamingRequest(self: *ClientHandler, received: usize) void {
-        self.processing = true;
-        const old = self.request_scanner.totalBytesRead();
-        std.debug.print("handleStreamingRequest old={}, received={}\n", .{ old, received });
-        std.debug.print("handleStreamingRequest scan data={s}\n", .{self.recv_buf[old .. old + received]});
-        if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
-            if (done) {
-                const total = self.request_scanner.totalBytesRead();
-                if (http.RecvRequest.init(self.recv_buf[0..total], self.request_scanner)) |req| {
-                    self.request = req;
-                    std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
-                        req.method.toText(),
-                        req.version.toText(),
-                        req.uri,
-                        req.headers.fields,
-                    });
-                    if (self.request.?.isKeepAlive()) |keep_alive| {
-                        self.keep_alive = keep_alive;
-                    } else |err| {
-                        self.sendError(.http_version_not_supported);
-                        return;
+        switch (self.state) {
+            .ReceivingHeaders => {
+                self.processing = true;
+                const old = self.request_scanner.totalBytesRead();
+                std.debug.print("handleStreamingRequest old={}, received={}\n", .{ old, received });
+                std.debug.print("handleStreamingRequest scan data={s}\n", .{self.recv_buf[old .. old + received]});
+                if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
+                    if (done) {
+                        self.state = .ReceivingContent;
+                        const total = self.request_scanner.totalBytesRead();
+                        if (http.RecvRequest.init(self.recv_buf[0..total], self.request_scanner)) |req| {
+                            std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
+                                req.method.toText(),
+                                req.version.toText(),
+                                req.uri,
+                                req.headers.fields,
+                            });
+                            if (req.isKeepAlive()) |keep_alive| {
+                                self.keep_alive = keep_alive;
+                            } else |err| {
+                                self.sendError(.http_version_not_supported);
+                                return;
+                            }
+                            self.request_version = req.version;
+                            self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
+                                std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
+                                self.sendError(.bad_request);
+                                return;
+                            };
+                            if (self.req_content_length) |len| {
+                                std.debug.print("content_length={}\n", .{len});
+                                const actual_content_chunk_len = old + received - total;
+                                self.content_length_read_so_far += actual_content_chunk_len;
+                                std.debug.print("first content chunk length={},\ncontent=\n{s}", .{
+                                    actual_content_chunk_len,
+                                    self.recv_buf[total .. old + received],
+                                });
+                                if (actual_content_chunk_len < len) {
+                                    self.io.recvWithTimeout(
+                                        *ClientHandler,
+                                        self,
+                                        recvCallback,
+                                        &self.linked_completion,
+                                        self.sock,
+                                        self.recv_buf,
+                                        0,
+                                        self.recv_timeout_ns,
+                                    );
+                                    return;
+                                }
+                            }
+                        } else |err| {
+                            self.sendError(.bad_request);
+                            return;
+                        }
+                        self.sendResponseWithTimeout();
+                    } else {
+                        std.debug.print("handleStreamingRequest not done\n", .{});
+                        if (old + received == self.recv_buf.len) {
+                            const new_len = self.recv_buf.len + config.recv_buf_ini_len;
+                            if (config.recv_buf_max_len < new_len) {
+                                std.debug.print("request header fields too long.\n", .{});
+                                self.sendError(.bad_request);
+                                return;
+                            }
+                            self.recv_buf = self.allocator.realloc(self.recv_buf, new_len) catch unreachable;
+                        }
+                        self.io.recvWithTimeout(
+                            *ClientHandler,
+                            self,
+                            recvCallback,
+                            &self.linked_completion,
+                            self.sock,
+                            self.recv_buf[old + received ..],
+                            0,
+                            self.recv_timeout_ns,
+                        );
                     }
-
-                    // TODO read request body chunk from self.recv_buf[total..]
                 } else |err| {
-                    self.sendError(.bad_request);
+                    std.debug.print("handleStreamingRequest scan failed with {s}\n", .{@errorName(err)});
+                    self.sendError(switch (err) {
+                        error.UriTooLong => .uri_too_long,
+                        error.VersionNotSupported => .http_version_not_supported,
+                        else => .bad_request,
+                    });
+                }
+            },
+            .ReceivingContent => {
+                std.debug.print("{s}", .{self.recv_buf[0..received]});
+                self.content_length_read_so_far += received;
+                if (self.content_length_read_so_far < self.req_content_length.?) {
+                    self.io.recvWithTimeout(
+                        *ClientHandler,
+                        self,
+                        recvCallback,
+                        &self.linked_completion,
+                        self.sock,
+                        self.recv_buf,
+                        0,
+                        self.recv_timeout_ns,
+                    );
                     return;
                 }
-                self.sendResponseWithTimeout();
-            } else {
-                std.debug.print("handleStreamingRequest not done\n", .{});
-                if (old + received == self.recv_buf.len) {
-                    const new_len = self.recv_buf.len + config.recv_buf_ini_len;
-                    if (config.recv_buf_max_len < new_len) {
-                        std.debug.print("request header fields too long.\n", .{});
-                        self.sendError(.bad_request);
-                        return;
-                    }
-                    self.recv_buf = self.allocator.realloc(self.recv_buf, new_len) catch unreachable;
-                }
-                self.io.recvWithTimeout(
-                    *ClientHandler,
-                    self,
-                    recvCallback,
-                    &self.linked_completion,
-                    self.sock,
-                    self.recv_buf[old + received ..],
-                    0,
-                    self.recv_timeout_ns,
-                );
-            }
-        } else |err| {
-            std.debug.print("handleStreamingRequest scan failed with {s}\n", .{@errorName(err)});
-            self.sendError(switch (err) {
-                error.UriTooLong => .uri_too_long,
-                error.VersionNotSupported => .http_version_not_supported,
-                else => .bad_request,
-            });
+            },
+            else => @panic("unexpected state in recvCallback"),
         }
     }
 
@@ -347,7 +399,7 @@ const ClientHandler = struct {
             now.zone.name,
         }) catch unreachable;
 
-        switch (self.request.?.version) {
+        switch (self.request_version) {
             .http1_1 => if (!self.keep_alive) {
                 std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
                 std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
@@ -368,7 +420,7 @@ const ClientHandler = struct {
         }
         self.send_buf_data_len = self.send_buf.len;
         self.send_buf_sent_len = 0;
-        self.send_state = .SendingHeaders;
+        self.state = .SendingHeaders;
         self.io.sendWithTimeout(
             *ClientHandler,
             self,
@@ -403,9 +455,9 @@ const ClientHandler = struct {
                 return;
             }
 
-            switch (self.send_state) {
+            switch (self.state) {
                 .SendingHeaders => {
-                    self.send_state = .SendingContent;
+                    self.state = .SendingContent;
                     self.send_buf_data_len = std.math.min(
                         self.content_length - (self.sent_bytes_so_far - self.resp_headers_len),
                         self.send_buf.len,
@@ -451,6 +503,7 @@ const ClientHandler = struct {
                         return;
                     }
                 },
+                else => @panic("unexpected state in sendCallback"),
             }
 
             if (!self.keep_alive or self.server.shutdown_requested) {

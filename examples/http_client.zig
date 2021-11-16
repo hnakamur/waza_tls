@@ -19,14 +19,19 @@ const Client = struct {
     socket: os.socket_t = undefined,
     send_buf: []u8,
     recv_buf: []u8,
-    connect_timeout_ns: u63 = 500 * time.ns_per_ms,
-    send_timeout_ns: u63 = 500 * time.ns_per_ms,
-    recv_timeout_ns: u63 = 500 * time.ns_per_ms,
+    connect_timeout_ns: u63 = 2 * time.ns_per_s,
+    send_timeout_ns: u63 = 2 * time.ns_per_s,
+    recv_timeout_ns: u63 = 2 * time.ns_per_s,
     done: bool = false,
+    req_headers_len: u32 = 0,
+    req_content_length: ?u64 = null,
+    send_buf_data_len: u32 = 0,
+    send_buf_sent_len: u32 = 0,
+    send_bytes_so_far: u64 = 0,
     state: enum {
         Initial,
-        Sending1,
-        Sending2,
+        SendingHeaders,
+        SendingContent,
         ReceivingHeaders,
         ReceivingContent,
     } = .Initial,
@@ -78,7 +83,7 @@ const Client = struct {
         result: IO.ConnectError!void,
     ) void {
         if (result) |_| {
-            self.state = .Sending1;
+            self.state = .SendingHeaders;
             var fbs = std.io.fixedBufferStream(self.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
@@ -89,6 +94,9 @@ const Client = struct {
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
 
+            self.req_content_length = 8000;
+            std.fmt.format(w, "Content-Length: {}\r\n", .{self.req_content_length.?}) catch unreachable;
+
             std.fmt.format(w, "X-Foo: ", .{}) catch unreachable;
             var pos = fbs.getPos() catch unreachable;
             std.debug.print("pos={}, self.send_buf.len={}\n", .{ pos, self.send_buf.len });
@@ -96,6 +104,9 @@ const Client = struct {
                 self.send_buf[pos] = 'f';
             }
             std.debug.print("self.send_buf={s}\n", .{self.send_buf});
+            self.send_buf_data_len = @intCast(u32, self.send_buf.len);
+            self.send_buf_sent_len = 0;
+            self.req_headers_len += self.send_buf_data_len;
             self.io.sendWithTimeout(
                 *Self,
                 self,
@@ -116,23 +127,78 @@ const Client = struct {
         comp: *IO.LinkedCompletion,
         result: IO.SendError!usize,
     ) void {
-        // std.debug.print("MyContext.sendCallback, result={}\n", .{result});
-        if (result) |_| {
+        std.debug.print("MyContext.sendCallback, result={}\n", .{result});
+        if (result) |sent| {
+            self.send_buf_sent_len += @intCast(u32, sent);
+            self.send_bytes_so_far += sent;
+            if (self.send_buf_sent_len < self.send_buf_data_len) {
+                self.io.sendWithTimeout(
+                    *Client,
+                    self,
+                    sendCallback,
+                    &self.linked_completion,
+                    self.socket,
+                    self.send_buf[self.send_buf_sent_len..self.send_buf_data_len],
+                    0,
+                    self.send_timeout_ns,
+                );
+                return;
+            }
+
             switch (self.state) {
-                .Sending1 => {
-                    self.state = .Sending2;
+                .SendingHeaders => {
+                    self.state = .SendingContent;
+                    var fbs = std.io.fixedBufferStream(self.send_buf);
+                    var w = fbs.writer();
+                    std.fmt.format(w, "gggg\r\n\r\n", .{}) catch unreachable;
+                    var pos = fbs.getPos() catch unreachable;
+                    self.req_headers_len += @intCast(u32, pos);
+                    while (pos < self.send_buf.len) : (pos += 1) {
+                        self.send_buf[pos] = 'g';
+                    }
+                    std.debug.print("self.send_buf={s}\n", .{self.send_buf});
+                    self.send_buf_data_len = @intCast(u32, self.send_buf.len);
+                    self.send_buf_sent_len = 0;
                     self.io.sendWithTimeout(
                         *Self,
                         self,
                         sendCallback,
                         &self.linked_completion,
                         self.socket,
-                        "\r\n\r\n",
+                        self.send_buf[0..self.send_buf_data_len],
                         0,
                         self.send_timeout_ns,
                     );
                 },
-                .Sending2 => {
+                .SendingContent => {
+                    std.debug.print("sendCallback state=.SendingContent, req_content_length={}, send_bytes_so_far={}, req_headers_len={}\n", .{
+                        self.req_content_length.?,
+                        self.send_bytes_so_far,
+                        self.req_headers_len,
+                    });
+                    self.send_buf_data_len = @intCast(u32, std.math.min(
+                        self.req_content_length.? - (self.send_bytes_so_far - self.req_headers_len),
+                        self.send_buf.len,
+                    ));
+                    if (self.send_buf_data_len > 0) {
+                        var pos: usize = 0;
+                        while (pos < self.send_buf_data_len) : (pos += 1) {
+                            self.send_buf[pos] = 'h';
+                        }
+                        self.send_buf_sent_len = 0;
+                        self.io.sendWithTimeout(
+                            *Self,
+                            self,
+                            sendCallback,
+                            &self.linked_completion,
+                            self.socket,
+                            self.send_buf[0..self.send_buf_data_len],
+                            0,
+                            self.send_timeout_ns,
+                        );
+                        return;
+                    }
+
                     self.state = .ReceivingHeaders;
                     self.io.recvWithTimeout(
                         *Self,
