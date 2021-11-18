@@ -189,7 +189,7 @@ pub const Client = struct {
         }
     }
 
-    pub fn recvFullWithTimeout(
+    pub fn recvWithTimeout(
         self: *Self,
         comptime Context: type,
         context: Context,
@@ -236,22 +236,6 @@ pub const Client = struct {
         std.debug.print("Client.recvCallback result={}\n", .{result});
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |received| {
-            comp.processed_len += received;
-            const buf = comp.buffer.mutable;
-            if (comp.processed_len < buf.len) {
-                self.io.recvWithTimeout(
-                    *Self,
-                    self,
-                    recvCallback,
-                    linked_completion,
-                    self.socket,
-                    buf[comp.processed_len..],
-                    linked_completion.main_completion.operation.recv.flags,
-                    @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
-                );
-                return;
-            }
-
             comp.callback(comp.context, comp, &result);
         } else |err| {
             comp.callback(comp.context, comp, &result);
@@ -450,15 +434,15 @@ test "http.Client" {
             std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
             if (result) |_| {
                 self.buffer.discard(completion.processed_len);
-                self.buffer.ensureCapacity(2126) catch unreachable;
+                self.buffer.ensureCapacity(4096) catch unreachable;
                 assert(self.buffer.head == 0);
                 assert(self.buffer.count == 0);
-                self.client.recvFullWithTimeout(
+                self.client.recvWithTimeout(
                     *Context,
                     self,
                     recvCallback,
                     &self.completion,
-                    self.buffer.buf[0..2126],
+                    self.buffer.buf,
                     if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                     5 * time.ns_per_s,
                 );
@@ -470,8 +454,8 @@ test "http.Client" {
             result: IO.RecvError!usize,
         ) void {
             std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
-            if (result) |_| {
-                std.debug.print("result={s}\n", .{completion.buffer.mutable[0..completion.processed_len]});
+            if (result) |received| {
+                std.debug.print("result={s}\n", .{completion.buffer.mutable[0..received]});
 
                 self.client.close();
             } else |_| {}
