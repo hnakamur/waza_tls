@@ -17,18 +17,12 @@ pub const Client = struct {
         send_buf_len: usize = 4096,
     };
 
-    pub const ConnectCompletion = struct {
-        linked_completion: IO.LinkedCompletion = undefined,
-        context: ?*c_void = null,
-        callback: fn (ctx: ?*c_void, comp: *ConnectCompletion, result: IO.ConnectError!void) void = undefined,
-    };
-
-    pub const SendCompletion = struct {
+    pub const Completion = struct {
         linked_completion: IO.LinkedCompletion = undefined,
         context: ?*c_void = null,
         buf: []const u8 = undefined,
-        sent_len: usize = 0,
-        callback: fn (ctx: ?*c_void, comp: *SendCompletion, last_result: IO.SendError!usize) void = undefined,
+        processed_len: usize = 0,
+        callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
     };
 
     io: *IO,
@@ -40,9 +34,6 @@ pub const Client = struct {
     done: bool = false,
     req_headers_len: usize = 0,
     req_content_length: ?u64 = null,
-    send_buf_data_len: usize = 0,
-    send_buf_sent_len: usize = 0,
-    send_bytes_so_far: usize = 0,
     resp_scanner: RecvResponseScanner,
     resp_headers_buf: ?[]u8 = null,
     content_length: ?u64 = null,
@@ -76,10 +67,10 @@ pub const Client = struct {
         context: Context,
         comptime callback: fn (
             context: Context,
-            completion: *ConnectCompletion,
+            completion: *Completion,
             result: IO.ConnectError!void,
         ) void,
-        completion: *ConnectCompletion,
+        completion: *Completion,
         addr: std.net.Address,
         connect_timeout_ns: u63,
     ) !void {
@@ -89,11 +80,11 @@ pub const Client = struct {
         completion.* = .{
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *ConnectCompletion, res: IO.ConnectError!void) void {
+                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
-                        res,
+                        @intToPtr(*const IO.ConnectError!void, @ptrToInt(res)).*,
                     );
                 }
             }.wrapper,
@@ -115,8 +106,8 @@ pub const Client = struct {
     ) void {
         std.debug.print("Client.connectCallback result={}\n", .{result});
         std.debug.print("Client.connectCallback socket={}\n", .{self.socket});
-        const comp = @fieldParentPtr(ConnectCompletion, "linked_completion", linked_completion);
-        comp.callback(comp.context, comp, result);
+        const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+        comp.callback(comp.context, comp, &result);
         if (result) |_| {} else |err| {
             self.close();
         }
@@ -128,10 +119,10 @@ pub const Client = struct {
         context: Context,
         comptime callback: fn (
             context: Context,
-            completion: *SendCompletion,
+            completion: *Completion,
             last_result: IO.SendError!usize,
         ) void,
-        completion: *SendCompletion,
+        completion: *Completion,
         buf: []const u8,
         send_flags: u32,
         timeout_ns: u63,
@@ -140,16 +131,16 @@ pub const Client = struct {
         completion.* = .{
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *SendCompletion, last_res: IO.SendError!usize) void {
+                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
-                        last_res,
+                        @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,
                     );
                 }
             }.wrapper,
             .buf = buf,
-            .sent_len = 0,
+            .processed_len = 0,
         };
         std.debug.print("Client.sendFullWithTimeout calling sendWithTimeout socket={}\n", .{self.socket});
         self.io.sendWithTimeout(
@@ -169,26 +160,26 @@ pub const Client = struct {
         result: IO.SendError!usize,
     ) void {
         std.debug.print("Client.sendCallback result={}\n", .{result});
-        const comp = @fieldParentPtr(SendCompletion, "linked_completion", linked_completion);
+        const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |sent| {
-            comp.sent_len += sent;
-            if (comp.sent_len < comp.buf.len) {
+            comp.processed_len += sent;
+            if (comp.processed_len < comp.buf.len) {
                 self.io.sendWithTimeout(
                     *Self,
                     self,
                     sendCallback,
                     linked_completion,
                     self.socket,
-                    comp.buf[self.send_buf_sent_len..],
+                    comp.buf[comp.processed_len..],
                     linked_completion.main_completion.operation.send.flags,
                     @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
                 );
                 return;
             }
 
-            comp.callback(comp.context, comp, result);
+            comp.callback(comp.context, comp, &result);
         } else |err| {
-            comp.callback(comp.context, comp, result);
+            comp.callback(comp.context, comp, &result);
             self.close();
         }
     }
@@ -317,7 +308,7 @@ test "http.Client" {
 
         client: Client,
         send_buf: FifoType,
-        send_completion: Client.SendCompletion = undefined,
+        send_completion: Client.Completion = undefined,
 
         fn runTest() !void {
             var io = try IO.init(32, 0);
@@ -335,7 +326,7 @@ test "http.Client" {
             std.debug.print("self=0x{x}, client=0x{x}\n", .{@ptrToInt(&self), @ptrToInt(&self.client)});
 
             const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
-            var connect_comp: Client.ConnectCompletion = undefined;
+            var connect_comp: Client.Completion = undefined;
             try self.client.connectWithTimeout(
                 *Context,
                 &self,
@@ -352,7 +343,7 @@ test "http.Client" {
 
         fn connectCallback(
             self: *Context,
-            completion: *Client.ConnectCompletion,
+            completion: *Client.Completion,
             result: IO.ConnectError!void,
         ) void {
             std.debug.print("connectCallback result={}\n", .{result});
@@ -378,10 +369,10 @@ test "http.Client" {
         }
         fn sendCallback(
             self: *Context,
-            completion: *Client.SendCompletion,
+            completion: *Client.Completion,
             last_result: IO.SendError!usize,
         ) void {
-            std.debug.print("sendCallback, sent_len={}, last_result={}\n", .{ completion.sent_len, last_result });
+            std.debug.print("sendCallback, processed_len={}, last_result={}\n", .{ completion.processed_len, last_result });
         }
     }.runTest();
 }
