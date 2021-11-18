@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const mem = std.mem;
 const os = std.os;
 const time = std.time;
@@ -20,7 +21,10 @@ pub const Client = struct {
     pub const Completion = struct {
         linked_completion: IO.LinkedCompletion = undefined,
         context: ?*c_void = null,
-        buf: []const u8 = undefined,
+        buffer: union(enum) {
+            immutable: []const u8,
+            mutable: []u8,
+        } = undefined,
         processed_len: usize = 0,
         callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
     };
@@ -75,7 +79,7 @@ pub const Client = struct {
         connect_timeout_ns: u63,
     ) !void {
         self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
-        std.debug.print("Client.connectWithTimeout, client=0x{x}, socket={}\n", .{@ptrToInt(self), self.socket});
+        std.debug.print("Client.connectWithTimeout, client=0x{x}, socket={}\n", .{ @ptrToInt(self), self.socket });
 
         completion.* = .{
             .context = context,
@@ -123,8 +127,8 @@ pub const Client = struct {
             last_result: IO.SendError!usize,
         ) void,
         completion: *Completion,
-        buf: []const u8,
-        send_flags: u32,
+        buffer: []const u8,
+        flags: u32,
         timeout_ns: u63,
     ) void {
         std.debug.print("Client.sendFullWithTimeout socket={}\n", .{self.socket});
@@ -139,7 +143,7 @@ pub const Client = struct {
                     );
                 }
             }.wrapper,
-            .buf = buf,
+            .buffer = .{.immutable = buffer},
             .processed_len = 0,
         };
         std.debug.print("Client.sendFullWithTimeout calling sendWithTimeout socket={}\n", .{self.socket});
@@ -149,8 +153,8 @@ pub const Client = struct {
             sendCallback,
             &completion.linked_completion,
             self.socket,
-            buf,
-            send_flags,
+            buffer,
+            flags,
             timeout_ns,
         );
     }
@@ -163,14 +167,15 @@ pub const Client = struct {
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |sent| {
             comp.processed_len += sent;
-            if (comp.processed_len < comp.buf.len) {
+            const buf = comp.buffer.immutable;
+            if (comp.processed_len < buf.len) {
                 self.io.sendWithTimeout(
                     *Self,
                     self,
                     sendCallback,
                     linked_completion,
                     self.socket,
-                    comp.buf[comp.processed_len..],
+                    buf[comp.processed_len..],
                     linked_completion.main_completion.operation.send.flags,
                     @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
                 );
@@ -183,6 +188,77 @@ pub const Client = struct {
             self.close();
         }
     }
+
+    pub fn recvFullWithTimeout(
+        self: *Self,
+        comptime Context: type,
+        context: Context,
+        comptime callback: fn (
+            context: Context,
+            completion: *Completion,
+            last_result: IO.RecvError!usize,
+        ) void,
+        completion: *Completion,
+        buffer: []u8,
+        flags: u32,
+        timeout_ns: u63,
+    ) void {
+        completion.* = .{
+            .context = context,
+            .callback = struct {
+                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                    callback(
+                        @intToPtr(Context, @ptrToInt(ctx)),
+                        comp,
+                        @intToPtr(*const IO.RecvError!usize, @ptrToInt(res)).*,
+                    );
+                }
+            }.wrapper,
+            .buffer = .{.mutable = buffer},
+            .processed_len = 0,
+        };
+        self.io.recvWithTimeout(
+            *Self,
+            self,
+            recvCallback,
+            &completion.linked_completion,
+            self.socket,
+            buffer,
+            flags,
+            timeout_ns,
+        );
+    }
+    fn recvCallback(
+        self: *Self,
+        linked_completion: *IO.LinkedCompletion,
+        result: IO.RecvError!usize,
+    ) void {
+        std.debug.print("Client.recvCallback result={}\n", .{result});
+        const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+        if (result) |received| {
+            comp.processed_len += received;
+            const buf = comp.buffer.mutable;
+            if (comp.processed_len < buf.len) {
+                self.io.recvWithTimeout(
+                    *Self,
+                    self,
+                    recvCallback,
+                    linked_completion,
+                    self.socket,
+                    buf[comp.processed_len..],
+                    linked_completion.main_completion.operation.recv.flags,
+                    @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                );
+                return;
+            }
+
+            comp.callback(comp.context, comp, &result);
+        } else |err| {
+            comp.callback(comp.context, comp, &result);
+            self.close();
+        }
+    }
+
     // fn recvCallback(
     //     self: *Self,
     //     comp: *IO.LinkedCompletion,
@@ -307,8 +383,8 @@ test "http.Client" {
         const FifoType = std.fifo.LinearFifo(u8, .Dynamic);
 
         client: Client,
-        send_buf: FifoType,
-        send_completion: Client.Completion = undefined,
+        buffer: FifoType,
+        completion: Client.Completion = undefined,
 
         fn runTest() !void {
             var io = try IO.init(32, 0);
@@ -319,19 +395,18 @@ test "http.Client" {
 
             var self: Context = .{
                 .client = try Client.init(allocator, &io, &config),
-                .send_buf = FifoType.init(allocator),
+                .buffer = FifoType.init(allocator),
             };
             defer self.client.deinit();
-            defer self.send_buf.deinit();
-            std.debug.print("self=0x{x}, client=0x{x}\n", .{@ptrToInt(&self), @ptrToInt(&self.client)});
+            defer self.buffer.deinit();
+            std.debug.print("self=0x{x}, client=0x{x}\n", .{ @ptrToInt(&self), @ptrToInt(&self.client) });
 
             const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
-            var connect_comp: Client.Completion = undefined;
             try self.client.connectWithTimeout(
                 *Context,
                 &self,
                 connectCallback,
-                &connect_comp,
+                &self.completion,
                 address,
                 500 * time.ns_per_ms,
             );
@@ -347,8 +422,8 @@ test "http.Client" {
             result: IO.ConnectError!void,
         ) void {
             std.debug.print("connectCallback result={}\n", .{result});
-            std.debug.print("connectCallback, self=0x{x}, client=0x{x}, socket={}\n", .{@ptrToInt(self), @ptrToInt(&self.client), self.client.socket});
-            var w = self.send_buf.writer();
+            std.debug.print("connectCallback, self=0x{x}, client=0x{x}, socket={}\n", .{ @ptrToInt(self), @ptrToInt(&self.client), self.client.socket });
+            var w = self.buffer.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
                 (Method{ .get = undefined }).toText(),
                 "/",
@@ -361,8 +436,8 @@ test "http.Client" {
                 *Context,
                 self,
                 sendCallback,
-                &self.send_completion,
-                self.send_buf.readableSlice(0),
+                &self.completion,
+                self.buffer.readableSlice(0),
                 if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 500 * time.ns_per_ms,
             );
@@ -370,9 +445,36 @@ test "http.Client" {
         fn sendCallback(
             self: *Context,
             completion: *Client.Completion,
-            last_result: IO.SendError!usize,
+            result: IO.SendError!usize,
         ) void {
-            std.debug.print("sendCallback, processed_len={}, last_result={}\n", .{ completion.processed_len, last_result });
+            std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
+            if (result) |_| {
+                self.buffer.discard(completion.processed_len);
+                self.buffer.ensureCapacity(2126) catch unreachable;
+                assert(self.buffer.head == 0);
+                assert(self.buffer.count == 0);
+                self.client.recvFullWithTimeout(
+                    *Context,
+                    self,
+                    recvCallback,
+                    &self.completion,
+                    self.buffer.buf[0..2126],
+                    if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+                    5 * time.ns_per_s,
+                );
+            } else |_| {}
+        }
+        fn recvCallback(
+            self: *Context,
+            completion: *Client.Completion,
+            result: IO.RecvError!usize,
+        ) void {
+            std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
+            if (result) |_| {
+                std.debug.print("result={s}\n", .{completion.buffer.mutable[0..completion.processed_len]});
+
+                self.client.close();
+            } else |_| {}
         }
     }.runTest();
 }
