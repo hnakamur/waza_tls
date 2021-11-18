@@ -9,60 +9,30 @@ const RecvResponse = @import("recv_response.zig").RecvResponse;
 const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 
+pub const DynamicByteBuffer = std.fifo.LinearFifo(u8, .Dynamic);
+
 pub const Client = struct {
     const Self = @This();
-
-    pub const Config = struct {
-        recv_buf_ini_len: usize = 1024,
-        recv_buf_max_len: usize = 8192,
-        send_buf_len: usize = 4096,
-    };
 
     pub const Completion = struct {
         linked_completion: IO.LinkedCompletion = undefined,
         context: ?*c_void = null,
-        buffer: union(enum) {
-            immutable: []const u8,
-            mutable: []u8,
-        } = undefined,
-        processed_len: usize = 0,
+        buffer: *DynamicByteBuffer = undefined,
+        processed_len: usize = undefined,
+        header_buf_max_len: usize = undefined,
+        response: RecvResponse = undefined,
         callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
     };
 
     io: *IO,
-    allocator: *mem.Allocator,
-    config: *const Config,
     socket: os.socket_t = undefined,
-    send_buf: []u8,
-    recv_buf: []u8,
     done: bool = false,
-    req_headers_len: usize = 0,
-    req_content_length: ?u64 = null,
-    resp_scanner: RecvResponseScanner,
-    resp_headers_buf: ?[]u8 = null,
-    content_length: ?u64 = null,
-    content_length_read_so_far: u64 = 0,
+    resp_scanner: RecvResponseScanner = undefined,
 
-    pub fn init(
-        allocator: *mem.Allocator,
-        io: *IO,
-        config: *const Config,
-    ) !Self {
-        const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
-        const send_buf = try allocator.alloc(u8, config.send_buf_len);
+    pub fn init(io: *IO) Self {
         return Self{
-            .allocator = allocator,
             .io = io,
-            .config = config,
-            .recv_buf = recv_buf,
-            .send_buf = send_buf,
-            .resp_scanner = RecvResponseScanner{},
         };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.allocator.free(self.send_buf);
-        self.allocator.free(self.recv_buf);
     }
 
     pub fn connectWithTimeout(
@@ -127,7 +97,7 @@ pub const Client = struct {
             last_result: IO.SendError!usize,
         ) void,
         completion: *Completion,
-        buffer: []const u8,
+        buffer: *DynamicByteBuffer,
         flags: u32,
         timeout_ns: u63,
     ) void {
@@ -143,7 +113,7 @@ pub const Client = struct {
                     );
                 }
             }.wrapper,
-            .buffer = .{.immutable = buffer},
+            .buffer = buffer,
             .processed_len = 0,
         };
         std.debug.print("Client.sendFullWithTimeout calling sendWithTimeout socket={}\n", .{self.socket});
@@ -153,7 +123,7 @@ pub const Client = struct {
             sendCallback,
             &completion.linked_completion,
             self.socket,
-            buffer,
+            buffer.readableSlice(0),
             flags,
             timeout_ns,
         );
@@ -167,15 +137,15 @@ pub const Client = struct {
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |sent| {
             comp.processed_len += sent;
-            const buf = comp.buffer.immutable;
-            if (comp.processed_len < buf.len) {
+            const buf = comp.buffer;
+            if (comp.processed_len < buf.readableLength()) {
                 self.io.sendWithTimeout(
                     *Self,
                     self,
                     sendCallback,
                     linked_completion,
                     self.socket,
-                    buf[comp.processed_len..],
+                    buf.readableSlice(comp.processed_len),
                     linked_completion.main_completion.operation.send.flags,
                     @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
                 );
@@ -189,6 +159,121 @@ pub const Client = struct {
         }
     }
 
+    pub const RecvResponseHeaderError = error{
+        UnexpectedEof,
+        HeaderTooLong,
+        BadGateway,
+    } || IO.RecvError;
+
+    pub fn recvResponseHeader(
+        self: *Self,
+        comptime Context: type,
+        context: Context,
+        comptime callback: fn (
+            context: Context,
+            completion: *Completion,
+            result: RecvResponseHeaderError!usize,
+        ) void,
+        completion: *Completion,
+        buffer: *DynamicByteBuffer,
+        header_buf_max_len: usize,
+        flags: u32,
+        timeout_ns: u63,
+    ) void {
+        assert(buffer.head == 0);
+        assert(buffer.count == 0);
+        completion.* = .{
+            .context = context,
+            .callback = struct {
+                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                    callback(
+                        @intToPtr(Context, @ptrToInt(ctx)),
+                        comp,
+                        @intToPtr(*const RecvResponseHeaderError!usize, @ptrToInt(res)).*,
+                    );
+                }
+            }.wrapper,
+            .buffer = buffer,
+            .processed_len = 0,
+            .header_buf_max_len = header_buf_max_len,
+        };
+
+        self.resp_scanner = RecvResponseScanner{};
+        self.io.recvWithTimeout(
+            *Self,
+            self,
+            recvResponseHeaderCallback,
+            &completion.linked_completion,
+            self.socket,
+            buffer.buf,
+            flags,
+            timeout_ns,
+        );
+    }
+    fn recvResponseHeaderCallback(
+        self: *Self,
+        linked_completion: *IO.LinkedCompletion,
+        result: IO.RecvError!usize,
+    ) void {
+        std.debug.print("Client.recvCallback result={}\n", .{result});
+        const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+        if (result) |received| {
+            if (received == 0) {
+                const err = error.UnexpectedEof;
+                comp.callback(comp.context, comp, &err);
+                self.close();
+                return;
+            }
+
+            const old = comp.processed_len;
+            comp.processed_len += received;
+            const buf = comp.buffer.buf;
+            if (self.resp_scanner.scan(buf[old..comp.processed_len])) |done| {
+                if (done) {
+                    const total = self.resp_scanner.totalBytesRead();
+                    if (RecvResponse.init(buf[0..total], &self.resp_scanner)) |resp| {
+                        comp.response = resp;
+                        comp.buffer.head = total;
+                        comp.buffer.count = comp.processed_len - total;
+                        comp.callback(comp.context, comp, &result);
+                    } else |err| {
+                        comp.callback(comp.context, comp, &err);
+                        self.close();
+                        return;
+                    }
+                } else {
+                    if (old + received == buf.len) {
+                        const new_len = 2 * buf.len;
+                        if (comp.header_buf_max_len < new_len) {
+                            const err = error.HeaderTooLong;
+                            comp.callback(comp.context, comp, &err);
+                            self.close();
+                            return;
+                        }
+
+                        self.io.recvWithTimeout(
+                            *Self,
+                            self,
+                            recvResponseHeaderCallback,
+                            linked_completion,
+                            self.socket,
+                            buf[comp.processed_len..],
+                            linked_completion.main_completion.operation.recv.flags,
+                            @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                        );
+                    }
+                }
+            } else |err| {
+                comp.callback(comp.context, comp, &err);
+                self.close();
+                return;
+            }
+        } else |err| {
+            comp.callback(comp.context, comp, &err);
+            self.close();
+        }
+    }
+
     pub fn recvWithTimeout(
         self: *Self,
         comptime Context: type,
@@ -196,13 +281,16 @@ pub const Client = struct {
         comptime callback: fn (
             context: Context,
             completion: *Completion,
-            last_result: IO.RecvError!usize,
+            result: IO.RecvError!usize,
         ) void,
         completion: *Completion,
-        buffer: []u8,
+        buffer: *DynamicByteBuffer,
         flags: u32,
         timeout_ns: u63,
     ) void {
+        assert(buffer.head == 0);
+        assert(buffer.count == 0);
+
         completion.* = .{
             .context = context,
             .callback = struct {
@@ -214,8 +302,7 @@ pub const Client = struct {
                     );
                 }
             }.wrapper,
-            .buffer = .{.mutable = buffer},
-            .processed_len = 0,
+            .buffer = buffer,
         };
         self.io.recvWithTimeout(
             *Self,
@@ -223,7 +310,7 @@ pub const Client = struct {
             recvCallback,
             &completion.linked_completion,
             self.socket,
-            buffer,
+            buffer.buf,
             flags,
             timeout_ns,
         );
@@ -236,124 +323,13 @@ pub const Client = struct {
         std.debug.print("Client.recvCallback result={}\n", .{result});
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |received| {
+            comp.buffer.count = received;
             comp.callback(comp.context, comp, &result);
         } else |err| {
             comp.callback(comp.context, comp, &result);
             self.close();
         }
     }
-
-    // fn recvCallback(
-    //     self: *Self,
-    //     comp: *IO.LinkedCompletion,
-    //     result: IO.RecvError!usize,
-    // ) void {
-    //     // std.debug.print("MyContext.recvCallback, result={}\n", .{result});
-    //     if (result) |received| {
-    //         if (received == 0) {
-    //             std.debug.print("recvCallback, closed from server\n", .{});
-    //             self.close();
-    //             return;
-    //         }
-
-    //         switch (self.state) {
-    //             .ReceivingHeaders => {
-    //                 const old = self.resp_scanner.totalBytesRead();
-    //                 if (self.resp_scanner.scan(self.recv_buf[old .. old + received])) |done| {
-    //                     if (done) {
-    //                         self.state = .ReceivingContent;
-    //                         const total = self.resp_scanner.totalBytesRead();
-    //                         if (http.RecvResponse.init(self.recv_buf[0..total], &self.resp_scanner)) |resp| {
-    //                             std.debug.print("response version={}, status_code={}, reason_phrase={s}\n", .{
-    //                                 resp.version, resp.status_code, resp.reason_phrase,
-    //                             });
-    //                             std.debug.print("response headers=\n{s}\n", .{
-    //                                 resp.headers.fields,
-    //                             });
-    //                             self.content_length = if (resp.headers.getContentLength()) |len| len else |err| {
-    //                                 std.debug.print("bad response, invalid content-length, err={s}\n", .{@errorName(err)});
-    //                                 self.close();
-    //                                 return;
-    //                             };
-    //                             if (self.content_length) |len| {
-    //                                 std.debug.print("content_length={}\n", .{len});
-    //                                 const actual_content_chunk_len = old + received - total;
-    //                                 self.content_length_read_so_far += actual_content_chunk_len;
-    //                                 std.debug.print("first content chunk length={},\ncontent=\n{s}", .{
-    //                                     actual_content_chunk_len,
-    //                                     self.recv_buf[total .. old + received],
-    //                                 });
-    //                                 if (actual_content_chunk_len < len) {
-    //                                     self.io.recvWithTimeout(
-    //                                         *Client,
-    //                                         self,
-    //                                         recvCallback,
-    //                                         &self.linked_completion,
-    //                                         self.socket,
-    //                                         self.recv_buf,
-    //                                         0,
-    //                                         self.recv_timeout_ns,
-    //                                     );
-    //                                     return;
-    //                                 }
-    //                             } else {
-    //                                 std.debug.print("no content_length in response headers\n", .{});
-    //                             }
-    //                         } else |err| {
-    //                             std.debug.print("invalid response header fields, err={s}\n", .{@errorName(err)});
-    //                         }
-    //                     } else {
-    //                         if (old + received == self.recv_buf.len) {
-    //                             const new_len = self.recv_buf.len + self.config.recv_buf_ini_len;
-    //                             if (self.config.recv_buf_max_len < new_len) {
-    //                                 std.debug.print("response header fields too long.\n", .{});
-    //                                 self.close();
-    //                                 return;
-    //                             }
-    //                             self.recv_buf = self.allocator.realloc(self.recv_buf, new_len) catch unreachable;
-    //                         }
-    //                         self.io.recvWithTimeout(
-    //                             *Client,
-    //                             self,
-    //                             recvCallback,
-    //                             &self.linked_completion,
-    //                             self.socket,
-    //                             self.recv_buf[old + received ..],
-    //                             0,
-    //                             self.recv_timeout_ns,
-    //                         );
-    //                         return;
-    //                     }
-    //                 } else |err| {
-    //                     std.debug.print("got error while reading response headers, {s}\n", .{@errorName(err)});
-    //                 }
-    //             },
-    //             .ReceivingContent => {
-    //                 std.debug.print("{s}", .{self.recv_buf[0..received]});
-    //                 self.content_length_read_so_far += received;
-    //                 if (self.content_length_read_so_far < self.content_length.?) {
-    //                     self.io.recvWithTimeout(
-    //                         *Client,
-    //                         self,
-    //                         recvCallback,
-    //                         &self.linked_completion,
-    //                         self.socket,
-    //                         self.recv_buf,
-    //                         0,
-    //                         self.recv_timeout_ns,
-    //                     );
-    //                     return;
-    //                 }
-    //             },
-    //             else => {
-    //                 std.debug.print("MyContext.recvCallback unexpected state {}\n", .{self.state});
-    //             },
-    //         }
-    //     } else |err| {
-    //         std.debug.print("MyContext.recvCallback, err={s}\n", .{@errorName(err)});
-    //     }
-    //     self.close();
-    // }
 
     fn close(self: *Self) void {
         os.closeSocket(self.socket);
@@ -365,23 +341,25 @@ test "http.Client" {
     try struct {
         const Context = @This();
         const FifoType = std.fifo.LinearFifo(u8, .Dynamic);
+        const response_header_max_len = 4096;
 
         client: Client,
         buffer: FifoType,
         completion: Client.Completion = undefined,
+        content_length: ?u64 = null,
+        content_read_so_far: u64 = undefined,
+        recv_timeout_ns: u63 = 5 * time.ns_per_s,
 
         fn runTest() !void {
             var io = try IO.init(32, 0);
             defer io.deinit();
 
             const allocator = std.heap.page_allocator;
-            const config = Client.Config{};
 
             var self: Context = .{
-                .client = try Client.init(allocator, &io, &config),
+                .client = Client.init(&io),
                 .buffer = FifoType.init(allocator),
             };
-            defer self.client.deinit();
             defer self.buffer.deinit();
             std.debug.print("self=0x{x}, client=0x{x}\n", .{ @ptrToInt(&self), @ptrToInt(&self.client) });
 
@@ -421,7 +399,7 @@ test "http.Client" {
                 self,
                 sendCallback,
                 &self.completion,
-                self.buffer.readableSlice(0),
+                &self.buffer,
                 if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 500 * time.ns_per_ms,
             );
@@ -433,32 +411,99 @@ test "http.Client" {
         ) void {
             std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
             if (result) |_| {
-                self.buffer.discard(completion.processed_len);
-                self.buffer.ensureCapacity(4096) catch unreachable;
-                assert(self.buffer.head == 0);
-                assert(self.buffer.count == 0);
+                self.buffer.head = 0;
+                self.buffer.count = 0;
+                self.buffer.ensureCapacity(1024) catch unreachable;
+                self.client.recvResponseHeader(
+                    *Context,
+                    self,
+                    recvResponseHeaderCallback,
+                    &self.completion,
+                    &self.buffer,
+                    response_header_max_len,
+                    if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+                    self.recv_timeout_ns,
+                );
+            } else |_| {}
+        }
+        fn recvResponseHeaderCallback(
+            self: *Context,
+            completion: *Client.Completion,
+            result: Client.RecvResponseHeaderError!usize,
+        ) void {
+            std.debug.print("recvResponseHeaderCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
+            if (result) |received| {
+                const resp = completion.response;
+                if (resp.headers.getContentLength()) |len| {
+                    self.content_length = len;
+                    if (len) |l| {
+                        std.debug.print("content-length is {}\n", .{l});
+                    } else {
+                        std.debug.print("no content-length\n", .{});
+                    }
+                } else |err| {
+                    std.debug.print("invalid content-length, err={s}\n", .{@errorName(err)});
+                }
+
+                const chunk = completion.buffer.readableSlice(0);
+                std.debug.print("Response:\n{s} {} {s}\n{s}{s}\nchunk_len={}\n", .{
+                    resp.version.toText(),
+                    resp.status_code.code(),
+                    resp.reason_phrase,
+                    resp.headers.fields,
+                    chunk,
+                    chunk.len,
+                });
+                if (chunk.len == self.content_length.?) {
+                    self.client.close();
+                    return;
+                }
+
+                self.content_read_so_far = chunk.len;
+                self.buffer.head = 0;
+                self.buffer.count = 0;
                 self.client.recvWithTimeout(
                     *Context,
                     self,
                     recvCallback,
                     &self.completion,
-                    self.buffer.buf,
+                    &self.buffer,
                     if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-                    5 * time.ns_per_s,
+                    self.recv_timeout_ns,
                 );
-            } else |_| {}
+            } else |err| {
+                std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
+            }
         }
         fn recvCallback(
             self: *Context,
             completion: *Client.Completion,
             result: IO.RecvError!usize,
         ) void {
-            std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
+            std.debug.print("recvCallback, result={}\n", .{result});
             if (result) |received| {
-                std.debug.print("result={s}\n", .{completion.buffer.mutable[0..received]});
+                self.content_read_so_far += received;
+                std.debug.print("body chunk: {s}\n", .{completion.buffer.readableSlice(0)});
+                std.debug.print("content_read_so_far={}, content_length={}\n", .{ self.content_read_so_far, self.content_length.? });
+                if (self.content_read_so_far == self.content_length.?) {
+                    self.client.close();
+                    return;
+                }
 
-                self.client.close();
-            } else |_| {}
+                self.buffer.head = 0;
+                self.buffer.count = 0;
+                self.client.recvWithTimeout(
+                    *Context,
+                    self,
+                    recvCallback,
+                    &self.completion,
+                    &self.buffer,
+                    if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+                    self.recv_timeout_ns,
+                );
+            } else |err| {
+                std.debug.print("recvCallback err={s}\n", .{@errorName(err)});
+            }
         }
     }.runTest();
 }
