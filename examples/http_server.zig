@@ -64,7 +64,7 @@ const Server = struct {
         completion: *IO.Completion,
         result: IO.AcceptError!os.socket_t,
     ) void {
-        std.debug.print("acceptCallback\n", .{});
+        // std.debug.print("acceptCallback\n", .{});
         const accepted_sock = result catch @panic("accept error");
         var handler = self.createClientHandler(accepted_sock) catch @panic("handler create error");
         handler.start() catch @panic("handler");
@@ -73,7 +73,7 @@ const Server = struct {
 
     fn createClientHandler(self: *Server, accepted_sock: os.socket_t) !*ClientHandler {
         const handler_id = if (self.findEmptyClientHandlerId()) |id| id else self.client_handlers.items.len;
-        std.debug.print("client_handler_id={d}\n", .{handler_id});
+        // std.debug.print("client_handler_id={d}\n", .{handler_id});
         const handler = try ClientHandler.init(self, handler_id, self.allocator, &self.io, accepted_sock);
         if (handler_id < self.client_handlers.items.len) {
             self.client_handlers.items[handler_id] = handler;
@@ -85,9 +85,9 @@ const Server = struct {
 
     fn findEmptyClientHandlerId(self: *Server) ?usize {
         for (self.client_handlers.items) |h, i| {
-            std.debug.print("findEmptyClientHandlerId, i={d}\n", .{i});
+            // std.debug.print("findEmptyClientHandlerId, i={d}\n", .{i});
             if (h) |_| {
-                std.debug.print("handler is running, i={d}\n", .{i});
+                // std.debug.print("handler is running, i={d}\n", .{i});
             } else {
                 return i;
             }
@@ -189,7 +189,7 @@ const ClientHandler = struct {
         if (self.deinit()) |_| {} else |err| {
             std.debug.print("ClientHandler deinit err={s}\n", .{@errorName(err)});
         }
-        std.debug.print("close and exit\n", .{});
+        // std.debug.print("close and exit\n", .{});
     }
 
     fn start(self: *ClientHandler) !void {
@@ -200,7 +200,7 @@ const ClientHandler = struct {
         self: *ClientHandler,
         buf: []u8,
     ) void {
-        std.debug.print("recvWithTimeout handler_id={d}\n", .{self.handler_id});
+        // std.debug.print("recvWithTimeout handler_id={d}\n", .{self.handler_id});
         self.io.recvWithTimeout(
             *ClientHandler,
             self,
@@ -218,11 +218,11 @@ const ClientHandler = struct {
         result: IO.RecvError!usize,
     ) void {
         if (result) |received| {
-            std.debug.print("received={d}\n", .{received});
+            // std.debug.print("received={d}\n", .{received});
 
             if (received == 0) {
                 if (self.request_scanner.totalBytesRead() > 0) {
-                    std.debug.print("closed from client during request, close connection.\n", .{});
+                    // std.debug.print("closed from client during request, close connection.\n", .{});
                 }
                 self.close();
                 return;
@@ -239,19 +239,19 @@ const ClientHandler = struct {
             .ReceivingHeaders => {
                 self.processing = true;
                 const old = self.request_scanner.totalBytesRead();
-                std.debug.print("handleStreamingRequest old={}, received={}\n", .{ old, received });
-                std.debug.print("handleStreamingRequest scan data={s}\n", .{self.recv_buf[old .. old + received]});
+                // std.debug.print("handleStreamingRequest old={}, received={}\n", .{ old, received });
+                // std.debug.print("handleStreamingRequest scan data={s}\n", .{self.recv_buf[old .. old + received]});
                 if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
                     if (done) {
                         self.state = .ReceivingContent;
                         const total = self.request_scanner.totalBytesRead();
                         if (http.RecvRequest.init(self.recv_buf[0..total], self.request_scanner)) |req| {
-                            std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
-                                req.method.toText(),
-                                req.version.toText(),
-                                req.uri,
-                                req.headers.fields,
-                            });
+                            // std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
+                            //     req.method.toText(),
+                            //     req.version.toText(),
+                            //     req.uri,
+                            //     req.headers.fields,
+                            // });
                             if (req.isKeepAlive()) |keep_alive| {
                                 self.keep_alive = keep_alive;
                             } else |err| {
@@ -260,18 +260,18 @@ const ClientHandler = struct {
                             }
                             self.request_version = req.version;
                             self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
-                                std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
+                                // std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
                                 self.sendError(.bad_request);
                                 return;
                             };
                             if (self.req_content_length) |len| {
-                                std.debug.print("content_length={}\n", .{len});
+                                // std.debug.print("content_length={}\n", .{len});
                                 const actual_content_chunk_len = old + received - total;
                                 self.content_length_read_so_far += actual_content_chunk_len;
-                                std.debug.print("first content chunk length={},\ncontent=\n{s}", .{
-                                    actual_content_chunk_len,
-                                    self.recv_buf[total .. old + received],
-                                });
+                                // std.debug.print("first content chunk length={},\ncontent=\n{s}", .{
+                                //     actual_content_chunk_len,
+                                //     self.recv_buf[total .. old + received],
+                                // });
                                 if (actual_content_chunk_len < len) {
                                     self.io.recvWithTimeout(
                                         *ClientHandler,
@@ -292,7 +292,7 @@ const ClientHandler = struct {
                         }
                         self.sendResponseWithTimeout();
                     } else {
-                        std.debug.print("handleStreamingRequest not done\n", .{});
+                        // std.debug.print("handleStreamingRequest not done\n", .{});
                         if (old + received == self.recv_buf.len) {
                             const new_len = self.recv_buf.len + config.recv_buf_ini_len;
                             if (config.recv_buf_max_len < new_len) {
@@ -323,7 +323,7 @@ const ClientHandler = struct {
                 }
             },
             .ReceivingContent => {
-                std.debug.print("{s}", .{self.recv_buf[0..received]});
+                // std.debug.print("{s}", .{self.recv_buf[0..received]});
                 self.content_length_read_so_far += received;
                 if (self.content_length_read_so_far < self.req_content_length.?) {
                     self.io.recvWithTimeout(
@@ -403,25 +403,29 @@ const ClientHandler = struct {
         switch (self.request_version) {
             .http1_1 => if (!self.keep_alive) {
                 std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
-                std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
+                // std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
             },
             .http1_0 => if (self.keep_alive) {
-                std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
+                // std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
                 std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
             },
             else => {},
         }
-        self.content_length = 2048;
+        self.content_length = 17;
         std.fmt.format(w, "Content-Length: {d}\r\n", .{self.content_length}) catch unreachable;
         std.fmt.format(w, "\r\n", .{}) catch unreachable;
         var pos = fbs.getPos() catch unreachable;
         self.resp_headers_len = pos;
-        while (pos < self.send_buf.len) : (pos += 1) {
+        self.send_buf_data_len = std.math.min(
+            pos + self.content_length,
+            self.send_buf.len,
+        );
+        while (pos < self.send_buf_data_len) : (pos += 1) {
             self.send_buf[pos] = 'e';
         }
-        self.send_buf_data_len = self.send_buf.len;
         self.send_buf_sent_len = 0;
-        self.state = .SendingHeaders;
+        // self.state = .SendingHeaders;
+        self.state = .SendingContent;
         self.io.sendWithTimeout(
             *ClientHandler,
             self,
@@ -439,7 +443,7 @@ const ClientHandler = struct {
         result: IO.SendError!usize,
     ) void {
         if (result) |sent| {
-            std.debug.print("sent response bytes={d}\n", .{sent});
+            // std.debug.print("sent response bytes={d}\n", .{sent});
             self.send_buf_sent_len += sent;
             self.sent_bytes_so_far += sent;
             if (self.send_buf_sent_len < self.send_buf_data_len) {
