@@ -13,6 +13,7 @@ pub const RecvResponse = @import("recv_response.zig").RecvResponse;
 pub const RecvResponseScanner = @import("recv_response.zig").RecvResponseScanner;
 
 pub const Client = @import("client.zig").Client;
+pub const Server = @import("server.zig").Server;
 
 pub const config = @import("config.zig");
 

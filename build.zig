@@ -6,6 +6,7 @@ const pkgs = struct {
         .path = "./src/main.zig",
         .dependencies = &[_]std.build.Pkg{
             @"tigerbeetle-io",
+            datetime,
         },
     };
 
@@ -28,12 +29,14 @@ pub fn build(b: *std.build.Builder) void {
 
     const lib = b.addStaticLibrary("http", "src/main.zig");
     lib.addPackage(pkgs.@"tigerbeetle-io");
+    lib.addPackage(pkgs.datetime);
     lib.setBuildMode(mode);
     lib.install();
 
     // tests
     var main_tests = b.addTest("src/main.zig");
     main_tests.addPackage(pkgs.@"tigerbeetle-io");
+    main_tests.addPackage(pkgs.datetime);
     main_tests.setBuildMode(mode);
     main_tests.filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
     const test_step = b.step("test", "Run library tests");
@@ -45,6 +48,7 @@ pub fn build(b: *std.build.Builder) void {
         .name = "tigerbeetle-io",
         .path = "tests/mock/mock-io.zig",
     });
+    mock_tests.addPackage(pkgs.datetime);
     mock_tests.setBuildMode(mode);
     mock_tests.filter = b.option([]const u8, "mock-test-filter", "Skip tests that do not match filter");
     const mock_test_step = b.step("mock-test", "Run library tests with mock IO");
