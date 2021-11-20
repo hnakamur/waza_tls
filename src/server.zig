@@ -13,15 +13,11 @@ const Version = @import("version.zig").Version;
 const config = @import("config.zig");
 
 pub fn Server(
-    comptime HandlerFactory: type,
     comptime Handler: type,
-    comptime createHandlerFn: fn (factory: HandlerFactory) Handler,
-    comptime hookFn: fn (handler: *Handler) void,
 ) type {
     return struct {
         const Self = @This();
 
-        handler_factory: HandlerFactory = undefined,
         io: IO,
         server: os.socket_t,
         allocator: *mem.Allocator,
@@ -58,10 +54,6 @@ pub fn Server(
             return self;
         }
 
-        fn createHandler(self: *Self) Handler {
-            return createHandlerFn(self.handler_factory);
-        }
-
         pub fn deinit(self: *Self) void {
             os.close(self.server);
             self.connections.deinit();
@@ -93,8 +85,6 @@ pub fn Server(
             std.debug.print("client_handler_id={d}\n", .{conn_id});
             const conn = try Conn.init(self, conn_id, self.allocator, &self.io, accepted_sock);
             std.debug.print("conn=0x{x}\n", .{@ptrToInt(conn)});
-            conn.handler = self.createHandler();
-            conn.handler.conn = @ptrToInt(conn);
             if (conn_id < self.connections.items.len) {
                 self.connections.items[conn_id] = conn;
             } else {
@@ -183,7 +173,11 @@ pub fn Server(
                 const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
                 const send_buf = try allocator.alloc(u8, 1024);
                 var self = try allocator.create(Conn);
+                const handler = Handler{
+                    .conn = self,
+                };
                 self.* = Conn{
+                    .handler = handler,
                     .server = server,
                     .conn_id = conn_id,
                     .io = io,
@@ -548,28 +542,14 @@ pub fn Server(
 const testing = std.testing;
 
 test "Server" {
-    const HandlerFactory = struct {
+    const Handler = struct {
         const Self = @This();
-        pub const MyServer = Server(Self, Handler, createHandler, Handler.hook);
+        pub const MyServer = Server(Self);
 
-        const Handler = struct {
-            value: usize = undefined,
-            conn: usize = undefined,
+        conn: *MyServer.Conn = undefined,
 
-            fn hook(self: *Handler) void {
-                const conn = @intToPtr(*MyServer.Conn, self.conn);
-                std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{@ptrToInt(self), self.conn, conn.conn_id});
-            }
-        };
-
-        pub fn server(self: Self, allocator: *mem.Allocator, address: std.net.Address) !MyServer {
-            var svr = try MyServer.init(allocator, address);
-            svr.handler_factory = self;
-            return svr;
-        }
-
-        fn createHandler(self: Self) Handler {
-            return .{};
+        fn hook(self: *Self) void {
+            std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{ @ptrToInt(self), @ptrToInt(self.conn), self.conn.conn_id });
         }
     };
 
@@ -578,8 +558,7 @@ test "Server" {
             var allocator = testing.allocator;
             const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
 
-            var factory = HandlerFactory{};
-            var svr = try factory.server(allocator, address);
+            var svr = try Handler.MyServer.init(allocator, address);
             defer svr.deinit();
 
             try svr.run();
