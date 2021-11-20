@@ -221,7 +221,6 @@ pub fn Server(comptime Handler: type) type {
             }
 
             fn start(self: *Conn) !void {
-                self.handler.hook();
                 self.recvWithTimeout(self.client_header_buf);
             }
 
@@ -286,14 +285,17 @@ pub fn Server(comptime Handler: type) type {
                                         self.sendError(.bad_request);
                                         return;
                                     };
+                                    if (self.handler.handleRequestHeaders(&self.request)) |_| {} else |err| {
+                                        self.sendError(.internal_server_error);
+                                        return;
+                                    }
 
                                     if (self.req_content_length) |len| {
                                         std.debug.print("content_length={}\n", .{len});
                                         const actual_content_chunk_len = old + received - total;
                                         self.content_length_read_so_far += actual_content_chunk_len;
                                         const is_last_fragment = len <= actual_content_chunk_len;
-                                        if (self.handler.handleRequestFragment(
-                                            &self.request,
+                                        if (self.handler.handleRequestBodyFragment(
                                             self.client_header_buf[total .. old + received],
                                             is_last_fragment,
                                         )) |_| {} else |err| {
@@ -319,8 +321,7 @@ pub fn Server(comptime Handler: type) type {
                                             return;
                                         }
                                     } else {
-                                        if (self.handler.handleRequestFragment(
-                                            &self.request,
+                                        if (self.handler.handleRequestBodyFragment(
                                             self.client_header_buf[total .. old + received],
                                             true,
                                         )) |_| {} else |err| {
@@ -376,8 +377,7 @@ pub fn Server(comptime Handler: type) type {
                     .ReceivingContent => {
                         self.content_length_read_so_far += received;
                         const is_last_fragment = self.req_content_length.? <= self.content_length_read_so_far;
-                        if (self.handler.handleRequestFragment(
-                            &self.request,
+                        if (self.handler.handleRequestBodyFragment(
                             self.client_body_buf.?[0..received],
                             is_last_fragment,
                         )) |_| {} else |err| {
@@ -440,9 +440,6 @@ pub fn Server(comptime Handler: type) type {
                     0,
                     self.send_timeout_ns,
                 );
-            }
-
-            pub fn sendResponseChunk(self: *Conn, chunk: []const u8, is_last_fragment: bool) void {
             }
 
             fn sendResponseWithTimeout(self: *Conn) void {
@@ -603,23 +600,18 @@ test "Server" {
         pub const Svr = Server(Self);
 
         conn: *Svr.Conn = undefined,
-        is_first_fragment: bool = true,
 
-        fn handleRequestFragment(self: *Self, req: *RecvRequest, body_chunk: []const u8, is_last_fragment: bool) !void {
-            if (self.is_first_fragment) {
-                std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
-                    req.method.toText(),
-                    req.version.toText(),
-                    req.uri,
-                    req.headers.fields,
-                });
-                self.is_first_fragment = false;
-            }
-            std.debug.print("body_chunk={s}, is_last_fragment={}\n", .{ body_chunk, is_last_fragment });
+        fn handleRequestHeaders(self: *Self, req: *RecvRequest) !void {
+            std.debug.print("handleRequestHeaders: request method={s}, version={s}, url={s}, headers=\n{s}", .{
+                req.method.toText(),
+                req.version.toText(),
+                req.uri,
+                req.headers.fields,
+            });
         }
 
-        fn hook(self: *Self) void {
-            std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{ @ptrToInt(self), @ptrToInt(self.conn), self.conn.conn_id });
+        fn handleRequestBodyFragment(self: *Self, body_fragment: []const u8, is_last_fragment: bool) !void {
+            std.debug.print("handleRequestBodyFragment: body_fragment={s}, is_last_fragment={}\n", .{ body_fragment, is_last_fragment });
         }
     };
 
