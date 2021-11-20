@@ -93,27 +93,37 @@ const Client = struct {
                 http.Version.http1_1.toText(),
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
+            std.fmt.format(w, "\r\n", .{}) catch unreachable;
+            const pos = fbs.getPos() catch unreachable;
+            self.req_headers_len = @intCast(u32, pos);
+            self.req_content_length = 0;
+            self.state = .SendingContent;
 
-            self.req_content_length = 8000;
-            std.fmt.format(w, "Content-Length: {}\r\n", .{self.req_content_length.?}) catch unreachable;
+            // self.req_content_length = 8000;
+            // std.fmt.format(w, "Content-Length: {}\r\n", .{self.req_content_length.?}) catch unreachable;
 
-            std.fmt.format(w, "X-Foo: ", .{}) catch unreachable;
-            var pos = fbs.getPos() catch unreachable;
-            std.debug.print("pos={}, self.send_buf.len={}\n", .{ pos, self.send_buf.len });
-            while (pos < self.send_buf.len) : (pos += 1) {
-                self.send_buf[pos] = 'f';
-            }
-            std.debug.print("self.send_buf={s}\n", .{self.send_buf});
-            self.send_buf_data_len = @intCast(u32, self.send_buf.len);
+            // std.fmt.format(w, "X-Foo: ", .{}) catch unreachable;
+            // var pos = fbs.getPos() catch unreachable;
+            // std.debug.print("pos={}, self.send_buf.len={}\n", .{ pos, self.send_buf.len });
+            // const foo_header_len = 6;
+            //     self.send_buf_data_len = @intCast(u32, std.math.min(
+            //         pos + foo_header_len,
+            //         self.send_buf.len,
+            //     ));
+            // while (pos < self.send_buf_data_len) : (pos += 1) {
+            //     self.send_buf[pos] = 'f';
+            // }
+            // std.debug.print("self.send_buf={s}\n", .{self.send_buf});
+            self.send_buf_data_len = @intCast(u32, self.req_headers_len);
             self.send_buf_sent_len = 0;
-            self.req_headers_len += self.send_buf_data_len;
+            // self.req_headers_len += self.send_buf_data_len;
             self.io.sendWithTimeout(
                 *Self,
                 self,
                 sendCallback,
                 &self.linked_completion,
                 self.socket,
-                self.send_buf,
+                self.send_buf[0..self.send_buf_data_len],
                 0,
                 self.send_timeout_ns,
             );

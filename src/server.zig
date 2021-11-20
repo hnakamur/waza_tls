@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const mem = std.mem;
 const net = std.net;
 const os = std.os;
@@ -10,59 +11,71 @@ const RecvRequestScanner = @import("recv_request.zig").RecvRequestScanner;
 const Method = @import("method.zig").Method;
 const StatusCode = @import("status_code.zig").StatusCode;
 const Version = @import("version.zig").Version;
-const config = @import("config.zig");
 
-pub fn Server(
-    comptime Handler: type,
-) type {
+pub fn Server(comptime Handler: type) type {
     return struct {
         const Self = @This();
+        const Config = struct {
+            client_header_buffer_size: usize = 1024,
+            large_client_header_buffer_size: usize = 8192,
+            large_client_header_buffer_max_count: usize = 4,
+            client_body_buffer_size: usize = 16384,
 
-        io: IO,
-        server: os.socket_t,
+            fn validate(self: Config) !void {
+                assert(self.client_header_buffer_size > 0);
+                assert(self.large_client_header_buffer_size > self.client_header_buffer_size);
+                assert(self.large_client_header_buffer_max_count > 0);
+                assert(self.client_body_buffer_size > 0);
+            }
+        };
+
+        io: *IO,
+        socket: os.socket_t,
         allocator: *mem.Allocator,
+        config: Config,
         connections: std.ArrayList(?*Conn),
         shutdown_requested: bool = false,
         done: bool = false,
 
-        fn init(allocator: *mem.Allocator, address: std.net.Address) !Self {
+        fn init(allocator: *mem.Allocator, io: *IO, address: std.net.Address, config: Config) !Self {
+            try config.validate();
             const kernel_backlog = 513;
-            const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+            const socket = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
 
             try os.setsockopt(
-                server,
+                socket,
                 os.SOL_SOCKET,
                 os.SO_REUSEADDR,
                 &std.mem.toBytes(@as(c_int, 1)),
             );
-            try os.bind(server, &address.any, address.getOsSockLen());
+            try os.bind(socket, &address.any, address.getOsSockLen());
             if (address.getPort() == 0) {
                 var bound_addr: std.net.Address = address;
                 var bound_socklen: os.socklen_t = address.getOsSockLen();
-                try os.getsockname(server, &bound_addr.any, &bound_socklen);
+                try os.getsockname(socket, &bound_addr.any, &bound_socklen);
                 std.debug.print("bound port={d}\n", .{bound_addr.getPort()});
             }
 
-            try os.listen(server, kernel_backlog);
+            try os.listen(socket, kernel_backlog);
 
             var self: Self = .{
-                .io = try IO.init(256, 0),
-                .server = server,
+                .io = io,
+                .socket = socket,
                 .allocator = allocator,
+                .config = config,
                 .connections = std.ArrayList(?*Conn).init(allocator),
             };
             return self;
         }
 
         pub fn deinit(self: *Self) void {
-            os.close(self.server);
+            os.close(self.socket);
             self.connections.deinit();
-            self.io.deinit();
         }
 
         pub fn run(self: *Self) !void {
             var server_completion: IO.Completion = undefined;
-            self.io.accept(*Self, self, acceptCallback, &server_completion, self.server, 0);
+            self.io.accept(*Self, self, acceptCallback, &server_completion, self.socket, 0);
             while (!self.done) {
                 try self.io.run_for_ns(time.ns_per_s);
             }
@@ -77,13 +90,13 @@ pub fn Server(
             const accepted_sock = result catch @panic("accept error");
             var conn = self.createConn(accepted_sock) catch @panic("conn create error");
             conn.start() catch @panic("conn");
-            self.io.accept(*Self, self, acceptCallback, completion, self.server, 0);
+            self.io.accept(*Self, self, acceptCallback, completion, self.socket, 0);
         }
 
         fn createConn(self: *Self, accepted_sock: os.socket_t) !*Conn {
             const conn_id = if (self.findEmptyConnId()) |id| id else self.connections.items.len;
             std.debug.print("client_handler_id={d}\n", .{conn_id});
-            const conn = try Conn.init(self, conn_id, self.allocator, &self.io, accepted_sock);
+            const conn = try Conn.init(self, conn_id, accepted_sock);
             std.debug.print("conn=0x{x}\n", .{@ptrToInt(conn)});
             if (conn_id < self.connections.items.len) {
                 self.connections.items[conn_id] = conn;
@@ -139,16 +152,16 @@ pub fn Server(
         const Conn = struct {
             handler: Handler = undefined,
             server: *Self,
+            socket: os.socket_t,
             conn_id: usize,
-            io: *IO,
             linked_completion: IO.LinkedCompletion = undefined,
-            sock: os.socket_t,
-            recv_buf: []u8,
+            client_header_buf: []u8,
+            client_body_buf: ?[]u8 = null,
             send_buf: []u8,
-            allocator: *mem.Allocator,
             recv_timeout_ns: u63 = 5 * time.ns_per_s,
             send_timeout_ns: u63 = 5 * time.ns_per_s,
             request_scanner: *RecvRequestScanner,
+            request: RecvRequest = undefined,
             request_version: Version = undefined,
             keep_alive: bool = true,
             req_content_length: ?u64 = null,
@@ -167,12 +180,12 @@ pub fn Server(
                 SendingContent,
             } = .ReceivingHeaders,
 
-            fn init(server: *Self, conn_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*Conn {
-                const req_scanner = try allocator.create(RecvRequestScanner);
+            fn init(server: *Self, conn_id: usize, socket: os.socket_t) !*Conn {
+                const req_scanner = try server.allocator.create(RecvRequestScanner);
                 req_scanner.* = RecvRequestScanner{};
-                const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
-                const send_buf = try allocator.alloc(u8, 1024);
-                var self = try allocator.create(Conn);
+                const client_header_buf = try server.allocator.alloc(u8, server.config.client_header_buffer_size);
+                const send_buf = try server.allocator.alloc(u8, 1024);
+                var self = try server.allocator.create(Conn);
                 const handler = Handler{
                     .conn = self,
                 };
@@ -180,26 +193,27 @@ pub fn Server(
                     .handler = handler,
                     .server = server,
                     .conn_id = conn_id,
-                    .io = io,
-                    .sock = sock,
+                    .socket = socket,
                     .request_scanner = req_scanner,
-                    .recv_buf = recv_buf,
+                    .client_header_buf = client_header_buf,
                     .send_buf = send_buf,
-                    .allocator = allocator,
                 };
                 return self;
             }
 
             fn deinit(self: *Conn) !void {
                 self.server.removeConnId(self.conn_id);
-                self.allocator.destroy(self.request_scanner);
-                self.allocator.free(self.send_buf);
-                self.allocator.free(self.recv_buf);
-                self.allocator.destroy(self);
+                self.server.allocator.destroy(self.request_scanner);
+                self.server.allocator.free(self.send_buf);
+                if (self.client_body_buf) |buf| {
+                    self.server.allocator.free(buf);
+                }
+                self.server.allocator.free(self.client_header_buf);
+                self.server.allocator.destroy(self);
             }
 
             fn close(self: *Conn) void {
-                os.closeSocket(self.sock);
+                os.closeSocket(self.socket);
                 if (self.deinit()) |_| {} else |err| {
                     std.debug.print("Conn deinit err={s}\n", .{@errorName(err)});
                 }
@@ -208,7 +222,7 @@ pub fn Server(
 
             fn start(self: *Conn) !void {
                 self.handler.hook();
-                self.recvWithTimeout(self.recv_buf);
+                self.recvWithTimeout(self.client_header_buf);
             }
 
             fn recvWithTimeout(
@@ -216,12 +230,12 @@ pub fn Server(
                 buf: []u8,
             ) void {
                 std.debug.print("recvWithTimeout conn_id={d}\n", .{self.conn_id});
-                self.io.recvWithTimeout(
+                self.server.io.recvWithTimeout(
                     *Conn,
                     self,
                     recvCallback,
                     &self.linked_completion,
-                    self.sock,
+                    self.socket,
                     buf,
                     0,
                     self.recv_timeout_ns,
@@ -243,61 +257,74 @@ pub fn Server(
                         return;
                     }
 
-                    self.handleStreamingRequest(received);
+                    self.handleReceivedData(received);
                 } else |err| {
                     std.debug.print("recv error: {s}\n", .{@errorName(err)});
                 }
             }
 
-            fn handleStreamingRequest(self: *Conn, received: usize) void {
+            fn handleReceivedData(self: *Conn, received: usize) void {
                 switch (self.state) {
                     .ReceivingHeaders => {
                         self.processing = true;
                         const old = self.request_scanner.totalBytesRead();
-                        std.debug.print("handleStreamingRequest old={}, received={}\n", .{ old, received });
-                        std.debug.print("handleStreamingRequest scan data={s}\n", .{self.recv_buf[old .. old + received]});
-                        if (self.request_scanner.scan(self.recv_buf[old .. old + received])) |done| {
+                        std.debug.print("handleReceivedData old={}, received={}\n", .{ old, received });
+                        std.debug.print("handleReceivedData scan data={s}\n", .{self.client_header_buf[old .. old + received]});
+                        if (self.request_scanner.scan(self.client_header_buf[old .. old + received])) |done| {
                             if (done) {
-                                self.state = .ReceivingContent;
                                 const total = self.request_scanner.totalBytesRead();
-                                if (RecvRequest.init(self.recv_buf[0..total], self.request_scanner)) |req| {
-                                    std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
-                                        req.method.toText(),
-                                        req.version.toText(),
-                                        req.uri,
-                                        req.headers.fields,
-                                    });
+                                if (RecvRequest.init(self.client_header_buf[0..total], self.request_scanner)) |req| {
                                     if (req.isKeepAlive()) |keep_alive| {
                                         self.keep_alive = keep_alive;
                                     } else |err| {
                                         self.sendError(.http_version_not_supported);
                                         return;
                                     }
-                                    self.request_version = req.version;
+                                    self.request = req;
                                     self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
                                         std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
                                         self.sendError(.bad_request);
                                         return;
                                     };
+
                                     if (self.req_content_length) |len| {
                                         std.debug.print("content_length={}\n", .{len});
                                         const actual_content_chunk_len = old + received - total;
                                         self.content_length_read_so_far += actual_content_chunk_len;
-                                        std.debug.print("first content chunk length={},\ncontent=\n{s}", .{
-                                            actual_content_chunk_len,
-                                            self.recv_buf[total .. old + received],
-                                        });
-                                        if (actual_content_chunk_len < len) {
-                                            self.io.recvWithTimeout(
+                                        const is_last_fragment = len <= actual_content_chunk_len;
+                                        if (self.handler.handleRequestFragment(
+                                            &self.request,
+                                            self.client_header_buf[total .. old + received],
+                                            is_last_fragment,
+                                        )) |_| {} else |err| {
+                                            self.sendError(.internal_server_error);
+                                            return;
+                                        }
+                                        if (!is_last_fragment) {
+                                            self.state = .ReceivingContent;
+                                            self.client_body_buf = self.server.allocator.alloc(u8, self.server.config.client_body_buffer_size) catch {
+                                                self.sendError(.internal_server_error);
+                                                return;
+                                            };
+                                            self.server.io.recvWithTimeout(
                                                 *Conn,
                                                 self,
                                                 recvCallback,
                                                 &self.linked_completion,
-                                                self.sock,
-                                                self.recv_buf,
+                                                self.socket,
+                                                self.client_body_buf.?,
                                                 0,
                                                 self.recv_timeout_ns,
                                             );
+                                            return;
+                                        }
+                                    } else {
+                                        if (self.handler.handleRequestFragment(
+                                            &self.request,
+                                            self.client_header_buf[total .. old + received],
+                                            true,
+                                        )) |_| {} else |err| {
+                                            self.sendError(.internal_server_error);
                                             return;
                                         }
                                     }
@@ -307,29 +334,38 @@ pub fn Server(
                                 }
                                 self.sendResponseWithTimeout();
                             } else {
-                                std.debug.print("handleStreamingRequest not done\n", .{});
-                                if (old + received == self.recv_buf.len) {
-                                    const new_len = self.recv_buf.len + config.recv_buf_ini_len;
-                                    if (config.recv_buf_max_len < new_len) {
+                                std.debug.print("handleReceivedData not done\n", .{});
+                                if (old + received == self.client_header_buf.len) {
+                                    const config = self.server.config;
+                                    const new_len = if (self.client_header_buf.len == config.client_header_buffer_size) blk1: {
+                                        break :blk1 config.large_client_header_buffer_size;
+                                    } else blk2: {
+                                        break :blk2 self.client_header_buf.len + config.large_client_header_buffer_size;
+                                    };
+                                    const max_len = config.large_client_header_buffer_size * config.large_client_header_buffer_max_count;
+                                    if (max_len < new_len) {
                                         std.debug.print("request header fields too long.\n", .{});
                                         self.sendError(.bad_request);
                                         return;
                                     }
-                                    self.recv_buf = self.allocator.realloc(self.recv_buf, new_len) catch unreachable;
+                                    self.client_header_buf = self.server.allocator.realloc(self.client_header_buf, new_len) catch {
+                                        self.sendError(.internal_server_error);
+                                        return;
+                                    };
                                 }
-                                self.io.recvWithTimeout(
+                                self.server.io.recvWithTimeout(
                                     *Conn,
                                     self,
                                     recvCallback,
                                     &self.linked_completion,
-                                    self.sock,
-                                    self.recv_buf[old + received ..],
+                                    self.socket,
+                                    self.client_header_buf[old + received ..],
                                     0,
                                     self.recv_timeout_ns,
                                 );
                             }
                         } else |err| {
-                            std.debug.print("handleStreamingRequest scan failed with {s}\n", .{@errorName(err)});
+                            std.debug.print("handleReceivedData scan failed with {s}\n", .{@errorName(err)});
                             self.sendError(switch (err) {
                                 error.UriTooLong => .uri_too_long,
                                 error.VersionNotSupported => .http_version_not_supported,
@@ -338,16 +374,27 @@ pub fn Server(
                         }
                     },
                     .ReceivingContent => {
-                        std.debug.print("{s}", .{self.recv_buf[0..received]});
                         self.content_length_read_so_far += received;
-                        if (self.content_length_read_so_far < self.req_content_length.?) {
-                            self.io.recvWithTimeout(
+                        const is_last_fragment = self.req_content_length.? <= self.content_length_read_so_far;
+                        if (self.handler.handleRequestFragment(
+                            &self.request,
+                            self.client_body_buf.?[0..received],
+                            is_last_fragment,
+                        )) |_| {} else |err| {
+                            self.sendError(.internal_server_error);
+                            return;
+                        }
+                        if (is_last_fragment) {
+                            self.server.allocator.free(self.client_body_buf.?);
+                            self.client_body_buf = null;
+                        } else {
+                            self.server.io.recvWithTimeout(
                                 *Conn,
                                 self,
                                 recvCallback,
                                 &self.linked_completion,
-                                self.sock,
-                                self.recv_buf,
+                                self.socket,
+                                self.client_body_buf.?,
                                 0,
                                 self.recv_timeout_ns,
                             );
@@ -367,7 +414,7 @@ pub fn Server(
                     status_code.code(),
                     status_code.toText(),
                 }) catch unreachable;
-                var now = datetime.datetime.Datetime.now();
+                var now = datetime.datetime.Datetime.now().shiftTimezone(&datetime.timezones.GMT);
                 std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
                     now.date.weekdayName()[0..3],
                     now.date.day,
@@ -383,16 +430,19 @@ pub fn Server(
                 std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
                 std.fmt.format(w, "Content-Length: 0\r\n", .{}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                self.io.sendWithTimeout(
+                self.server.io.sendWithTimeout(
                     *Conn,
                     self,
                     sendCallback,
                     &self.linked_completion,
-                    self.sock,
+                    self.socket,
                     fbs.getWritten(),
                     0,
                     self.send_timeout_ns,
                 );
+            }
+
+            pub fn sendResponseChunk(self: *Conn, chunk: []const u8, is_last_fragment: bool) void {
             }
 
             fn sendResponseWithTimeout(self: *Conn) void {
@@ -415,7 +465,7 @@ pub fn Server(
                     now.zone.name,
                 }) catch unreachable;
 
-                switch (self.request_version) {
+                switch (self.request.version) {
                     .http1_1 => if (!self.keep_alive) {
                         std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
                         std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
@@ -426,23 +476,28 @@ pub fn Server(
                     },
                     else => {},
                 }
-                self.content_length = 2048;
+                self.content_length = 12;
+                // self.content_length = 2048;
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{self.content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
                 var pos = fbs.getPos() catch unreachable;
                 self.resp_headers_len = pos;
-                while (pos < self.send_buf.len) : (pos += 1) {
+                self.send_buf_data_len = std.math.min(
+                    pos + self.content_length,
+                    self.send_buf.len,
+                );
+                while (pos < self.send_buf_data_len) : (pos += 1) {
                     self.send_buf[pos] = 'e';
                 }
-                self.send_buf_data_len = self.send_buf.len;
                 self.send_buf_sent_len = 0;
-                self.state = .SendingHeaders;
-                self.io.sendWithTimeout(
+                // self.state = .SendingHeaders;
+                self.state = .SendingContent;
+                self.server.io.sendWithTimeout(
                     *Conn,
                     self,
                     sendCallback,
                     &self.linked_completion,
-                    self.sock,
+                    self.socket,
                     self.send_buf[0..self.send_buf_data_len],
                     0,
                     self.send_timeout_ns,
@@ -458,12 +513,12 @@ pub fn Server(
                     self.send_buf_sent_len += sent;
                     self.sent_bytes_so_far += sent;
                     if (self.send_buf_sent_len < self.send_buf_data_len) {
-                        self.io.sendWithTimeout(
+                        self.server.io.sendWithTimeout(
                             *Conn,
                             self,
                             sendCallback,
                             &self.linked_completion,
-                            self.sock,
+                            self.socket,
                             self.send_buf[self.send_buf_sent_len..self.send_buf_data_len],
                             0,
                             self.send_timeout_ns,
@@ -483,12 +538,12 @@ pub fn Server(
                             while (pos < self.send_buf_data_len) : (pos += 1) {
                                 self.send_buf[pos] = 'f';
                             }
-                            self.io.sendWithTimeout(
+                            self.server.io.sendWithTimeout(
                                 *Conn,
                                 self,
                                 sendCallback,
                                 &self.linked_completion,
-                                self.sock,
+                                self.socket,
                                 self.send_buf[0..self.send_buf_data_len],
                                 0,
                                 self.send_timeout_ns,
@@ -496,6 +551,7 @@ pub fn Server(
                             return;
                         },
                         .SendingContent => {
+                            std.debug.print("self.content_length={}, self.sent_bytes_so_far={}, self.resp_headers_len={}\n", .{ self.content_length, self.sent_bytes_so_far, self.resp_headers_len });
                             self.send_buf_data_len = std.math.min(
                                 self.content_length - (self.sent_bytes_so_far - self.resp_headers_len),
                                 self.send_buf.len,
@@ -506,12 +562,12 @@ pub fn Server(
                                 while (pos < self.send_buf_data_len) : (pos += 1) {
                                     self.send_buf[pos] = 'g';
                                 }
-                                self.io.sendWithTimeout(
+                                self.server.io.sendWithTimeout(
                                     *Conn,
                                     self,
                                     sendCallback,
                                     &self.linked_completion,
-                                    self.sock,
+                                    self.socket,
                                     self.send_buf[0..self.send_buf_data_len],
                                     0,
                                     self.send_timeout_ns,
@@ -529,7 +585,7 @@ pub fn Server(
 
                     self.processing = false;
                     self.request_scanner.* = RecvRequestScanner{};
-                    self.recvWithTimeout(self.recv_buf);
+                    self.recvWithTimeout(self.client_header_buf);
                 } else |err| {
                     std.debug.print("send error: {s}\n", .{@errorName(err)});
                     self.close();
@@ -544,9 +600,23 @@ const testing = std.testing;
 test "Server" {
     const Handler = struct {
         const Self = @This();
-        pub const MyServer = Server(Self);
+        pub const Svr = Server(Self);
 
-        conn: *MyServer.Conn = undefined,
+        conn: *Svr.Conn = undefined,
+        is_first_fragment: bool = true,
+
+        fn handleRequestFragment(self: *Self, req: *RecvRequest, body_chunk: []const u8, is_last_fragment: bool) !void {
+            if (self.is_first_fragment) {
+                std.debug.print("request method={s}, version={s}, url={s}, headers=\n{s}\n", .{
+                    req.method.toText(),
+                    req.version.toText(),
+                    req.uri,
+                    req.headers.fields,
+                });
+                self.is_first_fragment = false;
+            }
+            std.debug.print("body_chunk={s}, is_last_fragment={}\n", .{ body_chunk, is_last_fragment });
+        }
 
         fn hook(self: *Self) void {
             std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{ @ptrToInt(self), @ptrToInt(self.conn), self.conn.conn_id });
@@ -558,7 +628,10 @@ test "Server" {
             var allocator = testing.allocator;
             const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
 
-            var svr = try Handler.MyServer.init(allocator, address);
+            var io = try IO.init(256, 0);
+            defer io.deinit();
+
+            var svr = try Handler.Svr.init(allocator, &io, address, .{});
             defer svr.deinit();
 
             try svr.run();
