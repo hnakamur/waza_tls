@@ -348,3 +348,12 @@ test "RequestLineScanner - version too long" {
     const expected_total_len = method.len + " ".len + uri.len + " ".len + "HTTP/1.1".len + 1;
     try testing.expectEqual(expected_total_len, scanner.result.total_bytes_read);
 }
+
+test "RequestLineScanner - HTTP/0.9 not supported" {
+    const method = "GET";
+    const uri = "/";
+    const input = method ++ " " ++ uri ++ "\r\n";
+
+    var scanner = RequestLineScanner{};
+    try testing.expectError(error.VersionNotSupported, scanner.scan(input));
+}
