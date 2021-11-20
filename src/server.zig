@@ -173,7 +173,9 @@ pub fn Server(
                 const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);
                 const send_buf = try allocator.alloc(u8, 1024);
                 var self = try allocator.create(Conn);
-                const handler = Handler{};
+                const handler = Handler{
+                    .conn = self,
+                };
                 self.* = Conn{
                     .handler = handler,
                     .server = server,
@@ -205,7 +207,7 @@ pub fn Server(
             }
 
             fn start(self: *Conn) !void {
-                self.handler.hook(self);
+                self.handler.hook();
                 self.recvWithTimeout(self.recv_buf);
             }
 
@@ -544,10 +546,10 @@ test "Server" {
         const Self = @This();
         pub const MyServer = Server(Self);
 
-        some_data: usize = undefined,
+        conn: *MyServer.Conn = undefined,
 
-        fn hook(self: *Self, conn: *MyServer.Conn) void {
-            std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{ @ptrToInt(self), @ptrToInt(conn), conn.conn_id });
+        fn hook(self: *Self) void {
+            std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{ @ptrToInt(self), @ptrToInt(self.conn), self.conn.conn_id });
         }
     };
 
