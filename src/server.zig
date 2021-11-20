@@ -20,12 +20,15 @@ pub fn Server(comptime Handler: type) type {
             large_client_header_buffer_size: usize = 8192,
             large_client_header_buffer_max_count: usize = 4,
             client_body_buffer_size: usize = 16384,
+            response_buffer_size: usize = 1024,
 
             fn validate(self: Config) !void {
                 assert(self.client_header_buffer_size > 0);
                 assert(self.large_client_header_buffer_size > self.client_header_buffer_size);
                 assert(self.large_client_header_buffer_max_count > 0);
                 assert(self.client_body_buffer_size > 0);
+                // should be large enough to build error responses.
+                assert(self.response_buffer_size >= 1024);
             }
         };
 
@@ -170,21 +173,21 @@ pub fn Server(comptime Handler: type) type {
             resp_headers_len: u64 = 0,
             content_length: u64 = 0,
             content_len_sent_so_far: u64 = 0,
+            is_last_response_fragment: bool = true,
             sent_bytes_so_far: u64 = 0,
             send_buf_data_len: u64 = 0,
             send_buf_sent_len: u64 = 0,
             state: enum {
                 ReceivingHeaders,
                 ReceivingContent,
-                SendingHeaders,
-                SendingContent,
             } = .ReceivingHeaders,
 
             fn init(server: *Self, conn_id: usize, socket: os.socket_t) !*Conn {
                 const req_scanner = try server.allocator.create(RecvRequestScanner);
                 req_scanner.* = RecvRequestScanner{};
-                const client_header_buf = try server.allocator.alloc(u8, server.config.client_header_buffer_size);
-                const send_buf = try server.allocator.alloc(u8, 1024);
+                const config = &server.config;
+                const client_header_buf = try server.allocator.alloc(u8, config.client_header_buffer_size);
+                const send_buf = try server.allocator.alloc(u8, config.response_buffer_size);
                 var self = try server.allocator.create(Conn);
                 const handler = Handler{
                     .conn = self,
@@ -333,7 +336,7 @@ pub fn Server(comptime Handler: type) type {
                                     self.sendError(.bad_request);
                                     return;
                                 }
-                                self.sendResponseWithTimeout();
+                                self.sendResponseChunk();
                             } else {
                                 std.debug.print("handleReceivedData not done\n", .{});
                                 if (old + received == self.client_header_buf.len) {
@@ -400,9 +403,8 @@ pub fn Server(comptime Handler: type) type {
                             );
                             return;
                         }
-                        self.sendResponseWithTimeout();
+                        self.sendResponseChunk();
                     },
-                    else => @panic("unexpected state in recvCallback"),
                 }
             }
 
@@ -442,53 +444,13 @@ pub fn Server(comptime Handler: type) type {
                 );
             }
 
-            fn sendResponseWithTimeout(self: *Conn) void {
-                var fbs = std.io.fixedBufferStream(self.send_buf);
-                var w = fbs.writer();
-                std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                    Version.http1_1.toText(),
-                    StatusCode.ok.code(),
-                    StatusCode.ok.toText(),
-                }) catch unreachable;
-                var now = datetime.datetime.Datetime.now();
-                std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-                    now.date.weekdayName()[0..3],
-                    now.date.day,
-                    now.date.monthName()[0..3],
-                    now.date.year,
-                    now.time.hour,
-                    now.time.minute,
-                    now.time.second,
-                    now.zone.name,
-                }) catch unreachable;
-
-                switch (self.request.version) {
-                    .http1_1 => if (!self.keep_alive) {
-                        std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
-                        std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
-                    },
-                    .http1_0 => if (self.keep_alive) {
-                        std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
-                        std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
-                    },
-                    else => {},
-                }
-                self.content_length = 12;
-                // self.content_length = 2048;
-                std.fmt.format(w, "Content-Length: {d}\r\n", .{self.content_length}) catch unreachable;
-                std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                var pos = fbs.getPos() catch unreachable;
-                self.resp_headers_len = pos;
-                self.send_buf_data_len = std.math.min(
-                    pos + self.content_length,
-                    self.send_buf.len,
-                );
-                while (pos < self.send_buf_data_len) : (pos += 1) {
-                    self.send_buf[pos] = 'e';
-                }
+            pub fn sendResponseChunk(self: *Conn) void {
+                self.is_last_response_fragment = true;
+                self.send_buf_data_len = self.handler.setupResponseFragment(
+                    self.send_buf,
+                    &self.is_last_response_fragment,
+                ) catch unreachable;
                 self.send_buf_sent_len = 0;
-                // self.state = .SendingHeaders;
-                self.state = .SendingContent;
                 self.server.io.sendWithTimeout(
                     *Conn,
                     self,
@@ -523,56 +485,9 @@ pub fn Server(comptime Handler: type) type {
                         return;
                     }
 
-                    switch (self.state) {
-                        .SendingHeaders => {
-                            self.state = .SendingContent;
-                            self.send_buf_data_len = std.math.min(
-                                self.content_length - (self.sent_bytes_so_far - self.resp_headers_len),
-                                self.send_buf.len,
-                            );
-                            self.send_buf_sent_len = 0;
-                            var pos: usize = 0;
-                            while (pos < self.send_buf_data_len) : (pos += 1) {
-                                self.send_buf[pos] = 'f';
-                            }
-                            self.server.io.sendWithTimeout(
-                                *Conn,
-                                self,
-                                sendCallback,
-                                &self.linked_completion,
-                                self.socket,
-                                self.send_buf[0..self.send_buf_data_len],
-                                0,
-                                self.send_timeout_ns,
-                            );
-                            return;
-                        },
-                        .SendingContent => {
-                            std.debug.print("self.content_length={}, self.sent_bytes_so_far={}, self.resp_headers_len={}\n", .{ self.content_length, self.sent_bytes_so_far, self.resp_headers_len });
-                            self.send_buf_data_len = std.math.min(
-                                self.content_length - (self.sent_bytes_so_far - self.resp_headers_len),
-                                self.send_buf.len,
-                            );
-                            if (self.send_buf_data_len > 0) {
-                                self.send_buf_sent_len = 0;
-                                var pos: usize = 0;
-                                while (pos < self.send_buf_data_len) : (pos += 1) {
-                                    self.send_buf[pos] = 'g';
-                                }
-                                self.server.io.sendWithTimeout(
-                                    *Conn,
-                                    self,
-                                    sendCallback,
-                                    &self.linked_completion,
-                                    self.socket,
-                                    self.send_buf[0..self.send_buf_data_len],
-                                    0,
-                                    self.send_timeout_ns,
-                                );
-                                return;
-                            }
-                        },
-                        else => @panic("unexpected state in sendCallback"),
+                    if (!self.is_last_response_fragment) {
+                        self.sendResponseChunk();
+                        return;
                     }
 
                     if (!self.keep_alive or self.server.shutdown_requested) {
@@ -612,6 +527,52 @@ test "Server" {
 
         fn handleRequestBodyFragment(self: *Self, body_fragment: []const u8, is_last_fragment: bool) !void {
             std.debug.print("handleRequestBodyFragment: body_fragment={s}, is_last_fragment={}\n", .{ body_fragment, is_last_fragment });
+        }
+
+        fn setupResponseFragment(self: *Self, fragment: []u8, is_last_fragment: *bool) !usize {
+            var fbs = std.io.fixedBufferStream(fragment);
+            var w = fbs.writer();
+            std.fmt.format(w, "{s} {d} {s}\r\n", .{
+                Version.http1_1.toText(),
+                StatusCode.ok.code(),
+                StatusCode.ok.toText(),
+            }) catch unreachable;
+            var now = datetime.datetime.Datetime.now().shiftTimezone(&datetime.timezones.GMT);
+            std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
+                now.date.weekdayName()[0..3],
+                now.date.day,
+                now.date.monthName()[0..3],
+                now.date.year,
+                now.time.hour,
+                now.time.minute,
+                now.time.second,
+                now.zone.name,
+            }) catch unreachable;
+
+            switch (self.conn.request.version) {
+                .http1_1 => if (!self.conn.keep_alive) {
+                    try std.fmt.format(w, "Connection: {s}\r\n", .{"close"});
+                    std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
+                },
+                .http1_0 => if (self.conn.keep_alive) {
+                    std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
+                    try std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"});
+                },
+                else => {},
+            }
+            const content_length = 12;
+            // self.content_length = 2048;
+            try std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length});
+            try std.fmt.format(w, "\r\n", .{});
+            var pos = try fbs.getPos();
+            const send_len = std.math.min(
+                pos + content_length,
+                self.conn.send_buf.len,
+            );
+            while (pos < send_len) : (pos += 1) {
+                self.conn.send_buf[pos] = 'e';
+            }
+            return send_len;
         }
     };
 
