@@ -16,7 +16,7 @@ pub fn Server(
     comptime HandlerFactory: type,
     comptime Handler: type,
     comptime createHandlerFn: fn (factory: HandlerFactory) Handler,
-    comptime hookFn: fn (handler: *Handler, conn: *Server.Conn) void,
+    comptime hookFn: fn (handler: *Handler) void,
 ) type {
     return struct {
         const Self = @This();
@@ -92,7 +92,9 @@ pub fn Server(
             const conn_id = if (self.findEmptyConnId()) |id| id else self.connections.items.len;
             std.debug.print("client_handler_id={d}\n", .{conn_id});
             const conn = try Conn.init(self, conn_id, self.allocator, &self.io, accepted_sock);
+            std.debug.print("conn=0x{x}\n", .{@ptrToInt(conn)});
             conn.handler = self.createHandler();
+            conn.handler.conn = @ptrToInt(conn);
             if (conn_id < self.connections.items.len) {
                 self.connections.items[conn_id] = conn;
             } else {
@@ -211,7 +213,7 @@ pub fn Server(
             }
 
             fn start(self: *Conn) !void {
-                self.handler.hook(self);
+                self.handler.hook();
                 self.recvWithTimeout(self.recv_buf);
             }
 
@@ -552,9 +554,11 @@ test "Server" {
 
         const Handler = struct {
             value: usize = undefined,
+            conn: usize = undefined,
 
-            fn hook(self: *Handler, conn: *MyServer.Conn) void {
-                std.debug.print("hook called, self=0x{x}, conn=0x{x}\n", .{@ptrToInt(self), @ptrToInt(conn)});
+            fn hook(self: *Handler) void {
+                const conn = @intToPtr(*MyServer.Conn, self.conn);
+                std.debug.print("hook called, self=0x{x}, conn=0x{x}, conn_id={}\n", .{@ptrToInt(self), self.conn, conn.conn_id});
             }
         };
 
