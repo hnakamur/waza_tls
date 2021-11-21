@@ -37,10 +37,11 @@ pub fn Server(comptime Handler: type) type {
         allocator: *mem.Allocator,
         config: Config,
         connections: std.ArrayList(?*Conn),
+        completion: IO.Completion = undefined,
         shutdown_requested: bool = false,
         done: bool = false,
 
-        fn init(allocator: *mem.Allocator, io: *IO, address: std.net.Address, config: Config) !Self {
+        pub fn init(allocator: *mem.Allocator, io: *IO, address: std.net.Address, config: Config) !Self {
             try config.validate();
             const kernel_backlog = 513;
             const socket = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
@@ -76,14 +77,9 @@ pub fn Server(comptime Handler: type) type {
             self.connections.deinit();
         }
 
-        pub fn run(self: *Self) !void {
-            var server_completion: IO.Completion = undefined;
-            self.io.accept(*Self, self, acceptCallback, &server_completion, self.socket, 0);
-            while (!self.done) {
-                try self.io.run_for_ns(time.ns_per_s);
-            }
+        pub fn start(self: *Self) !void {
+            self.io.accept(*Self, self, acceptCallback, &self.completion, self.socket, 0);
         }
-
         fn acceptCallback(
             self: *Self,
             completion: *IO.Completion,
@@ -159,7 +155,7 @@ pub fn Server(comptime Handler: type) type {
             callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
         };
 
-        const Conn = struct {
+        pub const Conn = struct {
             handler: Handler = undefined,
             server: *Self,
             socket: os.socket_t,
@@ -531,100 +527,4 @@ pub fn Server(comptime Handler: type) type {
             }
         };
     };
-}
-
-const testing = std.testing;
-
-test "Server" {
-    const Handler = struct {
-        const Self = @This();
-        pub const Svr = Server(Self);
-
-        conn: *Svr.Conn = undefined,
-
-        fn handleRequestHeaders(self: *Self, req: *RecvRequest) !void {
-            std.debug.print("handleRequestHeaders: request method={s}, version={s}, url={s}, headers=\n{s}", .{
-                req.method.toText(),
-                req.version.toText(),
-                req.uri,
-                req.headers.fields,
-            });
-        }
-
-        fn handleRequestBodyFragment(self: *Self, body_fragment: []const u8, is_last_fragment: bool) !void {
-            std.debug.print("handleRequestBodyFragment: body_fragment={s}, is_last_fragment={}\n", .{ body_fragment, is_last_fragment });
-            if (!is_last_fragment) {
-                return;
-            }
-
-            var fbs = std.io.fixedBufferStream(self.conn.send_buf);
-            var w = fbs.writer();
-            std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                Version.http1_1.toText(),
-                StatusCode.ok.code(),
-                StatusCode.ok.toText(),
-            }) catch unreachable;
-            var now = datetime.datetime.Datetime.now().shiftTimezone(&datetime.timezones.GMT);
-            std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-                now.date.weekdayName()[0..3],
-                now.date.day,
-                now.date.monthName()[0..3],
-                now.date.year,
-                now.time.hour,
-                now.time.minute,
-                now.time.second,
-                now.zone.name,
-            }) catch unreachable;
-
-            switch (self.conn.request.version) {
-                .http1_1 => if (!self.conn.keep_alive) {
-                    try std.fmt.format(w, "Connection: {s}\r\n", .{"close"});
-                    std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
-                },
-                .http1_0 => if (self.conn.keep_alive) {
-                    std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
-                    try std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"});
-                },
-                else => {},
-            }
-            const content_length = 12;
-            // self.content_length = 2048;
-            try std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length});
-            try std.fmt.format(w, "\r\n", .{});
-            var pos = try fbs.getPos();
-            const send_len = std.math.min(
-                pos + content_length,
-                self.conn.send_buf.len,
-            );
-            while (pos < send_len) : (pos += 1) {
-                self.conn.send_buf[pos] = 'e';
-            }
-
-            self.conn.sendFullWithTimeout(
-                sendFullWithTimeoutCallback,
-                self.conn.send_buf[0..send_len],
-                if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-                5 * time.ms_per_s,
-            );
-        }
-
-        fn sendFullWithTimeoutCallback(self: *Self, comp: *Svr.Completion, last_result: IO.SendError!usize) void {
-            std.debug.print("Handler.sendFullWithTimeoutCallback last_result={}\n", .{last_result});
-        }
-    };
-
-    try struct {
-        fn runTest() !void {
-            var allocator = testing.allocator;
-            const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
-
-            var io = try IO.init(256, 0);
-            defer io.deinit();
-
-            var svr = try Handler.Svr.init(allocator, &io, address, .{});
-            defer svr.deinit();
-
-            try svr.run();
-        }
-    }.runTest();
 }

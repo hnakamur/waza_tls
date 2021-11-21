@@ -43,7 +43,7 @@ pub fn build(b: *std.build.Builder) void {
     test_step.dependOn(&main_tests.step);
 
     // tests with mock IO
-    var mock_tests = b.addTest("tests/main.zig");
+    var mock_tests = b.addTest("tests/mock/main.zig");
     mock_tests.addPackage(std.build.Pkg{
         .name = "tigerbeetle-io",
         .path = "tests/mock/mock-io.zig",
@@ -52,7 +52,17 @@ pub fn build(b: *std.build.Builder) void {
     mock_tests.setBuildMode(mode);
     mock_tests.filter = b.option([]const u8, "mock-test-filter", "Skip tests that do not match filter");
     const mock_test_step = b.step("mock-test", "Run library tests with mock IO");
-    mock_test_step.dependOn(&mock_tests.step);
+    test_step.dependOn(&mock_tests.step);
+
+    // tests with real IO
+    var real_tests = b.addTest("tests/real/main.zig");
+    real_tests.addPackage(pkgs.http);
+    real_tests.addPackage(pkgs.@"tigerbeetle-io");
+    real_tests.addPackage(pkgs.datetime);
+    real_tests.setBuildMode(mode);
+    real_tests.filter = b.option([]const u8, "real-test-filter", "Skip tests that do not match filter");
+    const real_test_step = b.step("real-test", "Run library tests with real IO");
+    real_test_step.dependOn(&real_tests.step);
 
     const example_step = b.step("examples", "Build examples");
     inline for (.{
