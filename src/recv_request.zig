@@ -46,7 +46,7 @@ pub const RecvRequest = struct {
         return switch (self.version) {
             .http1_1 => !self.headers.hasConnectionToken("close"),
             .http1_0 => self.headers.hasConnectionToken("keep-alive"),
-            else => error.httpVersionNotSupported,
+            else => error.HttpVersionNotSupported,
         };
     }
 };

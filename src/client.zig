@@ -279,6 +279,7 @@ pub fn Client(comptime Context: type) type {
                     return;
                 }
             } else |err| {
+                std.debug.print("Client.recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
                 comp.callback(self.context, &err);
                 self.close();
             }

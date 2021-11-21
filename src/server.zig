@@ -25,7 +25,7 @@ pub fn Server(comptime Handler: type) type {
             request_header_buf_len: usize = 1024,
             large_request_header_buf_len: usize = 8192,
             large_request_header_buf_max_count: usize = 4,
-            request_body_buf_len: usize = 16384,
+            request_content_fragment_buf_len: usize = 16384,
             response_buf_len: usize = 1024,
 
             fn validate(self: Config) !void {
@@ -34,7 +34,7 @@ pub fn Server(comptime Handler: type) type {
                 assert(self.request_header_buf_len > 0);
                 assert(self.large_request_header_buf_len > self.request_header_buf_len);
                 assert(self.large_request_header_buf_max_count > 0);
-                assert(self.request_body_buf_len > 0);
+                assert(self.request_content_fragment_buf_len > 0);
                 // should be large enough to build error responses.
                 assert(self.response_buf_len >= 1024);
             }
@@ -97,7 +97,7 @@ pub fn Server(comptime Handler: type) type {
         ) void {
             const accepted_sock = result catch @panic("accept error");
             var conn = self.createConn(accepted_sock) catch @panic("conn create error");
-            conn.start() catch @panic("conn");
+            conn.start();
             self.io.accept(*Self, self, acceptCallback, completion, self.socket, 0);
         }
 
@@ -154,8 +154,19 @@ pub fn Server(comptime Handler: type) type {
             linked_completion: IO.LinkedCompletion = undefined,
             buffer: []const u8 = undefined,
             processed_len: usize = undefined,
-            callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
+            callback: fn (ctx: ?*c_void, result: *const c_void) void = undefined,
         };
+
+        pub const RecvRequestHeaderError = error{
+            UnexpectedEof,
+            HttpVersionNotSupported,
+            OutOfMemory,
+        } || IO.RecvError;
+
+        pub const RecvRequestContentFragmentError = error{
+            UnexpectedEof,
+            OutOfMemory,
+        } || IO.RecvError;
 
         pub const Conn = struct {
             handler: Handler = undefined,
@@ -164,34 +175,26 @@ pub fn Server(comptime Handler: type) type {
             conn_id: usize,
             completion: Completion = undefined,
             request_header_buf: []u8,
-            request_body_fragment_buf: ?[]u8 = null,
+            request_content_fragment_buf: ?[]u8 = null,
             send_buf: []u8,
-            request_scanner: RecvRequestScanner,
+            request_scanner: RecvRequestScanner = undefined,
             request: RecvRequest = undefined,
             request_version: Version = undefined,
             keep_alive: bool = true,
             req_content_length: ?u64 = null,
-            content_length_read_so_far: u64 = 0,
+            content_len_so_far: u64 = 0,
             processing: bool = false,
-            is_last_response_fragment: bool = true,
-            state: enum {
-                ReceivingHeaders,
-                ReceivingContent,
-            } = .ReceivingHeaders,
+            is_send_finished: bool = true,
 
             fn init(server: *Self, conn_id: usize, socket: os.socket_t) !*Conn {
                 const request_header_buf = try server.allocator.alloc(u8, server.config.request_header_buf_len);
                 const send_buf = try server.allocator.alloc(u8, server.config.response_buf_len);
                 var self = try server.allocator.create(Conn);
-                const handler = Handler{
-                    .conn = self,
-                };
                 self.* = Conn{
-                    .handler = handler,
+                    .handler = Handler{ .conn = self },
                     .server = server,
                     .conn_id = conn_id,
                     .socket = socket,
-                    .request_scanner = RecvRequestScanner{},
                     .request_header_buf = request_header_buf,
                     .send_buf = send_buf,
                 };
@@ -201,7 +204,7 @@ pub fn Server(comptime Handler: type) type {
             fn deinit(self: *Conn) !void {
                 self.server.removeConnId(self.conn_id);
                 self.server.allocator.free(self.send_buf);
-                if (self.request_body_fragment_buf) |buf| {
+                if (self.request_content_fragment_buf) |buf| {
                     self.server.allocator.free(buf);
                 }
                 self.server.allocator.free(self.request_header_buf);
@@ -215,185 +218,201 @@ pub fn Server(comptime Handler: type) type {
                 }
             }
 
-            fn start(self: *Conn) !void {
-                self.recvWithTimeout(self.request_header_buf);
+            fn start(self: *Conn) void {
+                self.handler.start();
             }
 
-            fn recvWithTimeout(
+            pub fn recvRequestHeader(
                 self: *Conn,
-                buf: []u8,
+                comptime callback: fn (
+                    context: *Handler,
+                    result: RecvRequestHeaderError!usize,
+                ) void,
             ) void {
+                self.completion = .{
+                    .callback = struct {
+                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                            callback(
+                                @intToPtr(*Handler, @ptrToInt(ctx)),
+                                @intToPtr(*const RecvRequestHeaderError!usize, @ptrToInt(res)).*,
+                            );
+                        }
+                    }.wrapper,
+                    .processed_len = 0,
+                };
+
+                self.request_scanner = RecvRequestScanner{};
                 self.server.io.recvWithTimeout(
                     *Conn,
                     self,
-                    recvCallback,
+                    recvRequestHeaderCallback,
                     &self.completion.linked_completion,
                     self.socket,
-                    buf,
+                    self.request_header_buf,
                     recv_flags,
                     self.server.config.recv_timeout_ns,
                 );
             }
-            fn recvCallback(
+            fn recvRequestHeaderCallback(
                 self: *Conn,
-                completion: *IO.LinkedCompletion,
+                linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
+                const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
-                        if (self.request_scanner.totalBytesRead() > 0) {
-                            std.debug.print("closed from client during request, close connection.\n", .{});
-                        }
-                        self.close();
+                        const err = error.UnexpectedEof;
+                        comp.callback(&self.handler, &err);
+                        self.sendError(.bad_request);
                         return;
                     }
 
-                    self.handleReceivedData(received);
-                } else |err| {
-                    std.debug.print("recv error: {s}\n", .{@errorName(err)});
-                }
-            }
-
-            fn handleReceivedData(self: *Conn, received: usize) void {
-                switch (self.state) {
-                    .ReceivingHeaders => {
-                        self.processing = true;
-                        const old = self.request_scanner.totalBytesRead();
-                        if (self.request_scanner.scan(self.request_header_buf[old .. old + received])) |done| {
-                            if (done) {
-                                const total = self.request_scanner.totalBytesRead();
-                                if (RecvRequest.init(self.request_header_buf[0..total], &self.request_scanner)) |req| {
-                                    if (req.isKeepAlive()) |keep_alive| {
-                                        self.keep_alive = keep_alive;
-                                    } else |err| {
-                                        self.sendError(.http_version_not_supported);
-                                        return;
-                                    }
-                                    self.request = req;
-                                    self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
-                                        std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
-                                        self.sendError(.bad_request);
-                                        return;
-                                    };
-                                    if (self.handler.handleRequestHeaders(&self.request)) |_| {} else |err| {
-                                        self.sendError(.internal_server_error);
-                                        return;
-                                    }
-
-                                    if (self.req_content_length) |len| {
-                                        const actual_content_chunk_len = old + received - total;
-                                        self.content_length_read_so_far += actual_content_chunk_len;
-                                        const is_last_fragment = len <= actual_content_chunk_len;
-                                        if (self.handler.handleRequestBodyFragment(
-                                            self.request_header_buf[total .. old + received],
-                                            is_last_fragment,
-                                        )) |_| {} else |err| {
-                                            self.sendError(.internal_server_error);
-                                            return;
-                                        }
-                                        if (!is_last_fragment) {
-                                            self.state = .ReceivingContent;
-                                            self.request_body_fragment_buf = self.server.allocator.alloc(u8, self.server.config.request_body_buf_len) catch {
-                                                self.sendError(.internal_server_error);
-                                                return;
-                                            };
-                                            self.server.io.recvWithTimeout(
-                                                *Conn,
-                                                self,
-                                                recvCallback,
-                                                &self.completion.linked_completion,
-                                                self.socket,
-                                                self.request_body_fragment_buf.?,
-                                                recv_flags,
-                                                self.server.config.recv_timeout_ns,
-                                            );
-                                            return;
-                                        }
-                                    } else {
-                                        if (self.handler.handleRequestBodyFragment(
-                                            self.request_header_buf[total .. old + received],
-                                            true,
-                                        )) |_| {} else |err| {
-                                            self.sendError(.internal_server_error);
-                                            return;
-                                        }
-                                    }
+                    const old = comp.processed_len;
+                    comp.processed_len += received;
+                    const buf = self.request_header_buf;
+                    if (self.request_scanner.scan(buf[old..comp.processed_len])) |done| {
+                        if (done) {
+                            const total = self.request_scanner.totalBytesRead();
+                            if (RecvRequest.init(buf[0..total], &self.request_scanner)) |req| {
+                                if (req.isKeepAlive()) |keep_alive| {
+                                    self.keep_alive = keep_alive;
                                 } else |err| {
-                                    self.sendError(.bad_request);
+                                    comp.callback(&self.handler, &err);
+                                    self.sendError(.http_version_not_supported);
                                     return;
                                 }
-                            } else {
-                                if (old + received == self.request_header_buf.len) {
-                                    const new_len =
-                                        if (self.request_header_buf.len == self.server.config.request_header_buf_len)
-                                    blk1: {
-                                        break :blk1 self.server.config.large_request_header_buf_len;
-                                    } else blk2: {
-                                        break :blk2 self.request_header_buf.len +
-                                            self.server.config.large_request_header_buf_len;
-                                    };
-                                    const max_len = self.server.config.large_request_header_buf_len *
-                                        self.server.config.large_request_header_buf_max_count;
-                                    if (max_len < new_len) {
-                                        std.debug.print("request header fields too long.\n", .{});
-                                        self.sendError(.bad_request);
-                                        return;
-                                    }
-                                    self.request_header_buf = self.server.allocator.realloc(
-                                        self.request_header_buf,
-                                        new_len,
-                                    ) catch {
-                                        self.sendError(.internal_server_error);
-                                        return;
-                                    };
+                                self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
+                                    std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
+                                    comp.callback(&self.handler, &err);
+                                    self.sendError(.bad_request);
+                                    return;
+                                };
+                                self.request = req;
+                                const content_fragment_len = comp.processed_len - total;
+                                self.content_len_so_far = content_fragment_len;
+                                const has_content = content_fragment_len > 0;
+                                if (has_content) self.request_content_fragment_buf = buf[total..comp.processed_len];
+                                comp.callback(&self.handler, &result);
+                                if (has_content) self.request_content_fragment_buf = null;
+                            } else |err| {
+                                comp.callback(&self.handler, &err);
+                                self.sendError(.bad_request);
+                                return;
+                            }
+                        } else {
+                            if (old + received == buf.len) {
+                                const new_len =
+                                    if (self.request_header_buf.len == self.server.config.request_header_buf_len)
+                                blk1: {
+                                    break :blk1 self.server.config.large_request_header_buf_len;
+                                } else blk2: {
+                                    break :blk2 self.request_header_buf.len +
+                                        self.server.config.large_request_header_buf_len;
+                                };
+                                const max_len = self.server.config.large_request_header_buf_len *
+                                    self.server.config.large_request_header_buf_max_count;
+                                if (max_len < new_len) {
+                                    const err = error.HeaderTooLong;
+                                    comp.callback(&self.handler, &err);
+                                    self.sendError(.request_header_fields_too_large);
+                                    return;
                                 }
+                                self.request_header_buf = self.server.allocator.realloc(self.request_header_buf, new_len) catch |err| {
+                                    comp.callback(&self.handler, &err);
+                                    self.sendError(.internal_server_error);
+                                    return;
+                                };
+
                                 self.server.io.recvWithTimeout(
                                     *Conn,
                                     self,
-                                    recvCallback,
-                                    &self.completion.linked_completion,
+                                    recvRequestHeaderCallback,
+                                    linked_completion,
                                     self.socket,
-                                    self.request_header_buf[old + received ..],
-                                    recv_flags,
-                                    self.server.config.recv_timeout_ns,
+                                    self.request_header_buf[comp.processed_len..],
+                                    linked_completion.main_completion.operation.recv.flags,
+                                    @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
                                 );
                             }
-                        } else |err| {
-                            std.debug.print("handleReceivedData scan failed with {s}\n", .{@errorName(err)});
-                            self.sendError(switch (err) {
-                                error.UriTooLong => .uri_too_long,
-                                error.VersionNotSupported => .http_version_not_supported,
-                                else => .bad_request,
-                            });
                         }
-                    },
-                    .ReceivingContent => {
-                        self.content_length_read_so_far += received;
-                        const is_last_fragment = self.req_content_length.? <= self.content_length_read_so_far;
-                        if (self.handler.handleRequestBodyFragment(
-                            self.request_body_fragment_buf.?[0..received],
-                            is_last_fragment,
-                        )) |_| {} else |err| {
-                            self.sendError(.internal_server_error);
-                            return;
-                        }
-                        if (is_last_fragment) {
-                            self.server.allocator.free(self.request_body_fragment_buf.?);
-                            self.request_body_fragment_buf = null;
-                        } else {
-                            self.server.io.recvWithTimeout(
-                                *Conn,
-                                self,
-                                recvCallback,
-                                &self.completion.linked_completion,
-                                self.socket,
-                                self.request_body_fragment_buf.?,
-                                recv_flags,
-                                self.server.config.recv_timeout_ns,
+                    } else |err| {
+                        comp.callback(&self.handler, &err);
+                        self.sendError(.bad_request);
+                        return;
+                    }
+                } else |err| {
+                    comp.callback(&self.handler, &err);
+                    self.close();
+                }
+            }
+
+            pub fn hasMoreRequesetContentFragment(self: *Conn) bool {
+                return if (self.req_content_length) |len|
+                    self.content_len_so_far < len
+                else
+                    false;
+            }
+
+            pub fn recvRequestContentFragment(
+                self: *Conn,
+                comptime callback: fn (
+                    context: *Handler,
+                    result: RecvRequestContentFragmentError!usize,
+                ) void,
+            ) void {
+                self.completion = .{
+                    .callback = struct {
+                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                            callback(
+                                @intToPtr(*Handler, @ptrToInt(ctx)),
+                                @intToPtr(*const RecvRequestContentFragmentError!usize, @ptrToInt(res)).*,
                             );
-                            return;
                         }
-                    },
+                    }.wrapper,
+                    .processed_len = 0,
+                };
+
+                if (self.request_content_fragment_buf) |_| {} else {
+                    if (self.server.allocator.alloc(u8, self.server.config.request_content_fragment_buf_len)) |buf| {
+                        self.request_content_fragment_buf = buf;
+                    } else |err| {
+                        self.completion.callback(&self.handler, &err);
+                        self.sendError(.internal_server_error);
+                        return;
+                    }
+                }
+
+                self.server.io.recvWithTimeout(
+                    *Conn,
+                    self,
+                    recvRequestContentFragmentCallback,
+                    &self.completion.linked_completion,
+                    self.socket,
+                    self.request_content_fragment_buf.?,
+                    recv_flags,
+                    self.server.config.recv_timeout_ns,
+                );
+            }
+            fn recvRequestContentFragmentCallback(
+                self: *Conn,
+                linked_completion: *IO.LinkedCompletion,
+                result: IO.RecvError!usize,
+            ) void {
+                const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+                if (result) |received| {
+                    if (received == 0) {
+                        if (self.hasMoreRequesetContentFragment()) {
+                            const err = error.UnexpectedEof;
+                            comp.callback(&self.handler, &err);
+                            self.close();
+                        }
+                    }
+
+                    self.content_len_so_far += received;
+                    comp.callback(&self.handler, &received);
+                } else |err| {
+                    comp.callback(&self.handler, &err);
+                    self.close();
                 }
             }
 
@@ -430,6 +449,7 @@ pub fn Server(comptime Handler: type) type {
                 if (result) |_| {} else |err| {
                     std.debug.print("Conn.sendErrorCallback, err={s}\n", .{@errorName(err)});
                 }
+                self.close();
             }
 
             pub fn sendFull(
@@ -442,7 +462,7 @@ pub fn Server(comptime Handler: type) type {
             ) void {
                 self.completion = .{
                     .callback = struct {
-                        fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                             callback(
                                 @intToPtr(*Handler, @ptrToInt(ctx)),
                                 @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,
@@ -452,6 +472,7 @@ pub fn Server(comptime Handler: type) type {
                     .buffer = buffer,
                     .processed_len = 0,
                 };
+                self.is_send_finished = false;
                 self.server.io.sendWithTimeout(
                     *Conn,
                     self,
@@ -485,9 +506,9 @@ pub fn Server(comptime Handler: type) type {
                         return;
                     }
 
-                    comp.callback(&self.handler, comp, &result);
-
-                    if (!self.is_last_response_fragment) {
+                    self.is_send_finished = true;
+                    comp.callback(&self.handler, &result);
+                    if (!self.is_send_finished) {
                         return;
                     }
 
@@ -497,11 +518,10 @@ pub fn Server(comptime Handler: type) type {
                     }
 
                     self.processing = false;
-                    self.request_scanner = RecvRequestScanner{};
-                    self.recvWithTimeout(self.request_header_buf);
+                    self.start();
                 } else |err| {
                     std.debug.print("send error: {s}\n", .{@errorName(err)});
-                    comp.callback(&self.handler, comp, &result);
+                    comp.callback(&self.handler, &result);
                     self.close();
                 }
             }

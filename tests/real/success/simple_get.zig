@@ -17,13 +17,32 @@ test "real / simple get" {
 
         conn: *Server.Conn = undefined,
 
-        pub fn handleRequestHeaders(self: *Self, req: *http.RecvRequest) !void {}
+        pub fn start(self: *Self) void {
+            std.debug.print("Handler.start\n", .{});
+            self.conn.recvRequestHeader(recvRequestHeaderCallback);
+        }
 
-        pub fn handleRequestBodyFragment(self: *Self, body_fragment: []const u8, is_last_fragment: bool) !void {
-            if (!is_last_fragment) {
+        pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
+            std.debug.print("Handler.recvRequestHeaderCallback, result={}\n", .{result});
+            if (self.conn.hasMoreRequesetContentFragment()) {
+                self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                 return;
             }
 
+            self.sendResponse();
+        }
+
+        pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
+            std.debug.print("Handler.recvRequestContentFragmentCallback, result={}\n", .{result});
+            if (self.conn.hasMoreRequesetContentFragment()) {
+                self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                return;
+            }
+
+            self.sendResponse();
+        }
+
+        pub fn sendResponse(self: *Self) void {
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -35,21 +54,22 @@ test "real / simple get" {
 
             switch (self.conn.request.version) {
                 .http1_1 => if (!self.conn.keep_alive) {
-                    try std.fmt.format(w, "Connection: {s}\r\n", .{"close"});
+                    std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
                 },
                 .http1_0 => if (self.conn.keep_alive) {
-                    try std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"});
+                    std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
                 },
                 else => {},
             }
             const content_length = content.len;
-            try std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length});
-            try std.fmt.format(w, "\r\n", .{});
-            try std.fmt.format(w, "{s}", .{content});
+            std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
+            std.fmt.format(w, "\r\n", .{}) catch unreachable;
+            std.fmt.format(w, "{s}", .{content}) catch unreachable;
             self.conn.sendFull(fbs.getWritten(), sendFullCallback);
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
+            std.debug.print("Handler.sendFullCallback, last_result={}\n", .{last_result});
             if (last_result) |_| {} else |err| {
                 std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
             }
