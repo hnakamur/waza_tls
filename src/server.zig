@@ -36,6 +36,7 @@ pub fn Server(comptime Handler: type) type {
         socket: os.socket_t,
         allocator: *mem.Allocator,
         config: Config,
+        bound_address: std.net.Address = undefined,
         connections: std.ArrayList(?*Conn),
         completion: IO.Completion = undefined,
         shutdown_requested: bool = false,
@@ -53,11 +54,12 @@ pub fn Server(comptime Handler: type) type {
                 &std.mem.toBytes(@as(c_int, 1)),
             );
             try os.bind(socket, &address.any, address.getOsSockLen());
+            var bound_address: std.net.Address = undefined;
             if (address.getPort() == 0) {
-                var bound_addr: std.net.Address = address;
-                var bound_socklen: os.socklen_t = address.getOsSockLen();
-                try os.getsockname(socket, &bound_addr.any, &bound_socklen);
-                std.debug.print("bound port={d}\n", .{bound_addr.getPort()});
+                bound_address = address;
+                var bound_socklen: os.socklen_t = bound_address.getOsSockLen();
+                try os.getsockname(socket, &bound_address.any, &bound_socklen);
+                std.debug.print("bound port={d}\n", .{bound_address.getPort()});
             }
 
             try os.listen(socket, kernel_backlog);
@@ -67,6 +69,7 @@ pub fn Server(comptime Handler: type) type {
                 .socket = socket,
                 .allocator = allocator,
                 .config = config,
+                .bound_address = bound_address,
                 .connections = std.ArrayList(?*Conn).init(allocator),
             };
             return self;

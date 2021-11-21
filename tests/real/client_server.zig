@@ -235,7 +235,8 @@ test "Client-Server" {
             defer io.deinit();
 
             const allocator = testing.allocator;
-            const address = try std.net.Address.parseIp4("127.0.0.1", 3131);
+            // Use a random port
+            const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{
                 .client = http.Client.init(&io),
@@ -254,7 +255,7 @@ test "Client-Server" {
                 &self,
                 connectCallback,
                 &self.completion,
-                address,
+                self.server.bound_address,
                 500 * time.ns_per_ms,
             );
 
