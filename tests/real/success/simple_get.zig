@@ -62,9 +62,10 @@ test "real / simple get" {
 
     try struct {
         const Context = @This();
+        const Client = http.Client(Context);
         const response_header_max_len = 4096;
 
-        client: http.Client,
+        client: Client = undefined,
         buffer: http.DynamicByteBuffer,
         content_read_so_far: u64 = undefined,
         server: Handler.Server = undefined,
@@ -85,7 +86,6 @@ test "real / simple get" {
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
             self.client.sendFull(
-                *Context,
                 self,
                 sendCallback,
                 &self.buffer,
@@ -100,7 +100,6 @@ test "real / simple get" {
                 self.buffer.count = 0;
                 self.buffer.ensureCapacity(1024) catch unreachable;
                 self.client.recvResponseHeader(
-                    *Context,
                     self,
                     recvResponseHeaderCallback,
                     &self.buffer,
@@ -110,7 +109,7 @@ test "real / simple get" {
         }
         fn recvResponseHeaderCallback(
             self: *Context,
-            result: http.Client.RecvResponseHeaderError!usize,
+            result: Client.RecvResponseHeaderError!usize,
         ) void {
             if (result) |received| {
                 const completion = self.client.completion;
@@ -138,7 +137,6 @@ test "real / simple get" {
                     self.buffer.head = 0;
                     self.buffer.count = 0;
                     self.client.recv(
-                        *Context,
                         self,
                         recvCallback,
                         &self.buffer,
@@ -162,7 +160,6 @@ test "real / simple get" {
                     self.buffer.head = 0;
                     self.buffer.count = 0;
                     self.client.recv(
-                        *Context,
                         self,
                         recvCallback,
                         &self.buffer,
@@ -196,17 +193,17 @@ test "real / simple get" {
             const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{
-                .client = http.Client.init(&io),
                 .buffer = http.DynamicByteBuffer.init(allocator),
                 .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
             defer self.buffer.deinit();
             defer self.server.deinit();
 
+            self.client = Client.init(&io, &self);
+
             try self.server.start();
 
             try self.client.connect(
-                *Context,
                 &self,
                 connectCallback,
                 self.server.bound_address,
