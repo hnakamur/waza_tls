@@ -9,8 +9,6 @@ const RecvResponse = @import("recv_response.zig").RecvResponse;
 const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 
-pub const DynamicByteBuffer = std.fifo.LinearFifo(u8, .Dynamic);
-
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 
@@ -18,30 +16,62 @@ pub fn Client(comptime Context: type) type {
     return struct {
         const Self = @This();
 
-        pub const Completion = struct {
+        const Config = struct {
+            connect_timeout_ns: u63 = 5 * time.ns_per_s,
+            send_timeout_ns: u63 = 5 * time.ns_per_s,
+            recv_timeout_ns: u63 = 5 * time.ns_per_s,
+            response_header_buffer_initial_len: usize = 4096,
+            response_header_buffer_max_len: usize = 64 * 1024,
+            response_body_fragment_buffer_len: usize = 64 * 1024,
+
+            fn validate(self: Config) !void {
+                assert(self.connect_timeout_ns > 0);
+                assert(self.send_timeout_ns > 0);
+                assert(self.recv_timeout_ns > 0);
+                assert(self.response_header_buffer_initial_len > 0);
+                assert(self.response_header_buffer_max_len > self.response_header_buffer_initial_len);
+                assert(self.response_header_buffer_max_len % self.response_header_buffer_initial_len == 0);
+                assert(self.response_body_fragment_buffer_len > 0);
+            }
+        };
+
+        const Completion = struct {
             linked_completion: IO.LinkedCompletion = undefined,
-            buffer: *DynamicByteBuffer = undefined,
+            send_buffer: []const u8 = undefined,
             processed_len: usize = undefined,
             response: RecvResponse = undefined,
             callback: fn (ctx: ?*c_void, result: *const c_void) void = undefined,
         };
 
+        allocator: *mem.Allocator,
         io: *IO,
         context: *Context,
         socket: os.socket_t = undefined,
         completion: Completion = undefined,
+        response: RecvResponse = undefined,
         resp_scanner: RecvResponseScanner = undefined,
-        connect_timeout_ns: u63 = 5 * time.ns_per_s,
-        send_timeout_ns: u63 = 5 * time.ns_per_s,
-        recv_timeout_ns: u63 = 5 * time.ns_per_s,
-        response_header_buffer_max_len: usize = 4096,
+        response_header_buf: []u8 = undefined,
+        response_body_fragment_buf: ?[]u8 = null,
+        config: Config,
         done: bool = false,
 
-        pub fn init(io: *IO, context: *Context) Self {
+        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: Config) !Self {
+            try config.validate();
+
             return Self{
+                .allocator = allocator,
                 .io = io,
                 .context = context,
+                .config = config,
+                .response_header_buf = try allocator.alloc(u8, config.response_header_buffer_initial_len),
             };
+        }
+
+        pub fn deinit(self: *Self) void {
+            if (self.response_body_fragment_buf) |buf| {
+                self.allocator.free(buf);
+            }
+            self.allocator.free(self.response_header_buf);
         }
 
         pub fn connect(
@@ -71,7 +101,7 @@ pub fn Client(comptime Context: type) type {
                 &self.completion.linked_completion,
                 self.socket,
                 addr,
-                self.connect_timeout_ns,
+                self.config.connect_timeout_ns,
             );
         }
         fn connectCallback(
@@ -88,7 +118,7 @@ pub fn Client(comptime Context: type) type {
 
         pub fn sendFull(
             self: *Self,
-            buffer: *DynamicByteBuffer,
+            buffer: []const u8,
             comptime callback: fn (
                 context: *Context,
                 last_result: IO.SendError!usize,
@@ -103,7 +133,7 @@ pub fn Client(comptime Context: type) type {
                         );
                     }
                 }.wrapper,
-                .buffer = buffer,
+                .send_buffer = buffer,
                 .processed_len = 0,
             };
             self.io.sendWithTimeout(
@@ -112,9 +142,9 @@ pub fn Client(comptime Context: type) type {
                 sendCallback,
                 &self.completion.linked_completion,
                 self.socket,
-                buffer.readableSlice(0),
+                buffer,
                 send_flags,
-                self.send_timeout_ns,
+                self.config.send_timeout_ns,
             );
         }
         fn sendCallback(
@@ -125,15 +155,15 @@ pub fn Client(comptime Context: type) type {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |sent| {
                 comp.processed_len += sent;
-                const buf = comp.buffer;
-                if (comp.processed_len < buf.readableLength()) {
+                const buf = comp.send_buffer;
+                if (comp.processed_len < buf.len) {
                     self.io.sendWithTimeout(
                         *Self,
                         self,
                         sendCallback,
                         linked_completion,
                         self.socket,
-                        buf.readableSlice(comp.processed_len),
+                        buf[comp.processed_len..],
                         linked_completion.main_completion.operation.send.flags,
                         send_flags,
                     );
@@ -151,18 +181,16 @@ pub fn Client(comptime Context: type) type {
             UnexpectedEof,
             HeaderTooLong,
             BadGateway,
+            OutOfMemory,
         } || IO.RecvError;
 
         pub fn recvResponseHeader(
             self: *Self,
-            buffer: *DynamicByteBuffer,
             comptime callback: fn (
                 context: *Context,
                 result: RecvResponseHeaderError!usize,
             ) void,
         ) void {
-            assert(buffer.head == 0);
-            assert(buffer.count == 0);
             self.completion = .{
                 .callback = struct {
                     fn wrapper(ctx: ?*c_void, res: *const c_void) void {
@@ -172,7 +200,6 @@ pub fn Client(comptime Context: type) type {
                         );
                     }
                 }.wrapper,
-                .buffer = buffer,
                 .processed_len = 0,
             };
 
@@ -183,9 +210,9 @@ pub fn Client(comptime Context: type) type {
                 recvResponseHeaderCallback,
                 &self.completion.linked_completion,
                 self.socket,
-                buffer.buf,
+                self.response_header_buf,
                 recv_flags,
-                self.recv_timeout_ns,
+                self.config.recv_timeout_ns,
             );
         }
         fn recvResponseHeaderCallback(
@@ -204,15 +231,16 @@ pub fn Client(comptime Context: type) type {
 
                 const old = comp.processed_len;
                 comp.processed_len += received;
-                const buf = comp.buffer.buf;
+                const buf = self.response_header_buf;
                 if (self.resp_scanner.scan(buf[old..comp.processed_len])) |done| {
                     if (done) {
                         const total = self.resp_scanner.totalBytesRead();
                         if (RecvResponse.init(buf[0..total], &self.resp_scanner)) |resp| {
-                            comp.response = resp;
-                            comp.buffer.head = total;
-                            comp.buffer.count = comp.processed_len - total;
+                            self.response = resp;
+                            const has_body = total < comp.processed_len;
+                            if (has_body) self.response_body_fragment_buf = buf[total..comp.processed_len];
                             comp.callback(self.context, &result);
+                            if (has_body) self.response_body_fragment_buf = null;
                         } else |err| {
                             comp.callback(self.context, &err);
                             self.close();
@@ -220,13 +248,18 @@ pub fn Client(comptime Context: type) type {
                         }
                     } else {
                         if (old + received == buf.len) {
-                            const new_len = 2 * buf.len;
-                            if (self.response_header_buffer_max_len < new_len) {
+                            const new_len = buf.len + self.config.response_header_buffer_initial_len;
+                            if (self.config.response_header_buffer_max_len < new_len) {
                                 const err = error.HeaderTooLong;
                                 comp.callback(self.context, &err);
                                 self.close();
                                 return;
                             }
+                            self.response_header_buf = self.allocator.realloc(self.response_header_buf, new_len) catch |err| {
+                                comp.callback(self.context, &err);
+                                self.close();
+                                return;
+                            };
 
                             self.io.recvWithTimeout(
                                 *Self,
@@ -234,7 +267,7 @@ pub fn Client(comptime Context: type) type {
                                 recvResponseHeaderCallback,
                                 linked_completion,
                                 self.socket,
-                                buf[comp.processed_len..],
+                                self.response_header_buf[comp.processed_len..],
                                 linked_completion.main_completion.operation.recv.flags,
                                 @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
                             );
@@ -251,17 +284,18 @@ pub fn Client(comptime Context: type) type {
             }
         }
 
-        pub fn recv(
+        pub const RecvResponseBodyFragmentError = error{
+            UnexpectedEof,
+            OutOfMemory,
+        } || IO.RecvError;
+
+        pub fn recvResponseBodyFragment(
             self: *Self,
-            buffer: *DynamicByteBuffer,
             comptime callback: fn (
                 context: *Context,
-                result: IO.RecvError!usize,
+                result: RecvResponseBodyFragmentError!usize,
             ) void,
         ) void {
-            assert(buffer.head == 0);
-            assert(buffer.count == 0);
-
             self.completion = .{
                 .callback = struct {
                     fn wrapper(ctx: ?*c_void, res: *const c_void) void {
@@ -271,17 +305,26 @@ pub fn Client(comptime Context: type) type {
                         );
                     }
                 }.wrapper,
-                .buffer = buffer,
             };
+
+            if (self.response_body_fragment_buf) |_| {} else {
+                if (self.allocator.alloc(u8, self.config.response_body_fragment_buffer_len)) |buf| {
+                    self.response_body_fragment_buf = buf;
+                } else |err| {
+                    self.completion.callback(self.context, &err);
+                    self.close();
+                }
+            }
+
             self.io.recvWithTimeout(
                 *Self,
                 self,
                 recvCallback,
                 &self.completion.linked_completion,
                 self.socket,
-                buffer.buf,
+                self.response_body_fragment_buf.?,
                 recv_flags,
-                self.recv_timeout_ns,
+                self.config.recv_timeout_ns,
             );
         }
         fn recvCallback(
@@ -291,10 +334,9 @@ pub fn Client(comptime Context: type) type {
         ) void {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
-                comp.buffer.count = received;
-                comp.callback(self.context, &result);
+                comp.callback(self.context, &received);
             } else |err| {
-                comp.callback(self.context, &result);
+                comp.callback(self.context, &err);
                 self.close();
             }
         }

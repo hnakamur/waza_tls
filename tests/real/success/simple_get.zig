@@ -65,11 +65,11 @@ test "real / simple get" {
         const Client = http.Client(Context);
 
         client: Client = undefined,
-        buffer: http.DynamicByteBuffer,
+        buffer: std.fifo.LinearFifo(u8, .Dynamic),
         content_read_so_far: u64 = undefined,
         server: Handler.Server = undefined,
         received_content_length: u64 = undefined,
-        received_content: []const u8 = undefined,
+        received_content: ?[]const u8 = undefined,
         test_error: ?anyerror = null,
 
         fn connectCallback(
@@ -84,7 +84,7 @@ test "real / simple get" {
                 http.Version.http1_1.toText(),
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-            self.client.sendFull(&self.buffer, sendFullCallback);
+            self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
         }
         fn sendFullCallback(
             self: *Context,
@@ -94,7 +94,7 @@ test "real / simple get" {
                 self.buffer.head = 0;
                 self.buffer.count = 0;
                 self.buffer.ensureCapacity(1024) catch unreachable;
-                self.client.recvResponseHeader(&self.buffer, recvResponseHeaderCallback);
+                self.client.recvResponseHeader(recvResponseHeaderCallback);
             } else |_| {}
         }
         fn recvResponseHeaderCallback(
@@ -102,9 +102,7 @@ test "real / simple get" {
             result: Client.RecvResponseHeaderError!usize,
         ) void {
             if (result) |received| {
-                const completion = self.client.completion;
-                const resp = completion.response;
-                if (resp.headers.getContentLength()) |len| {
+                if (self.client.response.headers.getContentLength()) |len| {
                     if (len) |l| {
                         self.received_content_length = l;
                     } else {
@@ -120,14 +118,13 @@ test "real / simple get" {
                     return;
                 }
 
-                const chunk = completion.buffer.readableSlice(0);
-                self.received_content = chunk;
-                if (chunk.len < self.received_content_length) {
-                    self.content_read_so_far = chunk.len;
-                    self.buffer.head = 0;
-                    self.buffer.count = 0;
-                    self.client.recv(&self.buffer, recvCallback);
-                    return;
+                self.received_content = self.client.response_body_fragment_buf;
+                if (self.received_content) |received_content| {
+                    self.content_read_so_far = received_content.len;
+                    if (received_content.len < self.received_content_length) {
+                        self.client.recvResponseBodyFragment(recvResponseBodyFragmentCallback);
+                        return;
+                    }
                 }
 
                 self.client.close();
@@ -136,23 +133,21 @@ test "real / simple get" {
                 std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
             }
         }
-        fn recvCallback(
+        fn recvResponseBodyFragmentCallback(
             self: *Context,
-            result: IO.RecvError!usize,
+            result: Client.RecvResponseBodyFragmentError!usize,
         ) void {
             if (result) |received| {
                 self.content_read_so_far += received;
                 if (self.content_read_so_far < self.received_content_length) {
-                    self.buffer.head = 0;
-                    self.buffer.count = 0;
-                    self.client.recv(&self.buffer, recvCallback);
+                    self.client.recvResponseBodyFragment(recvResponseBodyFragmentCallback);
                     return;
                 }
 
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.debug.print("recvCallback err={s}\n", .{@errorName(err)});
+                std.debug.print("recvResponseBodyFragmentCallback err={s}\n", .{@errorName(err)});
                 self.exitTestWithError(error.TestUnexpectedError);
             }
         }
@@ -175,13 +170,14 @@ test "real / simple get" {
             const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{
-                .buffer = http.DynamicByteBuffer.init(allocator),
+                .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
                 .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
             defer self.buffer.deinit();
             defer self.server.deinit();
 
-            self.client = Client.init(&io, &self);
+            self.client = try Client.init(allocator, &io, &self, .{});
+            defer self.client.deinit();
 
             try self.server.start();
             try self.client.connect(self.server.bound_address, connectCallback);
@@ -194,7 +190,7 @@ test "real / simple get" {
                 return err;
             }
             try testing.expectEqual(content.len, self.received_content_length);
-            try testing.expectEqualStrings(content, self.received_content);
+            try testing.expectEqualStrings(content, self.received_content.?);
         }
     }.runTest();
 }

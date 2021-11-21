@@ -12,7 +12,6 @@ pub const RecvRequestScanner = @import("recv_request.zig").RecvRequestScanner;
 pub const RecvResponse = @import("recv_response.zig").RecvResponse;
 pub const RecvResponseScanner = @import("recv_response.zig").RecvResponseScanner;
 
-pub const DynamicByteBuffer = @import("client.zig").DynamicByteBuffer;
 pub const Client = @import("client.zig").Client;
 pub const Server = @import("server.zig").Server;
 
