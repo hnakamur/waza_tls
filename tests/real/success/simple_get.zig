@@ -22,7 +22,7 @@ test "real / simple get" {
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            if (self.conn.hasMoreRequesetContentFragment()) {
+            if (!self.conn.fullyReadRequestContent()) {
                 self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                 return;
             }
@@ -31,7 +31,7 @@ test "real / simple get" {
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            if (self.conn.hasMoreRequesetContentFragment()) {
+            if (!self.conn.fullyReadRequestContent()) {
                 self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                 return;
             }
@@ -115,7 +115,7 @@ test "real / simple get" {
             if (result) |_| {
                 self.response_content_length = self.client.response_content_length;
                 self.received_content = self.client.response_content_fragment_buf;
-                if (self.client.hasMoreResponseContentFragment()) {
+                if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
                 }
@@ -131,7 +131,7 @@ test "real / simple get" {
             result: Client.RecvResponseBodyFragmentError!usize,
         ) void {
             if (result) |_| {
-                if (self.client.hasMoreResponseContentFragment()) {
+                if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
                 }

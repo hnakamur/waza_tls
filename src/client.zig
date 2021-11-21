@@ -296,11 +296,11 @@ pub fn Client(comptime Context: type) type {
             }
         }
 
-        pub fn hasMoreResponseContentFragment(self: *Self) bool {
+        pub fn fullyReadResponseContent(self: *Self) bool {
             return if (self.response_content_length) |len|
-                self.content_len_read_so_far < len
+                self.content_len_read_so_far >= len
             else
-                false;
+                true;
         }
 
         pub const RecvResponseBodyFragmentError = error{
@@ -354,11 +354,11 @@ pub fn Client(comptime Context: type) type {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
                 if (received == 0) {
-                    if (self.hasMoreResponseContentFragment()) {
+                    if (self.fullyReadResponseContent()) {
+                        comp.callback(self.context, &result);
+                    } else {
                         const err = error.UnexpectedEof;
                         comp.callback(self.context, &err);
-                    } else {
-                        comp.callback(self.context, &result);
                     }
                     self.close();
                     return;

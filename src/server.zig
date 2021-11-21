@@ -346,11 +346,11 @@ pub fn Server(comptime Handler: type) type {
                 }
             }
 
-            pub fn hasMoreRequesetContentFragment(self: *Conn) bool {
+            pub fn fullyReadRequestContent(self: *Conn) bool {
                 return if (self.request_content_length) |len|
-                    self.content_len_read_so_far < len
+                    self.content_len_read_so_far >= len
                 else
-                    false;
+                    true;
             }
 
             pub fn recvRequestContentFragment(
@@ -401,11 +401,11 @@ pub fn Server(comptime Handler: type) type {
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
-                        if (self.hasMoreRequesetContentFragment()) {
+                        if (self.fullyReadRequestContent()) {
+                            comp.callback(&self.handler, &result);
+                        } else {
                             const err = error.UnexpectedEof;
                             comp.callback(&self.handler, &err);
-                        } else {
-                            comp.callback(&self.handler, &result);
                         }
                         self.close();
                         return;
