@@ -18,12 +18,10 @@ test "real / simple get" {
         conn: *Server.Conn = undefined,
 
         pub fn start(self: *Self) void {
-            std.debug.print("Handler.start\n", .{});
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            std.debug.print("Handler.recvRequestHeaderCallback, result={}\n", .{result});
             if (self.conn.hasMoreRequesetContentFragment()) {
                 self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                 return;
@@ -33,7 +31,6 @@ test "real / simple get" {
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            std.debug.print("Handler.recvRequestContentFragmentCallback, result={}\n", .{result});
             if (self.conn.hasMoreRequesetContentFragment()) {
                 self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                 return;
@@ -61,28 +58,16 @@ test "real / simple get" {
                 },
                 else => {},
             }
+            const content_length = content.len;
+            std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
+            std.fmt.format(w, "\r\n", .{}) catch unreachable;
+            std.fmt.format(w, "{s}", .{content}) catch unreachable;
             self.conn.sendFull(fbs.getWritten(), sendFullCallback);
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.debug.print("Handler.sendFullCallback, last_result={}\n", .{last_result});
-            if (last_result) |_| {
-                var fbs = std.io.fixedBufferStream(self.conn.send_buf);
-                var w = fbs.writer();
-                const content_length = content.len;
-                std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
-                std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                std.fmt.format(w, "{s}", .{content}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendFullCallback2);
-            } else |err| {
-                std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
-            }
-        }
-
-        fn sendFullCallback2(self: *Self, last_result: IO.SendError!usize) void {
-            std.debug.print("Handler.sendFullCallback2, last_result={}\n", .{last_result});
             if (last_result) |_| {} else |err| {
-                std.debug.print("Handler.sendFullCallback2 err={s}\n", .{@errorName(err)});
+                std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
             }
         }
     };
@@ -122,14 +107,12 @@ test "real / simple get" {
                 self.buffer.count = 0;
                 self.buffer.ensureCapacity(1024) catch unreachable;
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
-                std.debug.print("Client.sendFullCallback called recvResponseHeader\n", .{});
             } else |_| {}
         }
         fn recvResponseHeaderCallback(
             self: *Context,
             result: Client.RecvResponseHeaderError!usize,
         ) void {
-            std.debug.print("Client.recvResponseHeaderCallback result={}\n", .{result});
             if (result) |received| {
                 if (self.client.response.headers.getContentLength()) |len| {
                     if (len) |l| {
@@ -157,7 +140,6 @@ test "real / simple get" {
                 }
 
                 self.client.close();
-                std.debug.print("Client.recvResponseHeaderCallback after close.\n", .{});
                 self.exitTest();
             } else |err| {
                 std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
