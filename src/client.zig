@@ -20,18 +20,18 @@ pub fn Client(comptime Context: type) type {
             connect_timeout_ns: u63 = 5 * time.ns_per_s,
             send_timeout_ns: u63 = 5 * time.ns_per_s,
             recv_timeout_ns: u63 = 5 * time.ns_per_s,
-            response_header_buffer_initial_len: usize = 4096,
-            response_header_buffer_max_len: usize = 64 * 1024,
-            response_body_fragment_buffer_len: usize = 64 * 1024,
+            response_header_buf_ini_len: usize = 4096,
+            response_header_buf_max_len: usize = 64 * 1024,
+            response_content_fragment_buf_len: usize = 64 * 1024,
 
             fn validate(self: Config) !void {
                 assert(self.connect_timeout_ns > 0);
                 assert(self.send_timeout_ns > 0);
                 assert(self.recv_timeout_ns > 0);
-                assert(self.response_header_buffer_initial_len > 0);
-                assert(self.response_header_buffer_max_len > self.response_header_buffer_initial_len);
-                assert(self.response_header_buffer_max_len % self.response_header_buffer_initial_len == 0);
-                assert(self.response_body_fragment_buffer_len > 0);
+                assert(self.response_header_buf_ini_len > 0);
+                assert(self.response_header_buf_max_len > self.response_header_buf_ini_len);
+                assert(self.response_header_buf_max_len % self.response_header_buf_ini_len == 0);
+                assert(self.response_content_fragment_buf_len > 0);
             }
         };
 
@@ -63,7 +63,7 @@ pub fn Client(comptime Context: type) type {
                 .io = io,
                 .context = context,
                 .config = config,
-                .response_header_buf = try allocator.alloc(u8, config.response_header_buffer_initial_len),
+                .response_header_buf = try allocator.alloc(u8, config.response_header_buf_ini_len),
             };
         }
 
@@ -248,8 +248,8 @@ pub fn Client(comptime Context: type) type {
                         }
                     } else {
                         if (old + received == buf.len) {
-                            const new_len = buf.len + self.config.response_header_buffer_initial_len;
-                            if (self.config.response_header_buffer_max_len < new_len) {
+                            const new_len = buf.len + self.config.response_header_buf_ini_len;
+                            if (self.config.response_header_buf_max_len < new_len) {
                                 const err = error.HeaderTooLong;
                                 comp.callback(self.context, &result);
                                 self.close();
@@ -309,7 +309,7 @@ pub fn Client(comptime Context: type) type {
             };
 
             if (self.response_body_fragment_buf) |_| {} else {
-                if (self.allocator.alloc(u8, self.config.response_body_fragment_buffer_len)) |buf| {
+                if (self.allocator.alloc(u8, self.config.response_content_fragment_buf_len)) |buf| {
                     self.response_body_fragment_buf = buf;
                 } else |err| {
                     self.completion.callback(self.context, &err);
