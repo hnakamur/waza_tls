@@ -49,7 +49,6 @@ pub const Client = struct {
         connect_timeout_ns: u63,
     ) !void {
         self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
-        std.debug.print("Client.connectWithTimeout, client=0x{x}, socket={}\n", .{ @ptrToInt(self), self.socket });
 
         completion.* = .{
             .context = context,
@@ -78,8 +77,6 @@ pub const Client = struct {
         linked_completion: *IO.LinkedCompletion,
         result: IO.ConnectError!void,
     ) void {
-        std.debug.print("Client.connectCallback result={}\n", .{result});
-        std.debug.print("Client.connectCallback socket={}\n", .{self.socket});
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         comp.callback(comp.context, comp, &result);
         if (result) |_| {} else |err| {
@@ -101,7 +98,6 @@ pub const Client = struct {
         flags: u32,
         timeout_ns: u63,
     ) void {
-        std.debug.print("Client.sendFullWithTimeout socket={}\n", .{self.socket});
         completion.* = .{
             .context = context,
             .callback = struct {
@@ -116,7 +112,6 @@ pub const Client = struct {
             .buffer = buffer,
             .processed_len = 0,
         };
-        std.debug.print("Client.sendFullWithTimeout calling sendWithTimeout socket={}\n", .{self.socket});
         self.io.sendWithTimeout(
             *Self,
             self,
@@ -133,7 +128,6 @@ pub const Client = struct {
         linked_completion: *IO.LinkedCompletion,
         result: IO.SendError!usize,
     ) void {
-        std.debug.print("Client.sendCallback result={}\n", .{result});
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |sent| {
             comp.processed_len += sent;
@@ -215,7 +209,6 @@ pub const Client = struct {
         linked_completion: *IO.LinkedCompletion,
         result: IO.RecvError!usize,
     ) void {
-        std.debug.print("Client.recvCallback result={}\n", .{result});
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |received| {
             if (received == 0) {
@@ -320,7 +313,6 @@ pub const Client = struct {
         linked_completion: *IO.LinkedCompletion,
         result: IO.RecvError!usize,
     ) void {
-        std.debug.print("Client.recvCallback result={}\n", .{result});
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |received| {
             comp.buffer.count = received;

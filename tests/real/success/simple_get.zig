@@ -17,17 +17,9 @@ test "real / simple get" {
 
         conn: *Svr.Conn = undefined,
 
-        pub fn handleRequestHeaders(self: *Self, req: *http.RecvRequest) !void {
-            std.debug.print("handleRequestHeaders: request method={s}, version={s}, url={s}, headers=\n{s}", .{
-                req.method.toText(),
-                req.version.toText(),
-                req.uri,
-                req.headers.fields,
-            });
-        }
+        pub fn handleRequestHeaders(self: *Self, req: *http.RecvRequest) !void {}
 
         pub fn handleRequestBodyFragment(self: *Self, body_fragment: []const u8, is_last_fragment: bool) !void {
-            std.debug.print("handleRequestBodyFragment: body_fragment={s}, is_last_fragment={}\n", .{ body_fragment, is_last_fragment });
             if (!is_last_fragment) {
                 return;
             }
@@ -44,10 +36,8 @@ test "real / simple get" {
             switch (self.conn.request.version) {
                 .http1_1 => if (!self.conn.keep_alive) {
                     try std.fmt.format(w, "Connection: {s}\r\n", .{"close"});
-                    std.debug.print("wrote connection: close for HTTP/1.1\n", .{});
                 },
                 .http1_0 => if (self.conn.keep_alive) {
-                    std.debug.print("wrote connection: keep-alive for HTTP/1.0\n", .{});
                     try std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"});
                 },
                 else => {},
@@ -65,7 +55,9 @@ test "real / simple get" {
         }
 
         fn sendFullWithTimeoutCallback(self: *Self, comp: *Svr.Completion, last_result: IO.SendError!usize) void {
-            std.debug.print("Handler.sendFullWithTimeoutCallback last_result={}\n", .{last_result});
+            if (last_result) |_| {} else |err| {
+                std.debug.print("Handler.sendFullWithTimeoutCallback err={s}\n", .{@errorName(err)});
+            }
         }
     };
 
@@ -88,8 +80,6 @@ test "real / simple get" {
             completion: *http.Client.Completion,
             result: IO.ConnectError!void,
         ) void {
-            std.debug.print("connectCallback result={}\n", .{result});
-            std.debug.print("connectCallback, self=0x{x}, client=0x{x}, socket={}\n", .{ @ptrToInt(self), @ptrToInt(&self.client), self.client.socket });
             var w = self.buffer.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
                 (http.Method{ .get = undefined }).toText(),
@@ -98,7 +88,6 @@ test "real / simple get" {
                 http.Version.http1_1.toText(),
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-            std.debug.print("calling self.client.sendFullWithTimeout, socket={}\n", .{self.client.socket});
             self.client.sendFullWithTimeout(
                 *Context,
                 self,
@@ -114,7 +103,6 @@ test "real / simple get" {
             completion: *http.Client.Completion,
             result: IO.SendError!usize,
         ) void {
-            std.debug.print("sendCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
             if (result) |_| {
                 self.buffer.head = 0;
                 self.buffer.count = 0;
@@ -136,7 +124,6 @@ test "real / simple get" {
             completion: *http.Client.Completion,
             result: http.Client.RecvResponseHeaderError!usize,
         ) void {
-            std.debug.print("recvResponseHeaderCallback, processed_len={}, result={}\n", .{ completion.processed_len, result });
             if (result) |received| {
                 const resp = completion.response;
                 if (resp.headers.getContentLength()) |len| {
@@ -156,14 +143,6 @@ test "real / simple get" {
                 }
 
                 const chunk = completion.buffer.readableSlice(0);
-                std.debug.print("Response:\n{s} {} {s}\n{s}{s}\nchunk_len={}\n", .{
-                    resp.version.toText(),
-                    resp.status_code.code(),
-                    resp.reason_phrase,
-                    resp.headers.fields,
-                    chunk,
-                    chunk.len,
-                });
                 self.received_content = chunk;
                 if (chunk.len < self.received_content_length) {
                     self.content_read_so_far = chunk.len;
@@ -192,11 +171,8 @@ test "real / simple get" {
             completion: *http.Client.Completion,
             result: IO.RecvError!usize,
         ) void {
-            std.debug.print("recvCallback, result={}\n", .{result});
             if (result) |received| {
                 self.content_read_so_far += received;
-                std.debug.print("body chunk: {s}\n", .{completion.buffer.readableSlice(0)});
-                std.debug.print("content_read_so_far={}, content_length={}\n", .{ self.content_read_so_far, self.received_content_length });
                 if (self.content_read_so_far < self.received_content_length) {
                     self.buffer.head = 0;
                     self.buffer.count = 0;
