@@ -8,7 +8,7 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "Client-Server" {
+test "real / simple get" {
     const Handler = struct {
         const Self = @This();
         pub const Svr = http.Server(Self);
