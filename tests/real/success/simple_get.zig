@@ -13,9 +13,9 @@ test "real / simple get" {
 
     const Handler = struct {
         const Self = @This();
-        pub const Svr = http.Server(Self);
+        pub const Server = http.Server(Self);
 
-        conn: *Svr.Conn = undefined,
+        conn: *Server.Conn = undefined,
 
         pub fn handleRequestHeaders(self: *Self, req: *http.RecvRequest) !void {}
 
@@ -53,7 +53,7 @@ test "real / simple get" {
             );
         }
 
-        fn sendFullWithTimeoutCallback(self: *Self, comp: *Svr.Completion, last_result: IO.SendError!usize) void {
+        fn sendFullWithTimeoutCallback(self: *Self, comp: *Server.Completion, last_result: IO.SendError!usize) void {
             if (last_result) |_| {} else |err| {
                 std.debug.print("Handler.sendFullWithTimeoutCallback err={s}\n", .{@errorName(err)});
             }
@@ -67,7 +67,7 @@ test "real / simple get" {
         client: http.Client,
         buffer: http.DynamicByteBuffer,
         content_read_so_far: u64 = undefined,
-        server: Handler.Svr = undefined,
+        server: Handler.Server = undefined,
         received_content_length: u64 = undefined,
         received_content: []const u8 = undefined,
         test_error: ?anyerror = null,
@@ -198,7 +198,7 @@ test "real / simple get" {
             var self: Context = .{
                 .client = http.Client.init(&io),
                 .buffer = http.DynamicByteBuffer.init(allocator),
-                .server = try Handler.Svr.init(allocator, &io, address, .{}),
+                .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
             defer self.buffer.deinit();
             defer self.server.deinit();
