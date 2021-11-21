@@ -60,7 +60,6 @@ pub fn Server(comptime Handler: type) type {
                 bound_address = address;
                 var bound_socklen: os.socklen_t = bound_address.getOsSockLen();
                 try os.getsockname(socket, &bound_address.any, &bound_socklen);
-                std.debug.print("bound port={d}\n", .{bound_address.getPort()});
             }
 
             try os.listen(socket, kernel_backlog);
@@ -89,7 +88,6 @@ pub fn Server(comptime Handler: type) type {
             completion: *IO.Completion,
             result: IO.AcceptError!os.socket_t,
         ) void {
-            std.debug.print("acceptCallback\n", .{});
             const accepted_sock = result catch @panic("accept error");
             var conn = self.createConn(accepted_sock) catch @panic("conn create error");
             conn.start() catch @panic("conn");
@@ -98,9 +96,7 @@ pub fn Server(comptime Handler: type) type {
 
         fn createConn(self: *Self, accepted_sock: os.socket_t) !*Conn {
             const conn_id = if (self.findEmptyConnId()) |id| id else self.connections.items.len;
-            std.debug.print("client_handler_id={d}\n", .{conn_id});
             const conn = try Conn.init(self, conn_id, accepted_sock);
-            std.debug.print("conn=0x{x}\n", .{@ptrToInt(conn)});
             if (conn_id < self.connections.items.len) {
                 self.connections.items[conn_id] = conn;
             } else {
@@ -111,10 +107,7 @@ pub fn Server(comptime Handler: type) type {
 
         fn findEmptyConnId(self: *Self) ?usize {
             for (self.connections.items) |h, i| {
-                std.debug.print("findEmptyConnId, i={d}\n", .{i});
-                if (h) |_| {
-                    std.debug.print("handler is running, i={d}\n", .{i});
-                } else {
+                if (h) |_| {} else {
                     return i;
                 }
             }
@@ -130,12 +123,10 @@ pub fn Server(comptime Handler: type) type {
 
         pub fn requestShutdown(self: *Self) void {
             self.shutdown_requested = true;
-            std.debug.print("set Self.shutdown_requested to true\n", .{});
             for (self.connections.items) |conn, i| {
                 if (conn) |c| {
                     if (!c.processing) {
                         c.close();
-                        std.debug.print("closed client_handler id={d}\n", .{i});
                     }
                 }
             }
@@ -219,7 +210,6 @@ pub fn Server(comptime Handler: type) type {
                 if (self.deinit()) |_| {} else |err| {
                     std.debug.print("Conn deinit err={s}\n", .{@errorName(err)});
                 }
-                std.debug.print("close and exit\n", .{});
             }
 
             fn start(self: *Conn) !void {
@@ -230,7 +220,6 @@ pub fn Server(comptime Handler: type) type {
                 self: *Conn,
                 buf: []u8,
             ) void {
-                std.debug.print("recvWithTimeout conn_id={d}\n", .{self.conn_id});
                 self.server.io.recvWithTimeout(
                     *Conn,
                     self,
@@ -248,8 +237,6 @@ pub fn Server(comptime Handler: type) type {
                 result: IO.RecvError!usize,
             ) void {
                 if (result) |received| {
-                    std.debug.print("received={d}\n", .{received});
-
                     if (received == 0) {
                         if (self.request_scanner.totalBytesRead() > 0) {
                             std.debug.print("closed from client during request, close connection.\n", .{});
@@ -269,8 +256,6 @@ pub fn Server(comptime Handler: type) type {
                     .ReceivingHeaders => {
                         self.processing = true;
                         const old = self.request_scanner.totalBytesRead();
-                        std.debug.print("handleReceivedData old={}, received={}\n", .{ old, received });
-                        std.debug.print("handleReceivedData scan data={s}\n", .{self.client_header_buf[old .. old + received]});
                         if (self.request_scanner.scan(self.client_header_buf[old .. old + received])) |done| {
                             if (done) {
                                 const total = self.request_scanner.totalBytesRead();
@@ -293,7 +278,6 @@ pub fn Server(comptime Handler: type) type {
                                     }
 
                                     if (self.req_content_length) |len| {
-                                        std.debug.print("content_length={}\n", .{len});
                                         const actual_content_chunk_len = old + received - total;
                                         self.content_length_read_so_far += actual_content_chunk_len;
                                         const is_last_fragment = len <= actual_content_chunk_len;
@@ -336,7 +320,6 @@ pub fn Server(comptime Handler: type) type {
                                     return;
                                 }
                             } else {
-                                std.debug.print("handleReceivedData not done\n", .{});
                                 if (old + received == self.client_header_buf.len) {
                                     const config = self.server.config;
                                     const new_len = if (self.client_header_buf.len == config.client_header_buffer_size) blk1: {
@@ -435,7 +418,9 @@ pub fn Server(comptime Handler: type) type {
                 completion: *IO.LinkedCompletion,
                 result: IO.SendError!usize,
             ) void {
-                std.debug.print("Conn.sendErrorCallback result={}\n", .{result});
+                if (result) |_| {} else |err| {
+                    std.debug.print("Conn.sendErrorCallback, err={s}\n", .{@errorName(err)});
+                }
             }
 
             pub fn sendFullWithTimeout(
@@ -449,7 +434,6 @@ pub fn Server(comptime Handler: type) type {
                 flags: u32,
                 timeout_ns: u63,
             ) void {
-                std.debug.print("Conn.sendFullWithTimeout socket={}\n", .{self.socket});
                 self.completion = .{
                     .callback = struct {
                         fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
@@ -463,7 +447,6 @@ pub fn Server(comptime Handler: type) type {
                     .buffer = buffer,
                     .processed_len = 0,
                 };
-                std.debug.print("Conn.sendFullWithTimeout calling sendWithTimeout socket={}\n", .{self.socket});
                 self.server.io.sendWithTimeout(
                     *Conn,
                     self,
@@ -480,10 +463,8 @@ pub fn Server(comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.SendError!usize,
             ) void {
-                std.debug.print("Conn.sendFullWithTimeoutCallback result={}\n", .{result});
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |sent| {
-                    std.debug.print("sent response bytes={d}\n", .{sent});
                     comp.processed_len += sent;
                     if (comp.processed_len < comp.buffer.len) {
                         self.server.io.sendWithTimeout(
