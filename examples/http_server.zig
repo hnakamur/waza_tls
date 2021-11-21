@@ -352,17 +352,10 @@ const ClientHandler = struct {
             status_code.code(),
             status_code.toText(),
         }) catch unreachable;
+        std.fmt.format(w, "Date: ", .{}) catch unreachable;
         var now = datetime.datetime.Datetime.now();
-        std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-            now.date.weekdayName()[0..3],
-            now.date.day,
-            now.date.monthName()[0..3],
-            now.date.year,
-            now.time.hour,
-            now.time.minute,
-            now.time.second,
-            now.zone.name,
-        }) catch unreachable;
+        http.formatDatetime(w, now) catch unreachable;
+        std.fmt.format(w, "\r\n", .{}) catch unreachable;
 
         self.keep_alive = false;
         std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
@@ -388,18 +381,10 @@ const ClientHandler = struct {
             http.StatusCode.ok.code(),
             http.StatusCode.ok.toText(),
         }) catch unreachable;
-        std.fmt.format(w, "Server: ziweser/0.1\r\n", .{}) catch unreachable;
-        var now = datetime.datetime.Datetime.now().shiftTimezone(&datetime.timezones.GMT);
-        std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-            now.date.weekdayName()[0..3],
-            now.date.day,
-            now.date.monthName()[0..3],
-            now.date.year,
-            now.time.hour,
-            now.time.minute,
-            now.time.second,
-            now.zone.name,
-        }) catch unreachable;
+        std.fmt.format(w, "Date: ", .{}) catch unreachable;
+        var now = datetime.datetime.Datetime.now();
+        http.formatDatetime(w, now) catch unreachable;
+        std.fmt.format(w, "\r\n", .{}) catch unreachable;
 
         switch (self.request_version) {
             .http1_1 => if (!self.keep_alive) {

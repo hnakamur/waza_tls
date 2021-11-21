@@ -16,6 +16,8 @@ pub const DynamicByteBuffer = @import("client.zig").DynamicByteBuffer;
 pub const Client = @import("client.zig").Client;
 pub const Server = @import("server.zig").Server;
 
+pub const formatDatetime = @import("datetime.zig").formatDatetime;
+
 pub const config = @import("config.zig");
 
 comptime {

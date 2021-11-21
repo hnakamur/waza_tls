@@ -74,17 +74,10 @@ const ClientHandler = struct {
                         http.StatusCode.ok.code(),
                         http.StatusCode.ok.toText(),
                     });
+                    try std.fmt.format(w, "Date: ", .{});
                     var now = datetime.datetime.Datetime.now();
-                    try std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-                        now.date.weekdayName()[0..3],
-                        now.date.day,
-                        now.date.monthName()[0..3],
-                        now.date.year,
-                        now.time.hour,
-                        now.time.minute,
-                        now.time.second,
-                        now.zone.name,
-                    });
+                    try http.formatDatetime(w, now);
+                    try std.fmt.format(w, "\r\n", .{});
                     const body = "Hello http server\n";
                     try std.fmt.format(w, "Content-Length: {d}\r\n", .{body.len});
                     try std.fmt.format(w, "\r\n", .{});

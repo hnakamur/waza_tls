@@ -39,17 +39,10 @@ test "real / simple get" {
                 http.StatusCode.ok.code(),
                 http.StatusCode.ok.toText(),
             }) catch unreachable;
-            var now = datetime.datetime.Datetime.now().shiftTimezone(&datetime.timezones.GMT);
-            std.fmt.format(w, "Date: {s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {s}\r\n", .{
-                now.date.weekdayName()[0..3],
-                now.date.day,
-                now.date.monthName()[0..3],
-                now.date.year,
-                now.time.hour,
-                now.time.minute,
-                now.time.second,
-                now.zone.name,
-            }) catch unreachable;
+            std.fmt.format(w, "Date: ", .{}) catch unreachable;
+            var now = datetime.datetime.Datetime.now();
+            http.formatDatetime(w, now) catch unreachable;
+            std.fmt.format(w, "\r\n", .{}) catch unreachable;
 
             switch (self.conn.request.version) {
                 .http1_1 => if (!self.conn.keep_alive) {
