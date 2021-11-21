@@ -63,7 +63,6 @@ test "real / simple get" {
     try struct {
         const Context = @This();
         const Client = http.Client(Context);
-        const response_header_max_len = 4096;
 
         client: Client = undefined,
         buffer: http.DynamicByteBuffer,
@@ -85,13 +84,9 @@ test "real / simple get" {
                 http.Version.http1_1.toText(),
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-            self.client.sendFull(
-                self,
-                sendCallback,
-                &self.buffer,
-            );
+            self.client.sendFull(&self.buffer, sendFullCallback);
         }
-        fn sendCallback(
+        fn sendFullCallback(
             self: *Context,
             result: IO.SendError!usize,
         ) void {
@@ -99,12 +94,7 @@ test "real / simple get" {
                 self.buffer.head = 0;
                 self.buffer.count = 0;
                 self.buffer.ensureCapacity(1024) catch unreachable;
-                self.client.recvResponseHeader(
-                    self,
-                    recvResponseHeaderCallback,
-                    &self.buffer,
-                    response_header_max_len,
-                );
+                self.client.recvResponseHeader(&self.buffer, recvResponseHeaderCallback);
             } else |_| {}
         }
         fn recvResponseHeaderCallback(
@@ -136,11 +126,7 @@ test "real / simple get" {
                     self.content_read_so_far = chunk.len;
                     self.buffer.head = 0;
                     self.buffer.count = 0;
-                    self.client.recv(
-                        self,
-                        recvCallback,
-                        &self.buffer,
-                    );
+                    self.client.recv(&self.buffer, recvCallback);
                     return;
                 }
 
@@ -159,11 +145,7 @@ test "real / simple get" {
                 if (self.content_read_so_far < self.received_content_length) {
                     self.buffer.head = 0;
                     self.buffer.count = 0;
-                    self.client.recv(
-                        self,
-                        recvCallback,
-                        &self.buffer,
-                    );
+                    self.client.recv(&self.buffer, recvCallback);
                     return;
                 }
 
@@ -202,12 +184,7 @@ test "real / simple get" {
             self.client = Client.init(&io, &self);
 
             try self.server.start();
-
-            try self.client.connect(
-                &self,
-                connectCallback,
-                self.server.bound_address,
-            );
+            try self.client.connect(self.server.bound_address, connectCallback);
 
             while (!self.client.done or !self.server.done) {
                 try io.tick();
