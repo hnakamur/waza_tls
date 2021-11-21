@@ -24,13 +24,17 @@ pub const Client = struct {
         processed_len: usize = undefined,
         header_buf_max_len: usize = undefined,
         response: RecvResponse = undefined,
-        callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
+        callback: fn (ctx: ?*c_void, result: *const c_void) void = undefined,
     };
 
     io: *IO,
     socket: os.socket_t = undefined,
-    done: bool = false,
+    completion: Completion = undefined,
     resp_scanner: RecvResponseScanner = undefined,
+    connect_timeout_ns: u63 = 5 * time.ns_per_s,
+    send_timeout_ns: u63 = 5 * time.ns_per_s,
+    recv_timeout_ns: u63 = 5 * time.ns_per_s,
+    done: bool = false,
 
     pub fn init(io: *IO) Self {
         return Self{
@@ -38,28 +42,24 @@ pub const Client = struct {
         };
     }
 
-    pub fn connectWithTimeout(
+    pub fn connect(
         self: *Self,
         comptime Context: type,
         context: Context,
         comptime callback: fn (
             context: Context,
-            completion: *Completion,
             result: IO.ConnectError!void,
         ) void,
-        completion: *Completion,
         addr: std.net.Address,
-        connect_timeout_ns: u63,
     ) !void {
         self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
 
-        completion.* = .{
+        self.completion = .{
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
-                        comp,
                         @intToPtr(*const IO.ConnectError!void, @ptrToInt(res)).*,
                     );
                 }
@@ -69,10 +69,10 @@ pub const Client = struct {
             *Self,
             self,
             connectCallback,
-            &completion.linked_completion,
+            &self.completion.linked_completion,
             self.socket,
             addr,
-            connect_timeout_ns,
+            self.connect_timeout_ns,
         );
     }
     fn connectCallback(
@@ -81,32 +81,28 @@ pub const Client = struct {
         result: IO.ConnectError!void,
     ) void {
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
-        comp.callback(comp.context, comp, &result);
+        comp.callback(comp.context, &result);
         if (result) |_| {} else |err| {
             self.close();
         }
     }
 
-    pub fn sendFullWithTimeout(
+    pub fn sendFull(
         self: *Self,
         comptime Context: type,
         context: Context,
         comptime callback: fn (
             context: Context,
-            completion: *Completion,
             last_result: IO.SendError!usize,
         ) void,
-        completion: *Completion,
         buffer: *DynamicByteBuffer,
-        timeout_ns: u63,
     ) void {
-        completion.* = .{
+        self.completion = .{
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
-                        comp,
                         @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,
                     );
                 }
@@ -118,11 +114,11 @@ pub const Client = struct {
             *Self,
             self,
             sendCallback,
-            &completion.linked_completion,
+            &self.completion.linked_completion,
             self.socket,
             buffer.readableSlice(0),
             send_flags,
-            timeout_ns,
+            self.send_timeout_ns,
         );
     }
     fn sendCallback(
@@ -143,14 +139,14 @@ pub const Client = struct {
                     self.socket,
                     buf.readableSlice(comp.processed_len),
                     linked_completion.main_completion.operation.send.flags,
-                    @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                    send_flags,
                 );
                 return;
             }
 
-            comp.callback(comp.context, comp, &result);
+            comp.callback(comp.context, &result);
         } else |err| {
-            comp.callback(comp.context, comp, &result);
+            comp.callback(comp.context, &result);
             self.close();
         }
     }
@@ -167,23 +163,19 @@ pub const Client = struct {
         context: Context,
         comptime callback: fn (
             context: Context,
-            completion: *Completion,
             result: RecvResponseHeaderError!usize,
         ) void,
-        completion: *Completion,
         buffer: *DynamicByteBuffer,
         header_buf_max_len: usize,
-        timeout_ns: u63,
     ) void {
         assert(buffer.head == 0);
         assert(buffer.count == 0);
-        completion.* = .{
+        self.completion = .{
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
-                        comp,
                         @intToPtr(*const RecvResponseHeaderError!usize, @ptrToInt(res)).*,
                     );
                 }
@@ -198,11 +190,11 @@ pub const Client = struct {
             *Self,
             self,
             recvResponseHeaderCallback,
-            &completion.linked_completion,
+            &self.completion.linked_completion,
             self.socket,
             buffer.buf,
             recv_flags,
-            timeout_ns,
+            self.recv_timeout_ns,
         );
     }
     fn recvResponseHeaderCallback(
@@ -214,7 +206,7 @@ pub const Client = struct {
         if (result) |received| {
             if (received == 0) {
                 const err = error.UnexpectedEof;
-                comp.callback(comp.context, comp, &err);
+                comp.callback(comp.context, &err);
                 self.close();
                 return;
             }
@@ -229,9 +221,9 @@ pub const Client = struct {
                         comp.response = resp;
                         comp.buffer.head = total;
                         comp.buffer.count = comp.processed_len - total;
-                        comp.callback(comp.context, comp, &result);
+                        comp.callback(comp.context, &result);
                     } else |err| {
-                        comp.callback(comp.context, comp, &err);
+                        comp.callback(comp.context, &err);
                         self.close();
                         return;
                     }
@@ -240,7 +232,7 @@ pub const Client = struct {
                         const new_len = 2 * buf.len;
                         if (comp.header_buf_max_len < new_len) {
                             const err = error.HeaderTooLong;
-                            comp.callback(comp.context, comp, &err);
+                            comp.callback(comp.context, &err);
                             self.close();
                             return;
                         }
@@ -258,39 +250,35 @@ pub const Client = struct {
                     }
                 }
             } else |err| {
-                comp.callback(comp.context, comp, &err);
+                comp.callback(comp.context, &err);
                 self.close();
                 return;
             }
         } else |err| {
-            comp.callback(comp.context, comp, &err);
+            comp.callback(comp.context, &err);
             self.close();
         }
     }
 
-    pub fn recvWithTimeout(
+    pub fn recv(
         self: *Self,
         comptime Context: type,
         context: Context,
         comptime callback: fn (
             context: Context,
-            completion: *Completion,
             result: IO.RecvError!usize,
         ) void,
-        completion: *Completion,
         buffer: *DynamicByteBuffer,
-        timeout_ns: u63,
     ) void {
         assert(buffer.head == 0);
         assert(buffer.count == 0);
 
-        completion.* = .{
+        self.completion = .{
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*c_void, res: *const c_void) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
-                        comp,
                         @intToPtr(*const IO.RecvError!usize, @ptrToInt(res)).*,
                     );
                 }
@@ -301,11 +289,11 @@ pub const Client = struct {
             *Self,
             self,
             recvCallback,
-            &completion.linked_completion,
+            &self.completion.linked_completion,
             self.socket,
             buffer.buf,
             recv_flags,
-            timeout_ns,
+            self.recv_timeout_ns,
         );
     }
     fn recvCallback(
@@ -316,9 +304,9 @@ pub const Client = struct {
         const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
         if (result) |received| {
             comp.buffer.count = received;
-            comp.callback(comp.context, comp, &result);
+            comp.callback(comp.context, &result);
         } else |err| {
-            comp.callback(comp.context, comp, &result);
+            comp.callback(comp.context, &result);
             self.close();
         }
     }

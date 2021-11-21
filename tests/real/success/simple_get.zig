@@ -66,9 +66,7 @@ test "real / simple get" {
 
         client: http.Client,
         buffer: http.DynamicByteBuffer,
-        completion: http.Client.Completion = undefined,
         content_read_so_far: u64 = undefined,
-        recv_timeout_ns: u63 = 5 * time.ns_per_s,
         server: Handler.Svr = undefined,
         received_content_length: u64 = undefined,
         received_content: []const u8 = undefined,
@@ -76,7 +74,6 @@ test "real / simple get" {
 
         fn connectCallback(
             self: *Context,
-            completion: *http.Client.Completion,
             result: IO.ConnectError!void,
         ) void {
             var w = self.buffer.writer();
@@ -87,18 +84,15 @@ test "real / simple get" {
                 http.Version.http1_1.toText(),
             }) catch unreachable;
             std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-            self.client.sendFullWithTimeout(
+            self.client.sendFull(
                 *Context,
                 self,
                 sendCallback,
-                &self.completion,
                 &self.buffer,
-                500 * time.ns_per_ms,
             );
         }
         fn sendCallback(
             self: *Context,
-            completion: *http.Client.Completion,
             result: IO.SendError!usize,
         ) void {
             if (result) |_| {
@@ -109,19 +103,17 @@ test "real / simple get" {
                     *Context,
                     self,
                     recvResponseHeaderCallback,
-                    &self.completion,
                     &self.buffer,
                     response_header_max_len,
-                    self.recv_timeout_ns,
                 );
             } else |_| {}
         }
         fn recvResponseHeaderCallback(
             self: *Context,
-            completion: *http.Client.Completion,
             result: http.Client.RecvResponseHeaderError!usize,
         ) void {
             if (result) |received| {
+                const completion = self.client.completion;
                 const resp = completion.response;
                 if (resp.headers.getContentLength()) |len| {
                     if (len) |l| {
@@ -145,13 +137,11 @@ test "real / simple get" {
                     self.content_read_so_far = chunk.len;
                     self.buffer.head = 0;
                     self.buffer.count = 0;
-                    self.client.recvWithTimeout(
+                    self.client.recv(
                         *Context,
                         self,
                         recvCallback,
-                        &self.completion,
                         &self.buffer,
-                        self.recv_timeout_ns,
                     );
                     return;
                 }
@@ -164,7 +154,6 @@ test "real / simple get" {
         }
         fn recvCallback(
             self: *Context,
-            completion: *http.Client.Completion,
             result: IO.RecvError!usize,
         ) void {
             if (result) |received| {
@@ -172,13 +161,11 @@ test "real / simple get" {
                 if (self.content_read_so_far < self.received_content_length) {
                     self.buffer.head = 0;
                     self.buffer.count = 0;
-                    self.client.recvWithTimeout(
+                    self.client.recv(
                         *Context,
                         self,
                         recvCallback,
-                        &self.completion,
                         &self.buffer,
-                        self.recv_timeout_ns,
                     );
                     return;
                 }
@@ -218,13 +205,11 @@ test "real / simple get" {
 
             try self.server.start();
 
-            try self.client.connectWithTimeout(
+            try self.client.connect(
                 *Context,
                 &self,
                 connectCallback,
-                &self.completion,
                 self.server.bound_address,
-                500 * time.ns_per_ms,
             );
 
             while (!self.client.done or !self.server.done) {
