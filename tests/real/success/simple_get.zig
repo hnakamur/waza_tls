@@ -154,11 +154,15 @@ test "real / simple get" {
                         self.received_content_length = l;
                     } else {
                         std.debug.print("expected content-length header in response, found none\n", .{});
+                        self.client.close();
                         self.exitTestWithError(error.TestUnexpectedError);
+                        return;
                     }
                 } else |err| {
                     std.debug.print("failed to get content-length header in response, err={s}\n", .{@errorName(err)});
+                    self.client.close();
                     self.exitTestWithError(error.TestUnexpectedError);
+                    return;
                 }
 
                 const chunk = completion.buffer.readableSlice(0);
@@ -171,24 +175,24 @@ test "real / simple get" {
                     chunk.len,
                 });
                 self.received_content = chunk;
-                if (chunk.len == self.received_content_length) {
-                    self.client.close();
-                    self.exitTest();
+                if (chunk.len < self.received_content_length) {
+                    self.content_read_so_far = chunk.len;
+                    self.buffer.head = 0;
+                    self.buffer.count = 0;
+                    self.client.recvWithTimeout(
+                        *Context,
+                        self,
+                        recvCallback,
+                        &self.completion,
+                        &self.buffer,
+                        if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+                        self.recv_timeout_ns,
+                    );
                     return;
                 }
 
-                self.content_read_so_far = chunk.len;
-                self.buffer.head = 0;
-                self.buffer.count = 0;
-                self.client.recvWithTimeout(
-                    *Context,
-                    self,
-                    recvCallback,
-                    &self.completion,
-                    &self.buffer,
-                    if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
-                    self.recv_timeout_ns,
-                );
+                self.client.close();
+                self.exitTest();
             } else |err| {
                 std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
             }
@@ -222,6 +226,7 @@ test "real / simple get" {
                 self.exitTest();
             } else |err| {
                 std.debug.print("recvCallback err={s}\n", .{@errorName(err)});
+                self.exitTestWithError(error.TestUnexpectedError);
             }
         }
 
@@ -231,7 +236,6 @@ test "real / simple get" {
 
         fn exitTestWithError(self: *Context, test_error: anyerror) void {
             self.test_error = test_error;
-            self.client.close();
             self.server.requestShutdown();
         }
 
