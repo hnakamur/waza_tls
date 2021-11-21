@@ -48,8 +48,6 @@ const ClientHandler = struct {
     fn start(self: *ClientHandler) !void {
         defer self.deinit() catch unreachable; // TODO: log error
         defer self.close(self.sock) catch unreachable; // TODO: log error
-        errdefer self.deinit() catch unreachable; // TODO: log error
-        errdefer self.close(self.sock) catch unreachable; // TODO: log error
 
         while (true) {
             const old = self.request_scanner.totalBytesRead();
