@@ -39,10 +39,7 @@ test "real / simple get" {
                 http.StatusCode.ok.code(),
                 http.StatusCode.ok.toText(),
             }) catch unreachable;
-            std.fmt.format(w, "Date: ", .{}) catch unreachable;
-            var now = datetime.datetime.Datetime.now();
-            http.formatDatetime(w, now) catch unreachable;
-            std.fmt.format(w, "\r\n", .{}) catch unreachable;
+            http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
 
             switch (self.conn.request.version) {
                 .http1_1 => if (!self.conn.keep_alive) {

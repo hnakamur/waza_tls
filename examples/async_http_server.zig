@@ -74,10 +74,7 @@ const ClientHandler = struct {
                         http.StatusCode.ok.code(),
                         http.StatusCode.ok.toText(),
                     });
-                    try std.fmt.format(w, "Date: ", .{});
-                    var now = datetime.datetime.Datetime.now();
-                    try http.formatDatetime(w, now);
-                    try std.fmt.format(w, "\r\n", .{});
+                    try http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now());
                     const body = "Hello http server\n";
                     try std.fmt.format(w, "Content-Length: {d}\r\n", .{body.len});
                     try std.fmt.format(w, "\r\n", .{});

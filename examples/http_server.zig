@@ -352,10 +352,7 @@ const ClientHandler = struct {
             status_code.code(),
             status_code.toText(),
         }) catch unreachable;
-        std.fmt.format(w, "Date: ", .{}) catch unreachable;
-        var now = datetime.datetime.Datetime.now();
-        http.formatDatetime(w, now) catch unreachable;
-        std.fmt.format(w, "\r\n", .{}) catch unreachable;
+        http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
 
         self.keep_alive = false;
         std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
@@ -381,10 +378,7 @@ const ClientHandler = struct {
             http.StatusCode.ok.code(),
             http.StatusCode.ok.toText(),
         }) catch unreachable;
-        std.fmt.format(w, "Date: ", .{}) catch unreachable;
-        var now = datetime.datetime.Datetime.now();
-        http.formatDatetime(w, now) catch unreachable;
-        std.fmt.format(w, "\r\n", .{}) catch unreachable;
+        http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
 
         switch (self.request_version) {
             .http1_1 => if (!self.keep_alive) {

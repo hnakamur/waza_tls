@@ -11,7 +11,7 @@ const RecvRequestScanner = @import("recv_request.zig").RecvRequestScanner;
 const Method = @import("method.zig").Method;
 const StatusCode = @import("status_code.zig").StatusCode;
 const Version = @import("version.zig").Version;
-const formatDatetime = @import("datetime.zig").formatDatetime;
+const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
 pub fn Server(comptime Handler: type) type {
     return struct {
@@ -413,10 +413,7 @@ pub fn Server(comptime Handler: type) type {
                     status_code.code(),
                     status_code.toText(),
                 }) catch unreachable;
-                std.fmt.format(w, "Date: ", .{}) catch unreachable;
-                var now = datetime.datetime.Datetime.now();
-                formatDatetime(w, now) catch unreachable;
-                std.fmt.format(w, "\r\n", .{}) catch unreachable;
+                writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
 
                 self.keep_alive = false;
                 std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
