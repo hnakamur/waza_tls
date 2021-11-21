@@ -49,7 +49,6 @@ test "real / simple get" {
             self.conn.sendFullWithTimeout(
                 sendFullWithTimeoutCallback,
                 fbs.getWritten(),
-                if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 5 * time.ms_per_s,
             );
         }
@@ -94,7 +93,6 @@ test "real / simple get" {
                 sendCallback,
                 &self.completion,
                 &self.buffer,
-                if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 500 * time.ns_per_ms,
             );
         }
@@ -114,7 +112,6 @@ test "real / simple get" {
                     &self.completion,
                     &self.buffer,
                     response_header_max_len,
-                    if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                     self.recv_timeout_ns,
                 );
             } else |_| {}
@@ -154,7 +151,6 @@ test "real / simple get" {
                         recvCallback,
                         &self.completion,
                         &self.buffer,
-                        if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                         self.recv_timeout_ns,
                     );
                     return;
@@ -182,7 +178,6 @@ test "real / simple get" {
                         recvCallback,
                         &self.completion,
                         &self.buffer,
-                        if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                         self.recv_timeout_ns,
                     );
                     return;

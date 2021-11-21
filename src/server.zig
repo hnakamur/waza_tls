@@ -13,6 +13,9 @@ const StatusCode = @import("status_code.zig").StatusCode;
 const Version = @import("version.zig").Version;
 const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
+const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+
 pub fn Server(comptime Handler: type) type {
     return struct {
         const Self = @This();
@@ -227,7 +230,7 @@ pub fn Server(comptime Handler: type) type {
                     &self.linked_completion,
                     self.socket,
                     buf,
-                    0,
+                    recv_flags,
                     self.recv_timeout_ns,
                 );
             }
@@ -301,7 +304,7 @@ pub fn Server(comptime Handler: type) type {
                                                 &self.linked_completion,
                                                 self.socket,
                                                 self.client_body_buf.?,
-                                                0,
+                                                recv_flags,
                                                 self.recv_timeout_ns,
                                             );
                                             return;
@@ -345,7 +348,7 @@ pub fn Server(comptime Handler: type) type {
                                     &self.linked_completion,
                                     self.socket,
                                     self.client_header_buf[old + received ..],
-                                    0,
+                                    recv_flags,
                                     self.recv_timeout_ns,
                                 );
                             }
@@ -379,7 +382,7 @@ pub fn Server(comptime Handler: type) type {
                                 &self.linked_completion,
                                 self.socket,
                                 self.client_body_buf.?,
-                                0,
+                                recv_flags,
                                 self.recv_timeout_ns,
                             );
                             return;
@@ -409,7 +412,7 @@ pub fn Server(comptime Handler: type) type {
                     &self.linked_completion,
                     self.socket,
                     fbs.getWritten(),
-                    0,
+                    send_flags,
                     self.send_timeout_ns,
                 );
             }
@@ -431,7 +434,6 @@ pub fn Server(comptime Handler: type) type {
                     last_result: IO.SendError!usize,
                 ) void,
                 buffer: []const u8,
-                flags: u32,
                 timeout_ns: u63,
             ) void {
                 self.completion = .{
@@ -454,7 +456,7 @@ pub fn Server(comptime Handler: type) type {
                     &self.completion.linked_completion,
                     self.socket,
                     buffer,
-                    flags,
+                    send_flags,
                     timeout_ns,
                 );
             }

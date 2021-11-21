@@ -11,6 +11,9 @@ const Version = @import("version.zig").Version;
 
 pub const DynamicByteBuffer = std.fifo.LinearFifo(u8, .Dynamic);
 
+const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+
 pub const Client = struct {
     const Self = @This();
 
@@ -95,7 +98,6 @@ pub const Client = struct {
         ) void,
         completion: *Completion,
         buffer: *DynamicByteBuffer,
-        flags: u32,
         timeout_ns: u63,
     ) void {
         completion.* = .{
@@ -119,7 +121,7 @@ pub const Client = struct {
             &completion.linked_completion,
             self.socket,
             buffer.readableSlice(0),
-            flags,
+            send_flags,
             timeout_ns,
         );
     }
@@ -171,7 +173,6 @@ pub const Client = struct {
         completion: *Completion,
         buffer: *DynamicByteBuffer,
         header_buf_max_len: usize,
-        flags: u32,
         timeout_ns: u63,
     ) void {
         assert(buffer.head == 0);
@@ -200,7 +201,7 @@ pub const Client = struct {
             &completion.linked_completion,
             self.socket,
             buffer.buf,
-            flags,
+            recv_flags,
             timeout_ns,
         );
     }
@@ -278,7 +279,6 @@ pub const Client = struct {
         ) void,
         completion: *Completion,
         buffer: *DynamicByteBuffer,
-        flags: u32,
         timeout_ns: u63,
     ) void {
         assert(buffer.head == 0);
@@ -304,7 +304,7 @@ pub const Client = struct {
             &completion.linked_completion,
             self.socket,
             buffer.buf,
-            flags,
+            recv_flags,
             timeout_ns,
         );
     }
