@@ -475,7 +475,6 @@ pub fn Server(comptime Handler: type) type {
                     .buffer = buffer,
                     .processed_len = 0,
                 };
-                self.is_send_finished = false;
                 self.server.io.sendWithTimeout(
                     *Conn,
                     self,
