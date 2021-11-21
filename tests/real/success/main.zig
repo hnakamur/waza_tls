@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const _ = @import("success/main.zig");
+const _ = @import("simple_get.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

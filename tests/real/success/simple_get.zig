@@ -9,6 +9,8 @@ const IO = @import("tigerbeetle-io").IO;
 const testing = std.testing;
 
 test "real / simple get" {
+    const content = "Hello from http.Server\n";
+
     const Handler = struct {
         const Self = @This();
         pub const Svr = http.Server(Self);
@@ -60,22 +62,13 @@ test "real / simple get" {
                 },
                 else => {},
             }
-            const content_length = 12;
-            // self.content_length = 2048;
+            const content_length = content.len;
             try std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length});
             try std.fmt.format(w, "\r\n", .{});
-            var pos = try fbs.getPos();
-            const send_len = std.math.min(
-                pos + content_length,
-                self.conn.send_buf.len,
-            );
-            while (pos < send_len) : (pos += 1) {
-                self.conn.send_buf[pos] = 'e';
-            }
-
+            try std.fmt.format(w, "{s}", .{content});
             self.conn.sendFullWithTimeout(
                 sendFullWithTimeoutCallback,
-                self.conn.send_buf[0..send_len],
+                fbs.getWritten(),
                 if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
                 5 * time.ms_per_s,
             );
@@ -93,10 +86,12 @@ test "real / simple get" {
         client: http.Client,
         buffer: http.DynamicByteBuffer,
         completion: http.Client.Completion = undefined,
-        content_length: ?u64 = null,
         content_read_so_far: u64 = undefined,
         recv_timeout_ns: u63 = 5 * time.ns_per_s,
         server: Handler.Svr = undefined,
+        received_content_length: u64 = undefined,
+        received_content: []const u8 = undefined,
+        test_error: ?anyerror = null,
 
         fn connectCallback(
             self: *Context,
@@ -155,14 +150,15 @@ test "real / simple get" {
             if (result) |received| {
                 const resp = completion.response;
                 if (resp.headers.getContentLength()) |len| {
-                    self.content_length = len;
                     if (len) |l| {
-                        std.debug.print("content-length is {}\n", .{l});
+                        self.received_content_length = l;
                     } else {
-                        std.debug.print("no content-length\n", .{});
+                        std.debug.print("expected content-length header in response, found none\n", .{});
+                        self.exitTestWithError(error.TestUnexpectedError);
                     }
                 } else |err| {
-                    std.debug.print("invalid content-length, err={s}\n", .{@errorName(err)});
+                    std.debug.print("failed to get content-length header in response, err={s}\n", .{@errorName(err)});
+                    self.exitTestWithError(error.TestUnexpectedError);
                 }
 
                 const chunk = completion.buffer.readableSlice(0);
@@ -174,10 +170,10 @@ test "real / simple get" {
                     chunk,
                     chunk.len,
                 });
-                if (chunk.len == self.content_length.?) {
+                self.received_content = chunk;
+                if (chunk.len == self.received_content_length) {
                     self.client.close();
-                    std.debug.print("calling requestShutdown #1\n", .{});
-                    self.server.requestShutdown();
+                    self.exitTest();
                     return;
                 }
 
@@ -206,8 +202,8 @@ test "real / simple get" {
             if (result) |received| {
                 self.content_read_so_far += received;
                 std.debug.print("body chunk: {s}\n", .{completion.buffer.readableSlice(0)});
-                std.debug.print("content_read_so_far={}, content_length={}\n", .{ self.content_read_so_far, self.content_length.? });
-                if (self.content_read_so_far < self.content_length.?) {
+                std.debug.print("content_read_so_far={}, content_length={}\n", .{ self.content_read_so_far, self.received_content_length });
+                if (self.content_read_so_far < self.received_content_length) {
                     self.buffer.head = 0;
                     self.buffer.count = 0;
                     self.client.recvWithTimeout(
@@ -223,11 +219,20 @@ test "real / simple get" {
                 }
 
                 self.client.close();
-                std.debug.print("calling requestShutdown #2\n", .{});
-                self.server.requestShutdown();
+                self.exitTest();
             } else |err| {
                 std.debug.print("recvCallback err={s}\n", .{@errorName(err)});
             }
+        }
+
+        fn exitTest(self: *Context) void {
+            self.server.requestShutdown();
+        }
+
+        fn exitTestWithError(self: *Context, test_error: anyerror) void {
+            self.test_error = test_error;
+            self.client.close();
+            self.server.requestShutdown();
         }
 
         fn runTest() !void {
@@ -248,8 +253,6 @@ test "real / simple get" {
 
             try self.server.start();
 
-            std.debug.print("self=0x{x}, client=0x{x}\n", .{ @ptrToInt(&self), @ptrToInt(&self.client) });
-
             try self.client.connectWithTimeout(
                 *Context,
                 &self,
@@ -262,7 +265,12 @@ test "real / simple get" {
             while (!self.client.done or !self.server.done) {
                 try io.tick();
             }
-            std.debug.print("exiting test Client-Server\n", .{});
+
+            if (self.test_error) |err| {
+                return err;
+            }
+            try testing.expectEqual(content.len, self.received_content_length);
+            try testing.expectEqualStrings(content, self.received_content);
         }
     }.runTest();
 }
