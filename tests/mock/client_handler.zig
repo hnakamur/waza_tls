@@ -5,7 +5,7 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "ClientHandler" {
+test "Mock ClientHandler" {
     try struct {
         const Context = @This();
 

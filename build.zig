@@ -33,14 +33,15 @@ pub fn build(b: *std.build.Builder) void {
     lib.setBuildMode(mode);
     lib.install();
 
-    // tests
-    var main_tests = b.addTest("src/main.zig");
-    main_tests.addPackage(pkgs.@"tigerbeetle-io");
-    main_tests.addPackage(pkgs.datetime);
-    main_tests.setBuildMode(mode);
-    main_tests.filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&main_tests.step);
+    // test filter
+    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
+
+    // unit tests
+    var unit_tests = b.addTest("src/main.zig");
+    unit_tests.addPackage(pkgs.@"tigerbeetle-io");
+    unit_tests.addPackage(pkgs.datetime);
+    unit_tests.setBuildMode(mode);
+    unit_tests.filter = test_filter;
 
     // tests with mock IO
     var mock_tests = b.addTest("tests/mock/main.zig");
@@ -50,9 +51,7 @@ pub fn build(b: *std.build.Builder) void {
     });
     mock_tests.addPackage(pkgs.datetime);
     mock_tests.setBuildMode(mode);
-    mock_tests.filter = b.option([]const u8, "mock-test-filter", "Skip tests that do not match filter");
-    const mock_test_step = b.step("mock-test", "Run library tests with mock IO");
-    test_step.dependOn(&mock_tests.step);
+    mock_tests.filter = test_filter;
 
     // tests with real IO
     var real_tests = b.addTest("tests/real/main.zig");
@@ -60,9 +59,13 @@ pub fn build(b: *std.build.Builder) void {
     real_tests.addPackage(pkgs.@"tigerbeetle-io");
     real_tests.addPackage(pkgs.datetime);
     real_tests.setBuildMode(mode);
-    real_tests.filter = b.option([]const u8, "real-test-filter", "Skip tests that do not match filter");
-    const real_test_step = b.step("real-test", "Run library tests with real IO");
-    real_test_step.dependOn(&real_tests.step);
+    real_tests.filter = test_filter;
+
+    // test step
+    const test_step = b.step("test", "Run library tests");
+    test_step.dependOn(&unit_tests.step);
+    test_step.dependOn(&mock_tests.step);
+    test_step.dependOn(&real_tests.step);
 
     const example_step = b.step("examples", "Build examples");
     inline for (.{
