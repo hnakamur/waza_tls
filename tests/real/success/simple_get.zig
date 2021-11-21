@@ -46,16 +46,12 @@ test "real / simple get" {
             try std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length});
             try std.fmt.format(w, "\r\n", .{});
             try std.fmt.format(w, "{s}", .{content});
-            self.conn.sendFullWithTimeout(
-                sendFullWithTimeoutCallback,
-                fbs.getWritten(),
-                5 * time.ms_per_s,
-            );
+            self.conn.sendFull(fbs.getWritten(), sendFullCallback);
         }
 
-        fn sendFullWithTimeoutCallback(self: *Self, comp: *Server.Completion, last_result: IO.SendError!usize) void {
+        fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
             if (last_result) |_| {} else |err| {
-                std.debug.print("Handler.sendFullWithTimeoutCallback err={s}\n", .{@errorName(err)});
+                std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
             }
         }
     };

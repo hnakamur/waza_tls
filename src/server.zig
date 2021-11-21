@@ -20,6 +20,8 @@ pub fn Server(comptime Handler: type) type {
     return struct {
         const Self = @This();
         const Config = struct {
+            recv_timeout_ns: u63 = 5 * time.ns_per_s,
+            send_timeout_ns: u63 = 5 * time.ns_per_s,
             client_header_buffer_size: usize = 1024,
             large_client_header_buffer_size: usize = 8192,
             large_client_header_buffer_max_count: usize = 4,
@@ -27,6 +29,8 @@ pub fn Server(comptime Handler: type) type {
             response_buffer_size: usize = 1024,
 
             fn validate(self: Config) !void {
+                assert(self.recv_timeout_ns > 0);
+                assert(self.send_timeout_ns > 0);
                 assert(self.client_header_buffer_size > 0);
                 assert(self.large_client_header_buffer_size > self.client_header_buffer_size);
                 assert(self.large_client_header_buffer_max_count > 0);
@@ -158,13 +162,10 @@ pub fn Server(comptime Handler: type) type {
             server: *Self,
             socket: os.socket_t,
             conn_id: usize,
-            linked_completion: IO.LinkedCompletion = undefined,
             completion: Completion = undefined,
             client_header_buf: []u8,
             client_body_buf: ?[]u8 = null,
             send_buf: []u8,
-            recv_timeout_ns: u63 = 5 * time.ns_per_s,
-            send_timeout_ns: u63 = 5 * time.ns_per_s,
             request_scanner: RecvRequestScanner,
             request: RecvRequest = undefined,
             request_version: Version = undefined,
@@ -227,11 +228,11 @@ pub fn Server(comptime Handler: type) type {
                     *Conn,
                     self,
                     recvCallback,
-                    &self.linked_completion,
+                    &self.completion.linked_completion,
                     self.socket,
                     buf,
                     recv_flags,
-                    self.recv_timeout_ns,
+                    self.server.config.recv_timeout_ns,
                 );
             }
             fn recvCallback(
@@ -301,11 +302,11 @@ pub fn Server(comptime Handler: type) type {
                                                 *Conn,
                                                 self,
                                                 recvCallback,
-                                                &self.linked_completion,
+                                                &self.completion.linked_completion,
                                                 self.socket,
                                                 self.client_body_buf.?,
                                                 recv_flags,
-                                                self.recv_timeout_ns,
+                                                self.server.config.recv_timeout_ns,
                                             );
                                             return;
                                         }
@@ -345,11 +346,11 @@ pub fn Server(comptime Handler: type) type {
                                     *Conn,
                                     self,
                                     recvCallback,
-                                    &self.linked_completion,
+                                    &self.completion.linked_completion,
                                     self.socket,
                                     self.client_header_buf[old + received ..],
                                     recv_flags,
-                                    self.recv_timeout_ns,
+                                    self.server.config.recv_timeout_ns,
                                 );
                             }
                         } else |err| {
@@ -379,11 +380,11 @@ pub fn Server(comptime Handler: type) type {
                                 *Conn,
                                 self,
                                 recvCallback,
-                                &self.linked_completion,
+                                &self.completion.linked_completion,
                                 self.socket,
                                 self.client_body_buf.?,
                                 recv_flags,
-                                self.recv_timeout_ns,
+                                self.server.config.recv_timeout_ns,
                             );
                             return;
                         }
@@ -409,11 +410,11 @@ pub fn Server(comptime Handler: type) type {
                     *Conn,
                     self,
                     sendErrorCallback,
-                    &self.linked_completion,
+                    &self.completion.linked_completion,
                     self.socket,
                     fbs.getWritten(),
                     send_flags,
-                    self.send_timeout_ns,
+                    self.server.config.send_timeout_ns,
                 );
             }
             fn sendErrorCallback(
@@ -426,22 +427,19 @@ pub fn Server(comptime Handler: type) type {
                 }
             }
 
-            pub fn sendFullWithTimeout(
+            pub fn sendFull(
                 self: *Conn,
+                buffer: []const u8,
                 comptime callback: fn (
                     handler: *Handler,
-                    completion: *Completion,
                     last_result: IO.SendError!usize,
                 ) void,
-                buffer: []const u8,
-                timeout_ns: u63,
             ) void {
                 self.completion = .{
                     .callback = struct {
                         fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
                             callback(
                                 @intToPtr(*Handler, @ptrToInt(ctx)),
-                                comp,
                                 @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,
                             );
                         }
@@ -457,7 +455,7 @@ pub fn Server(comptime Handler: type) type {
                     self.socket,
                     buffer,
                     send_flags,
-                    timeout_ns,
+                    self.server.config.send_timeout_ns,
                 );
             }
             fn sendFullWithTimeoutCallback(
@@ -473,7 +471,7 @@ pub fn Server(comptime Handler: type) type {
                             *Conn,
                             self,
                             sendFullWithTimeoutCallback,
-                            &self.linked_completion,
+                            &self.completion.linked_completion,
                             self.socket,
                             comp.buffer[comp.processed_len..],
                             linked_completion.main_completion.operation.send.flags,
