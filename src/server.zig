@@ -181,8 +181,8 @@ pub fn Server(comptime Handler: type) type {
             request: RecvRequest = undefined,
             request_version: Version = undefined,
             keep_alive: bool = true,
-            req_content_length: ?u64 = null,
-            content_len_so_far: u64 = 0,
+            request_content_length: ?u64 = null,
+            content_len_read_so_far: u64 = 0,
             processing: bool = false,
             is_send_finished: bool = true,
 
@@ -281,7 +281,7 @@ pub fn Server(comptime Handler: type) type {
                                     self.sendError(.http_version_not_supported);
                                     return;
                                 }
-                                self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
+                                self.request_content_length = if (req.headers.getContentLength()) |len| len else |err| {
                                     std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
                                     comp.callback(&self.handler, &result);
                                     self.sendError(.bad_request);
@@ -289,7 +289,7 @@ pub fn Server(comptime Handler: type) type {
                                 };
                                 self.request = req;
                                 const content_fragment_len = comp.processed_len - total;
-                                self.content_len_so_far = content_fragment_len;
+                                self.content_len_read_so_far = content_fragment_len;
                                 const has_content = content_fragment_len > 0;
                                 if (has_content) self.request_content_fragment_buf = buf[total..comp.processed_len];
                                 comp.callback(&self.handler, &result);
@@ -347,8 +347,8 @@ pub fn Server(comptime Handler: type) type {
             }
 
             pub fn hasMoreRequesetContentFragment(self: *Conn) bool {
-                return if (self.req_content_length) |len|
-                    self.content_len_so_far < len
+                return if (self.request_content_length) |len|
+                    self.content_len_read_so_far < len
                 else
                     false;
             }
@@ -403,12 +403,15 @@ pub fn Server(comptime Handler: type) type {
                     if (received == 0) {
                         if (self.hasMoreRequesetContentFragment()) {
                             const err = error.UnexpectedEof;
+                            comp.callback(&self.handler, &err);
+                        } else {
                             comp.callback(&self.handler, &result);
-                            self.close();
                         }
+                        self.close();
+                        return;
                     }
 
-                    self.content_len_so_far += received;
+                    self.content_len_read_so_far += received;
                     comp.callback(&self.handler, &result);
                 } else |err| {
                     comp.callback(&self.handler, &result);

@@ -51,7 +51,9 @@ pub fn Client(comptime Context: type) type {
         response: RecvResponse = undefined,
         resp_scanner: RecvResponseScanner = undefined,
         response_header_buf: []u8 = undefined,
-        response_body_fragment_buf: ?[]u8 = null,
+        response_content_fragment_buf: ?[]u8 = null,
+        response_content_length: ?u64 = null,
+        content_len_read_so_far: u64 = undefined,
         config: *const Config,
         done: bool = false,
 
@@ -68,7 +70,7 @@ pub fn Client(comptime Context: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.response_body_fragment_buf) |buf| {
+            if (self.response_content_fragment_buf) |buf| {
                 self.allocator.free(buf);
             }
             self.allocator.free(self.response_header_buf);
@@ -224,7 +226,7 @@ pub fn Client(comptime Context: type) type {
             if (result) |received| {
                 if (received == 0) {
                     const err = error.UnexpectedEof;
-                    comp.callback(self.context, &result);
+                    comp.callback(self.context, &err);
                     self.close();
                     return;
                 }
@@ -237,10 +239,19 @@ pub fn Client(comptime Context: type) type {
                         const total = self.resp_scanner.totalBytesRead();
                         if (RecvResponse.init(buf[0..total], &self.resp_scanner)) |resp| {
                             self.response = resp;
-                            const has_body = total < comp.processed_len;
-                            if (has_body) self.response_body_fragment_buf = buf[total..comp.processed_len];
+                            self.response_content_length = if (self.response.headers.getContentLength()) |len| len else |err| {
+                                std.debug.print("bad response, invalid content-length, err={s}\n", .{@errorName(err)});
+                                comp.callback(self.context, &err);
+                                self.close();
+                                return;
+                            };
+
+                            const content_fragment_len = comp.processed_len - total;
+                            self.content_len_read_so_far = content_fragment_len;
+                            const has_content = content_fragment_len > 0;
+                            if (has_content) self.response_content_fragment_buf = buf[total..comp.processed_len];
                             comp.callback(self.context, &result);
-                            if (has_body) self.response_body_fragment_buf = null;
+                            if (has_content) self.response_content_fragment_buf = null;
                         } else |err| {
                             comp.callback(self.context, &result);
                             self.close();
@@ -285,12 +296,19 @@ pub fn Client(comptime Context: type) type {
             }
         }
 
+        pub fn hasMoreResponseContentFragment(self: *Self) bool {
+            return if (self.response_content_length) |len|
+                self.content_len_read_so_far < len
+            else
+                false;
+        }
+
         pub const RecvResponseBodyFragmentError = error{
             UnexpectedEof,
             OutOfMemory,
         } || IO.RecvError;
 
-        pub fn recvResponseBodyFragment(
+        pub fn recvResponseContentFragment(
             self: *Self,
             comptime callback: fn (
                 context: *Context,
@@ -308,9 +326,9 @@ pub fn Client(comptime Context: type) type {
                 }.wrapper,
             };
 
-            if (self.response_body_fragment_buf) |_| {} else {
+            if (self.response_content_fragment_buf) |_| {} else {
                 if (self.allocator.alloc(u8, self.config.response_content_fragment_buf_len)) |buf| {
-                    self.response_body_fragment_buf = buf;
+                    self.response_content_fragment_buf = buf;
                 } else |err| {
                     self.completion.callback(self.context, &err);
                     self.close();
@@ -320,21 +338,33 @@ pub fn Client(comptime Context: type) type {
             self.io.recvWithTimeout(
                 *Self,
                 self,
-                recvCallback,
+                recvResponseContentFragmentCallback,
                 &self.completion.linked_completion,
                 self.socket,
-                self.response_body_fragment_buf.?,
+                self.response_content_fragment_buf.?,
                 recv_flags,
                 self.config.recv_timeout_ns,
             );
         }
-        fn recvCallback(
+        fn recvResponseContentFragmentCallback(
             self: *Self,
             linked_completion: *IO.LinkedCompletion,
             result: IO.RecvError!usize,
         ) void {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
+                if (received == 0) {
+                    if (self.hasMoreResponseContentFragment()) {
+                        const err = error.UnexpectedEof;
+                        comp.callback(self.context, &err);
+                    } else {
+                        comp.callback(self.context, &result);
+                    }
+                    self.close();
+                    return;
+                }
+
+                self.content_len_read_so_far += received;
                 comp.callback(self.context, &result);
             } else |err| {
                 comp.callback(self.context, &result);

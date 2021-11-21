@@ -82,8 +82,8 @@ test "real / simple get" {
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
         content_read_so_far: u64 = undefined,
         server: Handler.Server = undefined,
-        received_content_length: u64 = undefined,
-        received_content: ?[]const u8 = undefined,
+        response_content_length: ?u64 = null,
+        received_content: ?[]const u8 = null,
         test_error: ?anyerror = null,
 
         fn connectCallback(
@@ -105,9 +105,6 @@ test "real / simple get" {
             result: IO.SendError!usize,
         ) void {
             if (result) |_| {
-                self.buffer.head = 0;
-                self.buffer.count = 0;
-                self.buffer.ensureCapacity(1024) catch unreachable;
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
             } else |_| {}
         }
@@ -115,30 +112,12 @@ test "real / simple get" {
             self: *Context,
             result: Client.RecvResponseHeaderError!usize,
         ) void {
-            if (result) |received| {
-                if (self.client.response.headers.getContentLength()) |len| {
-                    if (len) |l| {
-                        self.received_content_length = l;
-                    } else {
-                        std.debug.print("expected content-length header in response, found none\n", .{});
-                        self.client.close();
-                        self.exitTestWithError(error.TestUnexpectedError);
-                        return;
-                    }
-                } else |err| {
-                    std.debug.print("failed to get content-length header in response, err={s}\n", .{@errorName(err)});
-                    self.client.close();
-                    self.exitTestWithError(error.TestUnexpectedError);
+            if (result) |_| {
+                self.response_content_length = self.client.response_content_length;
+                self.received_content = self.client.response_content_fragment_buf;
+                if (self.client.hasMoreResponseContentFragment()) {
+                    self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
-                }
-
-                self.received_content = self.client.response_body_fragment_buf;
-                if (self.received_content) |received_content| {
-                    self.content_read_so_far = received_content.len;
-                    if (received_content.len < self.received_content_length) {
-                        self.client.recvResponseBodyFragment(recvResponseBodyFragmentCallback);
-                        return;
-                    }
                 }
 
                 self.client.close();
@@ -147,21 +126,20 @@ test "real / simple get" {
                 std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
             }
         }
-        fn recvResponseBodyFragmentCallback(
+        fn recvResponseContentFragmentCallback(
             self: *Context,
             result: Client.RecvResponseBodyFragmentError!usize,
         ) void {
-            if (result) |received| {
-                self.content_read_so_far += received;
-                if (self.content_read_so_far < self.received_content_length) {
-                    self.client.recvResponseBodyFragment(recvResponseBodyFragmentCallback);
+            if (result) |_| {
+                if (self.client.hasMoreResponseContentFragment()) {
+                    self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
                 }
 
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.debug.print("recvResponseBodyFragmentCallback err={s}\n", .{@errorName(err)});
+                std.debug.print("recvResponseContentFragmentCallback err={s}\n", .{@errorName(err)});
                 self.exitTestWithError(error.TestUnexpectedError);
             }
         }
@@ -203,7 +181,7 @@ test "real / simple get" {
             if (self.test_error) |err| {
                 return err;
             }
-            try testing.expectEqual(content.len, self.received_content_length);
+            try testing.expectEqual(content.len, self.response_content_length.?);
             try testing.expectEqualStrings(content, self.received_content.?);
         }
     }.runTest();
