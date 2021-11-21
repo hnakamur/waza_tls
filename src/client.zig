@@ -224,7 +224,7 @@ pub fn Client(comptime Context: type) type {
             if (result) |received| {
                 if (received == 0) {
                     const err = error.UnexpectedEof;
-                    comp.callback(self.context, &err);
+                    comp.callback(self.context, &result);
                     self.close();
                     return;
                 }
@@ -242,7 +242,7 @@ pub fn Client(comptime Context: type) type {
                             comp.callback(self.context, &result);
                             if (has_body) self.response_body_fragment_buf = null;
                         } else |err| {
-                            comp.callback(self.context, &err);
+                            comp.callback(self.context, &result);
                             self.close();
                             return;
                         }
@@ -251,36 +251,36 @@ pub fn Client(comptime Context: type) type {
                             const new_len = buf.len + self.config.response_header_buffer_initial_len;
                             if (self.config.response_header_buffer_max_len < new_len) {
                                 const err = error.HeaderTooLong;
-                                comp.callback(self.context, &err);
+                                comp.callback(self.context, &result);
                                 self.close();
                                 return;
                             }
                             self.response_header_buf = self.allocator.realloc(self.response_header_buf, new_len) catch |err| {
-                                comp.callback(self.context, &err);
+                                comp.callback(self.context, &result);
                                 self.close();
                                 return;
                             };
-
-                            self.io.recvWithTimeout(
-                                *Self,
-                                self,
-                                recvResponseHeaderCallback,
-                                linked_completion,
-                                self.socket,
-                                self.response_header_buf[comp.processed_len..],
-                                linked_completion.main_completion.operation.recv.flags,
-                                @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
-                            );
                         }
+
+                        self.io.recvWithTimeout(
+                            *Self,
+                            self,
+                            recvResponseHeaderCallback,
+                            linked_completion,
+                            self.socket,
+                            self.response_header_buf[comp.processed_len..],
+                            linked_completion.main_completion.operation.recv.flags,
+                            @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                        );
                     }
                 } else |err| {
-                    comp.callback(self.context, &err);
+                    comp.callback(self.context, &result);
                     self.close();
                     return;
                 }
             } else |err| {
                 std.debug.print("Client.recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
-                comp.callback(self.context, &err);
+                comp.callback(self.context, &result);
                 self.close();
             }
         }
@@ -335,9 +335,9 @@ pub fn Client(comptime Context: type) type {
         ) void {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
-                comp.callback(self.context, &received);
+                comp.callback(self.context, &result);
             } else |err| {
-                comp.callback(self.context, &err);
+                comp.callback(self.context, &result);
                 self.close();
             }
         }

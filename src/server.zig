@@ -262,7 +262,7 @@ pub fn Server(comptime Handler: type) type {
                 if (result) |received| {
                     if (received == 0) {
                         const err = error.UnexpectedEof;
-                        comp.callback(&self.handler, &err);
+                        comp.callback(&self.handler, &result);
                         self.sendError(.bad_request);
                         return;
                     }
@@ -277,13 +277,13 @@ pub fn Server(comptime Handler: type) type {
                                 if (req.isKeepAlive()) |keep_alive| {
                                     self.keep_alive = keep_alive;
                                 } else |err| {
-                                    comp.callback(&self.handler, &err);
+                                    comp.callback(&self.handler, &result);
                                     self.sendError(.http_version_not_supported);
                                     return;
                                 }
                                 self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
                                     std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
-                                    comp.callback(&self.handler, &err);
+                                    comp.callback(&self.handler, &result);
                                     self.sendError(.bad_request);
                                     return;
                                 };
@@ -295,7 +295,7 @@ pub fn Server(comptime Handler: type) type {
                                 comp.callback(&self.handler, &result);
                                 if (has_content) self.request_content_fragment_buf = null;
                             } else |err| {
-                                comp.callback(&self.handler, &err);
+                                comp.callback(&self.handler, &result);
                                 self.sendError(.bad_request);
                                 return;
                             }
@@ -313,12 +313,12 @@ pub fn Server(comptime Handler: type) type {
                                     self.server.config.large_request_header_buf_max_count;
                                 if (max_len < new_len) {
                                     const err = error.HeaderTooLong;
-                                    comp.callback(&self.handler, &err);
+                                    comp.callback(&self.handler, &result);
                                     self.sendError(.request_header_fields_too_large);
                                     return;
                                 }
                                 self.request_header_buf = self.server.allocator.realloc(self.request_header_buf, new_len) catch |err| {
-                                    comp.callback(&self.handler, &err);
+                                    comp.callback(&self.handler, &result);
                                     self.sendError(.internal_server_error);
                                     return;
                                 };
@@ -336,12 +336,12 @@ pub fn Server(comptime Handler: type) type {
                             }
                         }
                     } else |err| {
-                        comp.callback(&self.handler, &err);
+                        comp.callback(&self.handler, &result);
                         self.sendError(.bad_request);
                         return;
                     }
                 } else |err| {
-                    comp.callback(&self.handler, &err);
+                    comp.callback(&self.handler, &result);
                     self.close();
                 }
             }
@@ -403,15 +403,15 @@ pub fn Server(comptime Handler: type) type {
                     if (received == 0) {
                         if (self.hasMoreRequesetContentFragment()) {
                             const err = error.UnexpectedEof;
-                            comp.callback(&self.handler, &err);
+                            comp.callback(&self.handler, &result);
                             self.close();
                         }
                     }
 
                     self.content_len_so_far += received;
-                    comp.callback(&self.handler, &received);
+                    comp.callback(&self.handler, &result);
                 } else |err| {
-                    comp.callback(&self.handler, &err);
+                    comp.callback(&self.handler, &result);
                     self.close();
                 }
             }
