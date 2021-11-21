@@ -66,7 +66,9 @@ test "real / simple get" {
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            if (last_result) |_| {} else |err| {
+            if (last_result) |_| {
+                self.conn.finishSend();
+            } else |err| {
                 std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
             }
         }

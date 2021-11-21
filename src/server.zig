@@ -506,7 +506,7 @@ pub fn Server(comptime Handler: type) type {
                         return;
                     }
 
-                    self.is_send_finished = true;
+                    self.is_send_finished = false;
                     comp.callback(&self.handler, &result);
                     if (!self.is_send_finished) {
                         return;
@@ -524,6 +524,10 @@ pub fn Server(comptime Handler: type) type {
                     comp.callback(&self.handler, &result);
                     self.close();
                 }
+            }
+
+            pub fn finishSend(self: *Conn) void {
+                self.is_send_finished = true;
             }
         };
     };
