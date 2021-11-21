@@ -16,7 +16,7 @@ pub fn Client(comptime Context: type) type {
     return struct {
         const Self = @This();
 
-        const Config = struct {
+        pub const Config = struct {
             connect_timeout_ns: u63 = 5 * time.ns_per_s,
             send_timeout_ns: u63 = 5 * time.ns_per_s,
             recv_timeout_ns: u63 = 5 * time.ns_per_s,
@@ -52,10 +52,10 @@ pub fn Client(comptime Context: type) type {
         resp_scanner: RecvResponseScanner = undefined,
         response_header_buf: []u8 = undefined,
         response_body_fragment_buf: ?[]u8 = null,
-        config: Config,
+        config: *const Config,
         done: bool = false,
 
-        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: Config) !Self {
+        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
             try config.validate();
 
             return Self{

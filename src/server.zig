@@ -39,14 +39,14 @@ pub fn Server(comptime Handler: type) type {
         io: *IO,
         socket: os.socket_t,
         allocator: *mem.Allocator,
-        config: Config,
+        config: *const Config,
         bound_address: std.net.Address = undefined,
         connections: std.ArrayList(?*Conn),
         completion: IO.Completion = undefined,
         shutdown_requested: bool = false,
         done: bool = false,
 
-        pub fn init(allocator: *mem.Allocator, io: *IO, address: std.net.Address, config: Config) !Self {
+        pub fn init(allocator: *mem.Allocator, io: *IO, address: std.net.Address, config: *const Config) !Self {
             try config.validate();
             const kernel_backlog = 513;
             const socket = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
@@ -179,7 +179,7 @@ pub fn Server(comptime Handler: type) type {
             } = .ReceivingHeaders,
 
             fn init(server: *Self, conn_id: usize, socket: os.socket_t) !*Conn {
-                const config = &server.config;
+                const config = server.config;
                 const client_header_buf = try server.allocator.alloc(u8, config.client_header_buffer_size);
                 const send_buf = try server.allocator.alloc(u8, config.response_buffer_size);
                 var self = try server.allocator.create(Conn);

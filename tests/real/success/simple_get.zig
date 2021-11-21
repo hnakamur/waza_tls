@@ -171,12 +171,12 @@ test "real / simple get" {
 
             var self: Context = .{
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-                .server = try Handler.Server.init(allocator, &io, address, .{}),
+                .server = try Handler.Server.init(allocator, &io, address, &.{}),
             };
             defer self.buffer.deinit();
             defer self.server.deinit();
 
-            self.client = try Client.init(allocator, &io, &self, .{});
+            self.client = try Client.init(allocator, &io, &self, &.{});
             defer self.client.deinit();
 
             try self.server.start();
