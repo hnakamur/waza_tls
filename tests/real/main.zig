@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const _ = @import("success/main.zig");
+const @"error" = @import("error/main.zig");
+const success = @import("success/main.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
