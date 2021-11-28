@@ -155,7 +155,7 @@ test "real / success / simple get" {
         }
         fn recvResponseContentFragmentCallback(
             self: *Context,
-            result: Client.RecvResponseBodyFragmentError!usize,
+            result: Client.RecvResponseContentFragmentError!usize,
         ) void {
             std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
             if (result) |_| {

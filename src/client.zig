@@ -182,11 +182,9 @@ pub fn Client(comptime Context: type) type {
                 }
 
                 comp.callback(self.context, &result);
-            } else |err| {
+            } else |_| {
                 comp.callback(self.context, &result);
-                http_log.debug("Client.sendCallback before calling close, err={s}", .{@errorName(err)});
                 self.close();
-                http_log.debug("Client.sendCallback after calling close, err={s}", .{@errorName(err)});
             }
         }
 
@@ -236,8 +234,8 @@ pub fn Client(comptime Context: type) type {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
                 if (received == 0) {
-                    const err = error.UnexpectedEof;
-                    comp.callback(self.context, &err);
+                    const err_result: RecvResponseHeaderError!usize = error.UnexpectedEof;
+                    comp.callback(self.context, &err_result);
                     http_log.debug("Client.recvResponseHeaderCallback before calling close#1", .{});
                     self.close();
                     return;
@@ -253,7 +251,8 @@ pub fn Client(comptime Context: type) type {
                             self.response = resp;
                             self.response_content_length = if (self.response.headers.getContentLength()) |len| len else |err| {
                                 http_log.debug("bad response, invalid content-length, err={s}", .{@errorName(err)});
-                                comp.callback(self.context, &err);
+                                const err_result: RecvResponseHeaderError!usize = error.UnexpectedEof;
+                                comp.callback(self.context, &err_result);
                                 http_log.debug("Client.recvResponseHeaderCallback before calling close#2", .{});
                                 self.close();
                                 return;
@@ -266,7 +265,8 @@ pub fn Client(comptime Context: type) type {
                             comp.callback(self.context, &result);
                             if (has_content) self.response_content_fragment_buf = null;
                         } else |err| {
-                            comp.callback(self.context, &result);
+                            const err_result: RecvResponseHeaderError!usize = err;
+                            comp.callback(self.context, &err_result);
                             http_log.debug("Client.recvResponseHeaderCallback before calling close#3", .{});
                             self.close();
                             return;
@@ -301,15 +301,14 @@ pub fn Client(comptime Context: type) type {
                         );
                     }
                 } else |err| {
-                    comp.callback(self.context, &result);
+                    const err_result: RecvResponseHeaderError!usize = err;
+                    comp.callback(self.context, &err_result);
                     http_log.debug("Client.recvResponseHeaderCallback before calling close#6", .{});
                     self.close();
                     return;
                 }
-            } else |err| {
-                http_log.debug("Client.recvResponseHeaderCallback err={s}", .{@errorName(err)});
+            } else |_| {
                 comp.callback(self.context, &result);
-                http_log.debug("Client.recvResponseHeaderCallback before calling close#7", .{});
                 self.close();
             }
         }
@@ -321,7 +320,7 @@ pub fn Client(comptime Context: type) type {
                 true;
         }
 
-        pub const RecvResponseBodyFragmentError = error{
+        pub const RecvResponseContentFragmentError = error{
             UnexpectedEof,
             OutOfMemory,
         } || IO.RecvError;
@@ -330,7 +329,7 @@ pub fn Client(comptime Context: type) type {
             self: *Self,
             comptime callback: fn (
                 context: *Context,
-                result: RecvResponseBodyFragmentError!usize,
+                result: RecvResponseContentFragmentError!usize,
             ) void,
         ) void {
             self.completion = .{
@@ -348,7 +347,8 @@ pub fn Client(comptime Context: type) type {
                 if (self.allocator.alloc(u8, self.config.response_content_fragment_buf_len)) |buf| {
                     self.response_content_fragment_buf = buf;
                 } else |err| {
-                    self.completion.callback(self.context, &err);
+                    const err_result: RecvResponseContentFragmentError!usize = err;
+                    self.completion.callback(self.context, &err_result);
                     http_log.debug("Client.recvResponseContentFragment before calling close#1", .{});
                     self.close();
                 }
@@ -376,8 +376,8 @@ pub fn Client(comptime Context: type) type {
                     if (self.fullyReadResponseContent()) {
                         comp.callback(self.context, &result);
                     } else {
-                        const err = error.UnexpectedEof;
-                        comp.callback(self.context, &err);
+                        const err_result: RecvResponseContentFragmentError!usize = error.UnexpectedEof;
+                        comp.callback(self.context, &err_result);
                     }
                     http_log.debug("Client.recvResponseContentFragmentCallback before calling close#1", .{});
                     self.close();
@@ -386,9 +386,8 @@ pub fn Client(comptime Context: type) type {
 
                 self.content_len_read_so_far += received;
                 comp.callback(self.context, &result);
-            } else |err| {
+            } else |_| {
                 comp.callback(self.context, &result);
-                http_log.debug("Client.recvResponseContentFragmentCallback before calling close#2", .{});
                 self.close();
             }
         }

@@ -367,10 +367,9 @@ pub fn Server(comptime Handler: type) type {
                         self.sendError(.bad_request);
                         return;
                     }
-                } else |err| {
+                } else |_| {
                     http_log.debug("Conn.recvRequestHeaderCallback before calling callback with result={}", .{result});
-                    const err_result: RecvRequestHeaderError!usize = err;
-                    comp.callback(&self.handler, &err_result);
+                    comp.callback(&self.handler, &result);
                     http_log.debug("Conn.recvRequestHeaderCallback after calling callback with result={}", .{result});
                     self.close();
                 }
@@ -406,7 +405,8 @@ pub fn Server(comptime Handler: type) type {
                     if (self.server.allocator.alloc(u8, self.server.config.request_content_fragment_buf_len)) |buf| {
                         self.request_content_fragment_buf = buf;
                     } else |err| {
-                        self.completion.callback(&self.handler, &err);
+                        const err_result: RecvRequestContentFragmentError!usize = err;
+                        self.completion.callback(&self.handler, &err_result);
                         self.sendError(.internal_server_error);
                         return;
                     }
@@ -434,8 +434,8 @@ pub fn Server(comptime Handler: type) type {
                         if (self.fullyReadRequestContent()) {
                             comp.callback(&self.handler, &result);
                         } else {
-                            const err = error.UnexpectedEof;
-                            comp.callback(&self.handler, &err);
+                            const err_result: RecvRequestContentFragmentError!usize = error.UnexpectedEof;
+                            comp.callback(&self.handler, &err_result);
                         }
                         self.close();
                         return;
@@ -443,7 +443,7 @@ pub fn Server(comptime Handler: type) type {
 
                     self.content_len_read_so_far += received;
                     comp.callback(&self.handler, &result);
-                } else |err| {
+                } else |_| {
                     comp.callback(&self.handler, &result);
                     self.close();
                 }
@@ -551,8 +551,7 @@ pub fn Server(comptime Handler: type) type {
 
                     self.processing = false;
                     self.start();
-                } else |err| {
-                    http_log.debug("send error: {s}", .{@errorName(err)});
+                } else |_| {
                     comp.callback(&self.handler, &result);
                     self.close();
                 }
