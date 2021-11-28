@@ -47,7 +47,7 @@ pub fn build(b: *std.build.Builder) void {
     if (coverage) {
         unit_tests.setExecCmd(&[_]?[]const u8{
             "kcov",
-            "--include-path=.",
+            "--include-path=./src",
             "kcov-output-unit", // output dir for kcov
             null, // to get zig to use the --test-cmd-bin flag
         });
@@ -65,7 +65,7 @@ pub fn build(b: *std.build.Builder) void {
     if (coverage) {
         mock_tests.setExecCmd(&[_]?[]const u8{
             "kcov",
-            "--include-path=.",
+            "--include-path=./src",
             "kcov-output-mock", // output dir for kcov
             null, // to get zig to use the --test-cmd-bin flag
         });
@@ -81,7 +81,7 @@ pub fn build(b: *std.build.Builder) void {
     if (coverage) {
         real_tests.setExecCmd(&[_]?[]const u8{
             "kcov",
-            "--include-path=.",
+            "--include-path=./src",
             "kcov-output-real", // output dir for kcov
             null, // to get zig to use the --test-cmd-bin flag
         });
