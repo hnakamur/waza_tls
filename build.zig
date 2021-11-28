@@ -89,6 +89,8 @@ pub fn build(b: *std.build.Builder) void {
 
     // test step
     const test_step = b.step("test", "Run library tests");
+    var pre_check_step = TestPreCheckStep.create(b);
+    test_step.dependOn(&pre_check_step.step);
     test_step.dependOn(&unit_tests.step);
     test_step.dependOn(&mock_tests.step);
     test_step.dependOn(&real_tests.step);
@@ -119,3 +121,30 @@ pub fn build(b: *std.build.Builder) void {
         example_step.dependOn(&example.step);
     }
 }
+
+const Step = std.build.Step;
+
+pub const TestPreCheckStep = struct {
+    step: Step,
+    builder: *std.build.Builder,
+
+    pub fn create(builder: *std.build.Builder) *TestPreCheckStep {
+        const self = builder.allocator.create(TestPreCheckStep) catch unreachable;
+        self.* = TestPreCheckStep{
+            .builder = builder,
+            .step = Step.init(.Custom, "test pre-check", builder.allocator, make),
+        };
+        return self;
+    }
+
+    fn make(step: *Step) !void {
+        const self = @fieldParentPtr(TestPreCheckStep, "step", step);
+
+        const uid = std.os.linux.getuid();
+        const root_uid = 0;
+        if (uid != root_uid) {
+            std.debug.warn("zig build test must be executed with root user to invoke iptables in tests.\n", .{});
+            return error.MustBeExecutedWithRootUser;
+        }
+    }
+};
