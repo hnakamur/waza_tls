@@ -25,6 +25,7 @@ pub fn build(b: *std.build.Builder) void {
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
+    std.debug.print("build.zig mode={}\n", .{mode});
     const target = b.standardTargetOptions(.{});
 
     const lib = b.addStaticLibrary("http", "src/main.zig");
@@ -35,6 +36,14 @@ pub fn build(b: *std.build.Builder) void {
 
     // test filter
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
+
+    const test_log_level_opt = b.option([]const u8, "test-log-level", "Set log_level for tests");
+    if (test_log_level_opt) |opt| {
+        std.testing.log_level = logLevelFromText(opt) catch |err| {
+            std.debug.print("invalid test-log-level value: {s}\n", .{opt});
+            return;
+        };
+    }
 
     // unit tests
     var unit_tests = b.addTest("src/main.zig");
@@ -83,4 +92,27 @@ pub fn build(b: *std.build.Builder) void {
         example.install();
         example_step.dependOn(&example.step);
     }
+}
+
+fn logLevelFromText(input: []const u8) error{InvalidInput}!std.log.Level {
+    switch (input.len) {
+        3 => {
+            if (std.mem.eql(u8, input, "err")) return .err;
+        },
+        4 => {
+            if (std.mem.eql(u8, input, "crit")) return .crit;
+            if (std.mem.eql(u8, input, "info")) return .info;
+            if (std.mem.eql(u8, input, "warn")) return .warn;
+        },
+        5 => {
+            if (std.mem.eql(u8, input, "alert")) return .alert;
+            if (std.mem.eql(u8, input, "debug")) return .debug;
+            if (std.mem.eql(u8, input, "emerg")) return .emerg;
+        },
+        6 => {
+            if (std.mem.eql(u8, input, "notice")) return .notice;
+        },
+        else => {},
+    }
+    return error.InvalidInput;
 }
