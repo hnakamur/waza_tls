@@ -7,72 +7,77 @@ const http = @import("http");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
-const iptables = @import("iptables.zig");
+// const iptables = @import("iptables.zig");
 
-test "real / error / drop server recv" {
+test "real / error / client recv timeout" {
     // testing.log_level = .debug;
-
-    const dest_addr = "127.0.0.1";
-    const dest_port = 3131;
     const content = "Hello from http.Server\n";
 
     const Handler = struct {
         const Self = @This();
         pub const Server = http.Server(Self);
 
+        const send_delay: u63 = 100 * time.ns_per_ms;
+
         conn: *Server.Conn = undefined,
-        recv_req_header_result: Server.RecvRequestHeaderError!usize = undefined,
 
         pub fn start(self: *Self) void {
-            std.log.debug("Handler.start start", .{});
-            defer std.log.debug("Handler.start exit", .{});
-            
-            const allocator = testing.allocator;
-            iptables.appendRule(allocator, dest_addr, dest_port, .drop) catch @panic("append iptables rule");
-            std.log.debug("Handler.start appended iptables rule", .{});
-
+            std.log.debug("Handler.start", .{});
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            testing.expectError(error.Canceled, result) catch |err| {
-                std.log.err("Handler.recvRequestHeaderCallback result should be error.Canceled, but got {}", .{result});
-            };
-            if (result) |received| {
-                std.log.debug("Handler.recvRequestHeaderCallback received={}", .{received});
+            std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
+            if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                     return;
                 }
 
-                self.sendResponse();
+                self.sendResponseAfterDelay();
             } else |err| {
-                if (err != error.Canceled) {
-                    std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
-                } else {
-                    std.log.debug("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
-                }
+                std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
             }
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            if (result) |received| {
-                std.log.debug("Handler.recvRequestContentFragmentCallback received={}", .{received});
+            std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
+            if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                     return;
                 }
 
-                self.sendResponse();
+                self.sendResponseAfterDelay();
             } else |err| {
                 std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
             }
         }
 
+        fn sendResponseAfterDelay(self: *Self) void {
+            self.conn.server.io.timeout(
+                *Self,
+                self,
+                timeoutCallback,
+                &self.conn.completion.linked_completion.main_completion,
+                send_delay,
+            );
+        }
+        fn timeoutCallback(
+            self: *Self,
+            completion: *IO.Completion,
+            result: IO.TimeoutError!void,
+        ) void {
+            if (result) |_| {
+                std.log.debug("timeoutCallback result ok", .{});
+                self.sendResponse();
+            } else |err| {
+                std.log.err("Handler.timeoutCallback err={s}", .{@errorName(err)});
+            }
+        }
+
         pub fn sendResponse(self: *Self) void {
             std.log.debug("Handler.sendResponse start", .{});
-            defer std.log.debug("Handler.sendResponse exit", .{});
-
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -100,8 +105,6 @@ test "real / error / drop server recv" {
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
             std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
-            defer std.log.debug("Handler.sendFullCallback exit", .{});
-
             if (last_result) |_| {
                 self.conn.finishSend();
             } else |err| {
@@ -116,20 +119,15 @@ test "real / error / drop server recv" {
 
         client: Client = undefined,
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
-        content_read_so_far: u64 = undefined,
         server: Handler.Server = undefined,
         connect_result: IO.ConnectError!void = undefined,
-        sent_len: usize = undefined,
         send_result: IO.SendError!usize = undefined,
-        response_content_length: ?u64 = null,
-        received_content: ?[]const u8 = null,
-        test_error: ?anyerror = null,
+        recv_resp_header_result: Client.RecvResponseHeaderError!usize = undefined,
 
         fn connectCallback(
             self: *Context,
             result: IO.ConnectError!void,
         ) void {
-            std.log.debug("Context.connectCallback result={}", .{result});
             self.connect_result = result;
             if (result) |_| {
                 var w = self.buffer.writer();
@@ -140,13 +138,9 @@ test "real / error / drop server recv" {
                     http.Version.http1_1.toText(),
                 }) catch unreachable;
                 std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-                self.sent_len = self.buffer.readableSlice(0).len;
                 self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
-                std.log.debug("Context.connectCallback after sendFull", .{});
-            } else |err| {
-                std.log.err("Context.connectCallback err={s}", .{@errorName(err)});
+            } else |_| {
                 self.exitTest();
-                std.log.debug("Context.connectCallback exit", .{});
             }
         }
         fn sendFullCallback(
@@ -154,14 +148,22 @@ test "real / error / drop server recv" {
             result: IO.SendError!usize,
         ) void {
             self.send_result = result;
-            if (result) |sent| {
-                std.log.debug("Context.sendFullCallback sent={}", .{sent});
+            if (result) |_| {
+                self.client.recvResponseHeader(recvResponseHeaderCallback);
+            } else |_| {
+                self.exitTest();
+            }
+        }
+        fn recvResponseHeaderCallback(
+            self: *Context,
+            result: Client.RecvResponseHeaderError!usize,
+        ) void {
+            self.recv_resp_header_result = result;
+            if (result) |_| {
                 self.client.close();
                 self.exitTest();
-            } else |err| {
-                std.log.err("Context.sendFullCallback err={s}", .{@errorName(err)});
+            } else |_| {
                 self.exitTest();
-                std.log.debug("Context.sendFullCallback exit", .{});
             }
         }
 
@@ -174,49 +176,37 @@ test "real / error / drop server recv" {
             defer io.deinit();
 
             const allocator = testing.allocator;
-
-            defer iptables.deleteRule(allocator, dest_addr, dest_port, .drop) catch @panic("delete iptables rule");
-
-            const address = try std.net.Address.parseIp4(dest_addr, dest_port);
+            // Use a random port
+            const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-                .server = try Handler.Server.init(allocator, &io, address, .{
-                    .recv_timeout_ns = time.ns_per_s,
-                    .send_timeout_ns = time.ns_per_s,
-                }),
+                .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
             defer self.buffer.deinit();
             defer self.server.deinit();
 
             self.client = try Client.init(allocator, &io, &self, &.{
-                .connect_timeout_ns = 100 * time.ns_per_ms,
-                .recv_timeout_ns = 100 * time.ns_per_ms,
-                .send_timeout_ns = 100 * time.ns_per_ms,
+                .recv_timeout_ns = 50 * time.ns_per_ms,
             });
             defer self.client.deinit();
-            std.log.debug("server=0x{x}, completion=0x{x}", .{
-                @ptrToInt(&self.server),
-                @ptrToInt(&self.server.completion),
-            });
-            std.log.debug("client=0x{x}, main_completion=0x{x}, linked_completion=0x{x}", .{
-                @ptrToInt(&self.client),
-                @ptrToInt(&self.client.completion.linked_completion.main_completion),
-                @ptrToInt(&self.client.completion.linked_completion.linked_completion),
-            });
 
             try self.server.start();
-            try self.client.connect(address, connectCallback);
+
+            // const dest_port = self.server.bound_address.getPort();
+            // const dest_addr = "127.0.0.1";
+            // try iptables.appendRule(allocator, dest_addr, dest_port, .reject);
+            // defer iptables.deleteRule(allocator, dest_addr, dest_port, .reject) catch @panic("delete iptables rule");
+
+            try self.client.connect(self.server.bound_address, connectCallback);
 
             while (!self.client.done or !self.server.done) {
                 try io.tick();
             }
 
-            if (self.connect_result) |_| {} else |err| {
-                std.debug.print("connect_result should be void, but got error: {s}\n", .{@errorName(err)});
-                return error.TestExpectedError;
-            }
-            try testing.expectEqual(@as(IO.SendError!usize, self.sent_len), self.send_result);
+            try http.testing.expectNoError("connect_result", self.connect_result);
+            try http.testing.expectNoError("send_result", self.send_result);
+            try testing.expectError(error.Canceled, self.recv_resp_header_result);
         }
     }.runTest();
 }
