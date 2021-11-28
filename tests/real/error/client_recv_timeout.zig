@@ -204,8 +204,8 @@ test "real / error / client recv timeout" {
                 try io.tick();
             }
 
-            try http.testing.expectNoError("connect_result", self.connect_result);
-            try http.testing.expectNoError("send_result", self.send_result);
+            try http.testing.expectNoError(self.connect_result);
+            try http.testing.expectNoError(self.send_result);
             try testing.expectError(error.Canceled, self.recv_resp_header_result);
         }
     }.runTest();

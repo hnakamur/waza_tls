@@ -1,14 +1,8 @@
 const std = @import("std");
 
-pub fn expectNoError(
-    var_name: []const u8,
-    result: anytype,
-) error{TestExpectedError}!void {
+pub fn expectNoError(result: anytype) error{TestExpectedError}!void {
     if (result) |_| {} else |err| {
-        std.debug.print("{s} should not be an error, but got an error: {s}\n", .{
-            var_name,
-            @errorName(err),
-        });
+        std.debug.print("expected no error, found {s}\n", .{@errorName(err)});
         return error.TestExpectedError;
     }
 }
