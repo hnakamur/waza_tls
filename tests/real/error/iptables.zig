@@ -65,7 +65,6 @@ fn run(
 
     const argv = switch (target) {
         .reject => &[_][]const u8{
-            "sudo",
             "iptables",
             operation_str,
             "INPUT",
@@ -81,7 +80,6 @@ fn run(
             "tcp-reset",
         },
         .drop => &[_][]const u8{
-            "sudo",
             "iptables",
             operation_str,
             "INPUT",

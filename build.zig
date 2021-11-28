@@ -36,12 +36,22 @@ pub fn build(b: *std.build.Builder) void {
     // test filter
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
 
+    const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
+
     // unit tests
     var unit_tests = b.addTest("src/main.zig");
     unit_tests.addPackage(pkgs.@"tigerbeetle-io");
     unit_tests.addPackage(pkgs.datetime);
     unit_tests.setBuildMode(mode);
     unit_tests.filter = test_filter;
+    if (coverage) {
+        unit_tests.setExecCmd(&[_]?[]const u8{
+            "kcov",
+            "--include-path=.",
+            "kcov-output-unit", // output dir for kcov
+            null, // to get zig to use the --test-cmd-bin flag
+        });
+    }
 
     // tests with mock IO
     var mock_tests = b.addTest("tests/mock/main.zig");
@@ -52,6 +62,14 @@ pub fn build(b: *std.build.Builder) void {
     mock_tests.addPackage(pkgs.datetime);
     mock_tests.setBuildMode(mode);
     mock_tests.filter = test_filter;
+    if (coverage) {
+        mock_tests.setExecCmd(&[_]?[]const u8{
+            "kcov",
+            "--include-path=.",
+            "kcov-output-mock", // output dir for kcov
+            null, // to get zig to use the --test-cmd-bin flag
+        });
+    }
 
     // tests with real IO
     var real_tests = b.addTest("tests/real/main.zig");
@@ -60,12 +78,29 @@ pub fn build(b: *std.build.Builder) void {
     real_tests.addPackage(pkgs.datetime);
     real_tests.setBuildMode(mode);
     real_tests.filter = test_filter;
+    if (coverage) {
+        real_tests.setExecCmd(&[_]?[]const u8{
+            "kcov",
+            "--include-path=.",
+            "kcov-output-real", // output dir for kcov
+            null, // to get zig to use the --test-cmd-bin flag
+        });
+    }
 
     // test step
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&unit_tests.step);
     test_step.dependOn(&mock_tests.step);
     test_step.dependOn(&real_tests.step);
+    const merge_step = b.addSystemCommand(&[_][]const u8{
+        "kcov",
+        "--merge",
+        "kcov-output",
+        "kcov-output-unit",
+        "kcov-output-mock",
+        "kcov-output-real",
+    });
+    test_step.dependOn(&merge_step.step);
 
     const example_step = b.step("examples", "Build examples");
     inline for (.{
