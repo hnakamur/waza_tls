@@ -9,7 +9,7 @@ const IO = @import("tigerbeetle-io").IO;
 const testing = std.testing;
 
 test "real / success / simple get" {
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
     const content = "Hello from http.Server\n";
 
     const Handler = struct {

@@ -10,6 +10,8 @@ const testing = std.testing;
 const iptables = @import("iptables.zig");
 
 test "real / error / drop server recv" {
+    testing.log_level = .debug;
+
     const dest_addr = "127.0.0.1";
     const dest_port = 3131;
     const content = "Hello from http.Server\n";
@@ -19,16 +21,25 @@ test "real / error / drop server recv" {
         pub const Server = http.Server(Self);
 
         conn: *Server.Conn = undefined,
+        recv_req_header_result: Server.RecvRequestHeaderError!usize = undefined,
 
         pub fn start(self: *Self) void {
+            std.log.debug("Handler.start start", .{});
+            defer std.log.debug("Handler.start exit", .{});
+            
             const allocator = testing.allocator;
             iptables.appendRule(allocator, dest_addr, dest_port, .drop) catch @panic("append iptables rule");
+            std.log.debug("Handler.start appended iptables rule", .{});
 
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            if (result) |_| {
+            testing.expectError(error.Canceled, result) catch |err| {
+                std.log.err("Handler.recvRequestHeaderCallback result should be error.Canceled, but got {}", .{result});
+            };
+            if (result) |received| {
+                std.log.debug("Handler.recvRequestHeaderCallback received={}", .{received});
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                     return;
@@ -36,12 +47,17 @@ test "real / error / drop server recv" {
 
                 self.sendResponse();
             } else |err| {
-                std.debug.print("Handler.recvRequestHeaderCallback err={s}\n", .{@errorName(err)});
+                if (err != error.Canceled) {
+                    std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                } else {
+                    std.log.debug("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                }
             }
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            if (result) |_| {
+            if (result) |received| {
+                std.log.debug("Handler.recvRequestContentFragmentCallback received={}", .{received});
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                     return;
@@ -49,11 +65,14 @@ test "real / error / drop server recv" {
 
                 self.sendResponse();
             } else |err| {
-                std.debug.print("Handler.recvRequestContentFragmentCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
             }
         }
 
         pub fn sendResponse(self: *Self) void {
+            std.log.debug("Handler.sendResponse start", .{});
+            defer std.log.debug("Handler.sendResponse exit", .{});
+
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -80,10 +99,13 @@ test "real / error / drop server recv" {
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
+            std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
+            defer std.log.debug("Handler.sendFullCallback exit", .{});
+
             if (last_result) |_| {
                 self.conn.finishSend();
             } else |err| {
-                std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
             }
         }
     };
@@ -97,6 +119,8 @@ test "real / error / drop server recv" {
         content_read_so_far: u64 = undefined,
         server: Handler.Server = undefined,
         connect_result: IO.ConnectError!void = undefined,
+        sent_len: usize = undefined,
+        send_result: IO.SendError!usize = undefined,
         response_content_length: ?u64 = null,
         received_content: ?[]const u8 = null,
         test_error: ?anyerror = null,
@@ -105,7 +129,7 @@ test "real / error / drop server recv" {
             self: *Context,
             result: IO.ConnectError!void,
         ) void {
-            std.debug.print("Context.connectCallback result={}\n", .{result});
+            std.log.debug("Context.connectCallback result={}", .{result});
             self.connect_result = result;
             if (result) |_| {
                 var w = self.buffer.writer();
@@ -116,25 +140,28 @@ test "real / error / drop server recv" {
                     http.Version.http1_1.toText(),
                 }) catch unreachable;
                 std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
+                self.sent_len = self.buffer.readableSlice(0).len;
                 self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
+                std.log.debug("Context.connectCallback after sendFull", .{});
             } else |err| {
-                std.debug.print("Context.connectCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Context.connectCallback err={s}", .{@errorName(err)});
                 self.exitTest();
-                std.debug.print("Context.connectCallback exit\n", .{});
+                std.log.debug("Context.connectCallback exit", .{});
             }
         }
         fn sendFullCallback(
             self: *Context,
             result: IO.SendError!usize,
         ) void {
+            self.send_result = result;
             if (result) |sent| {
-                std.debug.print("Context.sendFullCallback sent={}\n", .{sent});
+                std.log.debug("Context.sendFullCallback sent={}", .{sent});
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.debug.print("Context.sendFullCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Context.sendFullCallback err={s}", .{@errorName(err)});
                 self.exitTest();
-                std.debug.print("Context.sendFullCallback exit\n", .{});
+                std.log.debug("Context.sendFullCallback exit", .{});
             }
         }
 
@@ -154,7 +181,10 @@ test "real / error / drop server recv" {
 
             var self: Context = .{
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-                .server = try Handler.Server.init(allocator, &io, address, .{}),
+                .server = try Handler.Server.init(allocator, &io, address, .{
+                    .recv_timeout_ns = time.ns_per_s,
+                    .send_timeout_ns = time.ns_per_s,
+                }),
             };
             defer self.buffer.deinit();
             defer self.server.deinit();
@@ -165,11 +195,11 @@ test "real / error / drop server recv" {
                 .send_timeout_ns = 100 * time.ns_per_ms,
             });
             defer self.client.deinit();
-            std.debug.print("server=0x{x}, completion=0x{x}\n", .{
+            std.log.debug("server=0x{x}, completion=0x{x}", .{
                 @ptrToInt(&self.server),
                 @ptrToInt(&self.server.completion),
             });
-            std.debug.print("client=0x{x}, main_completion=0x{x}, linked_completion=0x{x}\n", .{
+            std.log.debug("client=0x{x}, main_completion=0x{x}, linked_completion=0x{x}", .{
                 @ptrToInt(&self.client),
                 @ptrToInt(&self.client.completion.linked_completion.main_completion),
                 @ptrToInt(&self.client.completion.linked_completion.linked_completion),
@@ -182,8 +212,12 @@ test "real / error / drop server recv" {
                 try io.tick();
             }
 
-            std.debug.print("after io.tick loop\n", .{});
-            try testing.expectError(error.Canceled, self.connect_result);
+            std.log.debug("after io.tick loop", .{});
+            if (self.connect_result) |_| {} else |err| {
+                std.debug.print("connect_result should be void, but got error: {s}\n", .{@errorName(err)});
+                return error.TestExpectedError;
+            }
+            try testing.expectEqual(@as(IO.SendError!usize, self.sent_len), self.send_result);
         }
     }.runTest();
 }
