@@ -14,6 +14,8 @@ const StatusCode = @import("status_code.zig").StatusCode;
 const Version = @import("version.zig").Version;
 const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
+const http_log = std.log.scoped(.http);
+
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 
@@ -200,7 +202,7 @@ pub fn Server(comptime Handler: type) type {
                     .request_header_buf = request_header_buf,
                     .send_buf = send_buf,
                 };
-                std.debug.print("Conn main_completion=0x{x}, linked_completion=0x{x}\n", .{
+                http_log.debug("Conn main_completion=0x{x}, linked_completion=0x{x}", .{
                     @ptrToInt(&self.completion.linked_completion.main_completion),
                     @ptrToInt(&self.completion.linked_completion.linked_completion),
                 });
@@ -209,7 +211,7 @@ pub fn Server(comptime Handler: type) type {
 
             fn deinit(self: *Conn) !void {
                 self.server.removeConnId(self.conn_id);
-                std.debug.print("Conn.deinit after removeConnId server.done={}\n", .{self.server.done});
+                http_log.debug("Conn.deinit after removeConnId server.done={}", .{self.server.done});
                 self.server.allocator.free(self.send_buf);
                 if (self.request_content_fragment_buf) |buf| {
                     self.server.allocator.free(buf);
@@ -220,12 +222,12 @@ pub fn Server(comptime Handler: type) type {
 
             fn close(self: *Conn) void {
                 os.closeSocket(self.socket);
-                // std.debug.print("Conn.Close not calling deinit\n", .{});
-                std.debug.print("Conn.Close before calling deinit\n", .{});
+                // http_log.debug("Conn.Close not calling deinit", .{});
+                http_log.debug("Conn.Close before calling deinit", .{});
                 if (self.deinit()) |_| {} else |err| {
-                    std.debug.print("Conn deinit err={s}\n", .{@errorName(err)});
+                    http_log.debug("Conn deinit err={s}", .{@errorName(err)});
                 }
-                std.debug.print("Conn.Close after calling deinit\n", .{});
+                http_log.debug("Conn.Close after calling deinit", .{});
             }
 
             fn start(self: *Conn) void {
@@ -253,8 +255,8 @@ pub fn Server(comptime Handler: type) type {
 
                 self.processing = true;
                 self.request_scanner = RecvRequestScanner{};
-                std.debug.print("Conn.recvRequestHeader main_completion=0x{x}\n", .{@ptrToInt(&self.completion.linked_completion.main_completion)});
-                std.debug.print("Conn.recvRequestHeader linked_completion=0x{x}\n", .{@ptrToInt(&self.completion.linked_completion.linked_completion)});
+                http_log.debug("Conn.recvRequestHeader main_completion=0x{x}", .{@ptrToInt(&self.completion.linked_completion.main_completion)});
+                http_log.debug("Conn.recvRequestHeader linked_completion=0x{x}", .{@ptrToInt(&self.completion.linked_completion.linked_completion)});
                 self.server.io.recvWithTimeout(
                     *Conn,
                     self,
@@ -271,9 +273,9 @@ pub fn Server(comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
-                std.debug.print("Conn.recvRequestHeaderCallback result={}\n", .{result});
-                std.debug.print("Conn.recvRequestHeaderCallback main_completion=0x{x}\n", .{@ptrToInt(&linked_completion.main_completion)});
-                std.debug.print("Conn.recvRequestHeaderCallback linked_completion=0x{x}\n", .{@ptrToInt(&linked_completion.linked_completion)});
+                http_log.debug("Conn.recvRequestHeaderCallback result={}", .{result});
+                http_log.debug("Conn.recvRequestHeaderCallback main_completion=0x{x}", .{@ptrToInt(&linked_completion.main_completion)});
+                http_log.debug("Conn.recvRequestHeaderCallback linked_completion=0x{x}", .{@ptrToInt(&linked_completion.linked_completion)});
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
@@ -303,7 +305,7 @@ pub fn Server(comptime Handler: type) type {
                                     return;
                                 }
                                 self.request_content_length = if (req.headers.getContentLength()) |len| len else |err| {
-                                    std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
+                                    http_log.debug("bad request, invalid content-length, err={s}", .{@errorName(err)});
                                     const err_result: RecvRequestHeaderError!usize = err;
                                     comp.callback(&self.handler, &err_result);
                                     self.sendError(.bad_request);
@@ -366,10 +368,10 @@ pub fn Server(comptime Handler: type) type {
                         return;
                     }
                 } else |err| {
-                    std.debug.print("Conn.recvRequestHeaderCallback before calling callback with result={}\n", .{result});
+                    http_log.debug("Conn.recvRequestHeaderCallback before calling callback with result={}", .{result});
                     const err_result: RecvRequestHeaderError!usize = err;
                     comp.callback(&self.handler, &err_result);
-                    std.debug.print("Conn.recvRequestHeaderCallback after calling callback with result={}\n", .{result});
+                    http_log.debug("Conn.recvRequestHeaderCallback after calling callback with result={}", .{result});
                     self.close();
                 }
             }
@@ -478,7 +480,7 @@ pub fn Server(comptime Handler: type) type {
                 result: IO.SendError!usize,
             ) void {
                 if (result) |_| {} else |err| {
-                    std.debug.print("Conn.sendErrorCallback, err={s}\n", .{@errorName(err)});
+                    http_log.debug("Conn.sendErrorCallback, err={s}", .{@errorName(err)});
                 }
                 self.close();
             }
@@ -550,7 +552,7 @@ pub fn Server(comptime Handler: type) type {
                     self.processing = false;
                     self.start();
                 } else |err| {
-                    std.debug.print("send error: {s}\n", .{@errorName(err)});
+                    http_log.debug("send error: {s}", .{@errorName(err)});
                     comp.callback(&self.handler, &result);
                     self.close();
                 }

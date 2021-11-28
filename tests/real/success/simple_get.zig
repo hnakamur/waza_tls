@@ -9,6 +9,7 @@ const IO = @import("tigerbeetle-io").IO;
 const testing = std.testing;
 
 test "real / success / simple get" {
+    testing.log_level = .debug;
     const content = "Hello from http.Server\n";
 
     const Handler = struct {
@@ -18,12 +19,12 @@ test "real / success / simple get" {
         conn: *Server.Conn = undefined,
 
         pub fn start(self: *Self) void {
-            std.debug.print("Handler.start\n", .{});
+            std.log.debug("Handler.start", .{});
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            std.debug.print("Handler.recvRequestHeaderCallback start, result={}\n", .{result});
+            std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -32,12 +33,12 @@ test "real / success / simple get" {
 
                 self.sendResponse();
             } else |err| {
-                std.debug.print("Handler.recvRequestHeaderCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
             }
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            std.debug.print("Handler.recvRequestContentFragmentCallback start, result={}\n", .{result});
+            std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -46,12 +47,12 @@ test "real / success / simple get" {
 
                 self.sendResponse();
             } else |err| {
-                std.debug.print("Handler.recvRequestContentFragmentCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
             }
         }
 
         pub fn sendResponse(self: *Self) void {
-            std.debug.print("Handler.sendResponse start\n", .{});
+            std.log.debug("Handler.sendResponse start", .{});
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -78,11 +79,11 @@ test "real / success / simple get" {
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.debug.print("Handler.sendFullCallback start, last_result={}\n", .{last_result});
+            std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
             if (last_result) |_| {
                 self.conn.finishSend();
             } else |err| {
-                std.debug.print("Handler.sendFullCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
             }
         }
     };
@@ -103,7 +104,7 @@ test "real / success / simple get" {
             self: *Context,
             result: IO.ConnectError!void,
         ) void {
-            std.debug.print("Context.connectCallback start, result={}\n", .{result});
+            std.log.debug("Context.connectCallback start, result={}", .{result});
             if (result) |_| {
                 var w = self.buffer.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
@@ -115,7 +116,7 @@ test "real / success / simple get" {
                 std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
                 self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
             } else |err| {
-                std.debug.print("Connect.connectCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Connect.connectCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
             }
         }
@@ -123,11 +124,11 @@ test "real / success / simple get" {
             self: *Context,
             result: IO.SendError!usize,
         ) void {
-            std.debug.print("Context.sendFullCallback start, result={}\n", .{result});
+            std.log.debug("Context.sendFullCallback start, result={}", .{result});
             if (result) |_| {
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
             } else |err| {
-                std.debug.print("Connect.sendFullCallback err={s}\n", .{@errorName(err)});
+                std.log.err("Connect.sendFullCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
             }
         }
@@ -135,7 +136,7 @@ test "real / success / simple get" {
             self: *Context,
             result: Client.RecvResponseHeaderError!usize,
         ) void {
-            std.debug.print("Context.recvResponseHeaderCallback start, result={}\n", .{result});
+            std.log.debug("Context.recvResponseHeaderCallback start, result={}", .{result});
             if (result) |_| {
                 self.response_content_length = self.client.response_content_length;
                 self.received_content = self.client.response_content_fragment_buf;
@@ -144,11 +145,11 @@ test "real / success / simple get" {
                     return;
                 }
 
-                std.debug.print("Context.recvResponseHeaderCallback before calling self.client.close\n", .{});
+                std.log.debug("Context.recvResponseHeaderCallback before calling self.client.close", .{});
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
+                std.log.err("recvResponseHeaderCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
             }
         }
@@ -156,18 +157,18 @@ test "real / success / simple get" {
             self: *Context,
             result: Client.RecvResponseBodyFragmentError!usize,
         ) void {
-            std.debug.print("Context.recvResponseContentFragmentCallback start, result={}\n", .{result});
+            std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
                 }
 
-                std.debug.print("Context.recvResponseContentFragmentCallback before calling self.client.close\n", .{});
+                std.log.debug("Context.recvResponseContentFragmentCallback before calling self.client.close", .{});
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.debug.print("recvResponseContentFragmentCallback err={s}\n", .{@errorName(err)});
+                std.log.err("recvResponseContentFragmentCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
             }
         }
