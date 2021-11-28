@@ -7,7 +7,6 @@ const http = @import("http");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
-// const iptables = @import("iptables.zig");
 
 test "real / error / client recv timeout" {
     // testing.log_level = .debug;
@@ -22,12 +21,10 @@ test "real / error / client recv timeout" {
         conn: *Server.Conn = undefined,
 
         pub fn start(self: *Self) void {
-            std.log.debug("Handler.start", .{});
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -41,7 +38,6 @@ test "real / error / client recv timeout" {
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -69,7 +65,6 @@ test "real / error / client recv timeout" {
             result: IO.TimeoutError!void,
         ) void {
             if (result) |_| {
-                std.log.debug("timeoutCallback result ok", .{});
                 self.sendResponse();
             } else |err| {
                 std.log.err("Handler.timeoutCallback err={s}", .{@errorName(err)});
@@ -77,7 +72,6 @@ test "real / error / client recv timeout" {
         }
 
         pub fn sendResponse(self: *Self) void {
-            std.log.debug("Handler.sendResponse start", .{});
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -104,7 +98,6 @@ test "real / error / client recv timeout" {
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
             if (last_result) |_| {
                 self.conn.finishSend();
             } else |err| {
@@ -192,11 +185,6 @@ test "real / error / client recv timeout" {
             defer self.client.deinit();
 
             try self.server.start();
-
-            // const dest_port = self.server.bound_address.getPort();
-            // const dest_addr = "127.0.0.1";
-            // try iptables.appendRule(allocator, dest_addr, dest_port, .reject);
-            // defer iptables.deleteRule(allocator, dest_addr, dest_port, .reject) catch @panic("delete iptables rule");
 
             try self.client.connect(self.server.bound_address, connectCallback);
 
