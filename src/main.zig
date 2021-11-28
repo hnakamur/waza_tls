@@ -19,8 +19,6 @@ pub const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
 pub const config = @import("config.zig");
 
-pub const testing = @import("testing.zig");
-
 comptime {
     std.testing.refAllDecls(@This());
 }

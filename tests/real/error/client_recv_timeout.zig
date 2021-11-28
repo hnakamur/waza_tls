@@ -114,7 +114,8 @@ test "real / error / client recv timeout" {
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
         server: Handler.Server = undefined,
         connect_result: IO.ConnectError!void = undefined,
-        send_result: IO.SendError!usize = undefined,
+        send_len: usize = undefined,
+        sent_len: usize = undefined,
         recv_resp_header_result: Client.RecvResponseHeaderError!usize = undefined,
 
         fn connectCallback(
@@ -131,6 +132,7 @@ test "real / error / client recv timeout" {
                     http.Version.http1_1.toText(),
                 }) catch unreachable;
                 std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
+                self.send_len = self.buffer.readableSlice(0).len;
                 self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
             } else |_| {
                 self.exitTest();
@@ -140,7 +142,7 @@ test "real / error / client recv timeout" {
             self: *Context,
             result: IO.SendError!usize,
         ) void {
-            self.send_result = result;
+            self.sent_len = self.client.completion.processed_len;
             if (result) |_| {
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
             } else |_| {
@@ -192,8 +194,8 @@ test "real / error / client recv timeout" {
                 try io.tick();
             }
 
-            try http.testing.expectNoError(self.connect_result);
-            try http.testing.expectNoError(self.send_result);
+            try testing.expectEqual(@as(IO.ConnectError!void, {}), self.connect_result);
+            try testing.expectEqual(self.send_len, self.sent_len);
             try testing.expectError(error.Canceled, self.recv_resp_header_result);
         }
     }.runTest();
