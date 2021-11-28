@@ -6,6 +6,7 @@ const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
 const datetime = @import("datetime");
+const Fields = @import("fields.zig").Fields;
 const RecvRequest = @import("recv_request.zig").RecvRequest;
 const RecvRequestScanner = @import("recv_request.zig").RecvRequestScanner;
 const Method = @import("method.zig").Method;
@@ -159,9 +160,10 @@ pub fn Server(comptime Handler: type) type {
 
         pub const RecvRequestHeaderError = error{
             UnexpectedEof,
+            HeaderTooLong,
             HttpVersionNotSupported,
             OutOfMemory,
-        } || IO.RecvError;
+        } || IO.RecvError || RecvRequestScanner.Error || RecvRequest.Error || Fields.ContentLengthError;
 
         pub const RecvRequestContentFragmentError = error{
             UnexpectedEof,
@@ -198,11 +200,16 @@ pub fn Server(comptime Handler: type) type {
                     .request_header_buf = request_header_buf,
                     .send_buf = send_buf,
                 };
+                std.debug.print("Conn main_completion=0x{x}, linked_completion=0x{x}\n", .{
+                    @ptrToInt(&self.completion.linked_completion.main_completion),
+                    @ptrToInt(&self.completion.linked_completion.linked_completion),
+                });
                 return self;
             }
 
             fn deinit(self: *Conn) !void {
                 self.server.removeConnId(self.conn_id);
+                std.debug.print("Conn.deinit after removeConnId server.done={}\n", .{self.server.done});
                 self.server.allocator.free(self.send_buf);
                 if (self.request_content_fragment_buf) |buf| {
                     self.server.allocator.free(buf);
@@ -213,9 +220,12 @@ pub fn Server(comptime Handler: type) type {
 
             fn close(self: *Conn) void {
                 os.closeSocket(self.socket);
+                // std.debug.print("Conn.Close not calling deinit\n", .{});
+                std.debug.print("Conn.Close before calling deinit\n", .{});
                 if (self.deinit()) |_| {} else |err| {
                     std.debug.print("Conn deinit err={s}\n", .{@errorName(err)});
                 }
+                std.debug.print("Conn.Close after calling deinit\n", .{});
             }
 
             fn start(self: *Conn) void {
@@ -241,7 +251,10 @@ pub fn Server(comptime Handler: type) type {
                     .processed_len = 0,
                 };
 
+                self.processing = true;
                 self.request_scanner = RecvRequestScanner{};
+                std.debug.print("Conn.recvRequestHeader main_completion=0x{x}\n", .{@ptrToInt(&self.completion.linked_completion.main_completion)});
+                std.debug.print("Conn.recvRequestHeader linked_completion=0x{x}\n", .{@ptrToInt(&self.completion.linked_completion.linked_completion)});
                 self.server.io.recvWithTimeout(
                     *Conn,
                     self,
@@ -258,12 +271,19 @@ pub fn Server(comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
+                std.debug.print("Conn.recvRequestHeaderCallback result={}\n", .{result});
+                std.debug.print("Conn.recvRequestHeaderCallback main_completion=0x{x}\n", .{@ptrToInt(&linked_completion.main_completion)});
+                std.debug.print("Conn.recvRequestHeaderCallback linked_completion=0x{x}\n", .{@ptrToInt(&linked_completion.linked_completion)});
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
-                        const err = error.UnexpectedEof;
-                        comp.callback(&self.handler, &result);
-                        self.sendError(.bad_request);
+                        if (self.request_scanner.totalBytesRead() != 0) {
+                            const err_result: RecvRequestHeaderError!usize = error.UnexpectedEof;
+                            comp.callback(&self.handler, &err_result);
+                            self.sendError(.bad_request);
+                        } else {
+                            self.close();
+                        }
                         return;
                     }
 
@@ -277,13 +297,15 @@ pub fn Server(comptime Handler: type) type {
                                 if (req.isKeepAlive()) |keep_alive| {
                                     self.keep_alive = keep_alive;
                                 } else |err| {
-                                    comp.callback(&self.handler, &result);
+                                    const err_result: RecvRequestHeaderError!usize = err;
+                                    comp.callback(&self.handler, &err_result);
                                     self.sendError(.http_version_not_supported);
                                     return;
                                 }
                                 self.request_content_length = if (req.headers.getContentLength()) |len| len else |err| {
                                     std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
-                                    comp.callback(&self.handler, &result);
+                                    const err_result: RecvRequestHeaderError!usize = err;
+                                    comp.callback(&self.handler, &err_result);
                                     self.sendError(.bad_request);
                                     return;
                                 };
@@ -295,7 +317,8 @@ pub fn Server(comptime Handler: type) type {
                                 comp.callback(&self.handler, &result);
                                 if (has_content) self.request_content_fragment_buf = null;
                             } else |err| {
-                                comp.callback(&self.handler, &result);
+                                const err_result: RecvRequestHeaderError!usize = err;
+                                comp.callback(&self.handler, &err_result);
                                 self.sendError(.bad_request);
                                 return;
                             }
@@ -312,13 +335,14 @@ pub fn Server(comptime Handler: type) type {
                                 const max_len = self.server.config.large_request_header_buf_len *
                                     self.server.config.large_request_header_buf_max_count;
                                 if (max_len < new_len) {
-                                    const err = error.HeaderTooLong;
-                                    comp.callback(&self.handler, &result);
+                                    const err_result: RecvRequestHeaderError!usize = error.HeaderTooLong;
+                                    comp.callback(&self.handler, &err_result);
                                     self.sendError(.request_header_fields_too_large);
                                     return;
                                 }
                                 self.request_header_buf = self.server.allocator.realloc(self.request_header_buf, new_len) catch |err| {
-                                    comp.callback(&self.handler, &result);
+                                    const err_result: RecvRequestHeaderError!usize = err;
+                                    comp.callback(&self.handler, &err_result);
                                     self.sendError(.internal_server_error);
                                     return;
                                 };
@@ -336,12 +360,16 @@ pub fn Server(comptime Handler: type) type {
                             }
                         }
                     } else |err| {
-                        comp.callback(&self.handler, &result);
+                        const err_result: RecvRequestHeaderError!usize = err;
+                        comp.callback(&self.handler, &err_result);
                         self.sendError(.bad_request);
                         return;
                     }
                 } else |err| {
-                    comp.callback(&self.handler, &result);
+                    std.debug.print("Conn.recvRequestHeaderCallback before calling callback with result={}\n", .{result});
+                    const err_result: RecvRequestHeaderError!usize = err;
+                    comp.callback(&self.handler, &err_result);
+                    std.debug.print("Conn.recvRequestHeaderCallback after calling callback with result={}\n", .{result});
                     self.close();
                 }
             }

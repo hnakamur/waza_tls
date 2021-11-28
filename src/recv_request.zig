@@ -9,7 +9,7 @@ const config = @import("config.zig");
 
 /// A receiving request.
 pub const RecvRequest = struct {
-    const Error = error{
+    pub const Error = error{
         BadRequest,
         UriTooLong,
     };
@@ -52,7 +52,7 @@ pub const RecvRequest = struct {
 };
 
 pub const RecvRequestScanner = struct {
-    const Error = RequestLineScanner.Error || FieldsScanner.Error;
+    pub const Error = RequestLineScanner.Error || FieldsScanner.Error;
 
     request_line: RequestLineScanner = RequestLineScanner{},
     headers: FieldsScanner = FieldsScanner{},

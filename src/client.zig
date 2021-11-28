@@ -96,6 +96,10 @@ pub fn Client(comptime Context: type) type {
                     }
                 }.wrapper,
             };
+            std.debug.print("Client.connect main_completion=0x{x}, linked_completion=0x{x}\n", .{
+                @ptrToInt(&self.completion.linked_completion.main_completion),
+                @ptrToInt(&self.completion.linked_completion.linked_completion),
+            });
             self.io.connectWithTimeout(
                 *Self,
                 self,
@@ -111,10 +115,13 @@ pub fn Client(comptime Context: type) type {
             linked_completion: *IO.LinkedCompletion,
             result: IO.ConnectError!void,
         ) void {
+            std.debug.print("Client.connectCallback result={}\n", .{result});
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             comp.callback(self.context, &result);
             if (result) |_| {} else |err| {
+                std.debug.print("Client.connectCallback before calling close, err={s}\n", .{@errorName(err)});
                 self.close();
+                std.debug.print("Client.connectCallback after calling close\n", .{});
             }
         }
 
@@ -175,7 +182,9 @@ pub fn Client(comptime Context: type) type {
                 comp.callback(self.context, &result);
             } else |err| {
                 comp.callback(self.context, &result);
+                std.debug.print("Client.sendCallback before calling close, err={s}\n", .{@errorName(err)});
                 self.close();
+                std.debug.print("Client.sendCallback after calling close, err={s}\n", .{@errorName(err)});
             }
         }
 
@@ -227,6 +236,7 @@ pub fn Client(comptime Context: type) type {
                 if (received == 0) {
                     const err = error.UnexpectedEof;
                     comp.callback(self.context, &err);
+                    std.debug.print("Client.recvResponseHeaderCallback before calling close#1\n", .{});
                     self.close();
                     return;
                 }
@@ -242,6 +252,7 @@ pub fn Client(comptime Context: type) type {
                             self.response_content_length = if (self.response.headers.getContentLength()) |len| len else |err| {
                                 std.debug.print("bad response, invalid content-length, err={s}\n", .{@errorName(err)});
                                 comp.callback(self.context, &err);
+                                std.debug.print("Client.recvResponseHeaderCallback before calling close#2\n", .{});
                                 self.close();
                                 return;
                             };
@@ -254,6 +265,7 @@ pub fn Client(comptime Context: type) type {
                             if (has_content) self.response_content_fragment_buf = null;
                         } else |err| {
                             comp.callback(self.context, &result);
+                            std.debug.print("Client.recvResponseHeaderCallback before calling close#3\n", .{});
                             self.close();
                             return;
                         }
@@ -263,11 +275,13 @@ pub fn Client(comptime Context: type) type {
                             if (self.config.response_header_buf_max_len < new_len) {
                                 const err = error.HeaderTooLong;
                                 comp.callback(self.context, &result);
+                                std.debug.print("Client.recvResponseHeaderCallback before calling close#4\n", .{});
                                 self.close();
                                 return;
                             }
                             self.response_header_buf = self.allocator.realloc(self.response_header_buf, new_len) catch |err| {
                                 comp.callback(self.context, &result);
+                                std.debug.print("Client.recvResponseHeaderCallback before calling close#5\n", .{});
                                 self.close();
                                 return;
                             };
@@ -286,12 +300,14 @@ pub fn Client(comptime Context: type) type {
                     }
                 } else |err| {
                     comp.callback(self.context, &result);
+                    std.debug.print("Client.recvResponseHeaderCallback before calling close#6\n", .{});
                     self.close();
                     return;
                 }
             } else |err| {
                 std.debug.print("Client.recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
                 comp.callback(self.context, &result);
+                std.debug.print("Client.recvResponseHeaderCallback before calling close#7\n", .{});
                 self.close();
             }
         }
@@ -331,6 +347,7 @@ pub fn Client(comptime Context: type) type {
                     self.response_content_fragment_buf = buf;
                 } else |err| {
                     self.completion.callback(self.context, &err);
+                    std.debug.print("Client.recvResponseContentFragment before calling close#1\n", .{});
                     self.close();
                 }
             }
@@ -360,6 +377,7 @@ pub fn Client(comptime Context: type) type {
                         const err = error.UnexpectedEof;
                         comp.callback(self.context, &err);
                     }
+                    std.debug.print("Client.recvResponseContentFragmentCallback before calling close#1\n", .{});
                     self.close();
                     return;
                 }
@@ -368,6 +386,7 @@ pub fn Client(comptime Context: type) type {
                 comp.callback(self.context, &result);
             } else |err| {
                 comp.callback(self.context, &result);
+                std.debug.print("Client.recvResponseContentFragmentCallback before calling close#2\n", .{});
                 self.close();
             }
         }
@@ -375,6 +394,7 @@ pub fn Client(comptime Context: type) type {
         pub fn close(self: *Self) void {
             os.closeSocket(self.socket);
             self.done = true;
+            std.debug.print("Client.close exit.\n", .{});
         }
     };
 }

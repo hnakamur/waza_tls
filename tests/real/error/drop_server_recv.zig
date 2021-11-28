@@ -7,8 +7,11 @@ const http = @import("http");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
+const iptables = @import("iptables.zig");
 
-test "real / success / simple get" {
+test "real / error / drop server recv" {
+    const dest_addr = "127.0.0.1";
+    const dest_port = 3131;
     const content = "Hello from http.Server\n";
 
     const Handler = struct {
@@ -18,12 +21,13 @@ test "real / success / simple get" {
         conn: *Server.Conn = undefined,
 
         pub fn start(self: *Self) void {
-            std.debug.print("Handler.start\n", .{});
+            const allocator = testing.allocator;
+            iptables.appendRule(allocator, dest_addr, dest_port, .drop) catch @panic("append iptables rule");
+
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            std.debug.print("Handler.recvRequestHeaderCallback start, result={}\n", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -37,7 +41,6 @@ test "real / success / simple get" {
         }
 
         pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            std.debug.print("Handler.recvRequestContentFragmentCallback start, result={}\n", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -51,7 +54,6 @@ test "real / success / simple get" {
         }
 
         pub fn sendResponse(self: *Self) void {
-            std.debug.print("Handler.sendResponse start\n", .{});
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -78,7 +80,6 @@ test "real / success / simple get" {
         }
 
         fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.debug.print("Handler.sendFullCallback start, last_result={}\n", .{last_result});
             if (last_result) |_| {
                 self.conn.finishSend();
             } else |err| {
@@ -95,6 +96,7 @@ test "real / success / simple get" {
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
         content_read_so_far: u64 = undefined,
         server: Handler.Server = undefined,
+        connect_result: IO.ConnectError!void = undefined,
         response_content_length: ?u64 = null,
         received_content: ?[]const u8 = null,
         test_error: ?anyerror = null,
@@ -103,7 +105,8 @@ test "real / success / simple get" {
             self: *Context,
             result: IO.ConnectError!void,
         ) void {
-            std.debug.print("Context.connectCallback start, result={}\n", .{result});
+            std.debug.print("Context.connectCallback result={}\n", .{result});
+            self.connect_result = result;
             if (result) |_| {
                 var w = self.buffer.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
@@ -115,69 +118,27 @@ test "real / success / simple get" {
                 std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
                 self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
             } else |err| {
-                std.debug.print("Connect.connectCallback err={s}\n", .{@errorName(err)});
-                self.exitTestWithError(err);
+                std.debug.print("Context.connectCallback err={s}\n", .{@errorName(err)});
+                self.exitTest();
+                std.debug.print("Context.connectCallback exit\n", .{});
             }
         }
         fn sendFullCallback(
             self: *Context,
             result: IO.SendError!usize,
         ) void {
-            std.debug.print("Context.sendFullCallback start, result={}\n", .{result});
-            if (result) |_| {
-                self.client.recvResponseHeader(recvResponseHeaderCallback);
-            } else |err| {
-                std.debug.print("Connect.sendFullCallback err={s}\n", .{@errorName(err)});
-                self.exitTestWithError(err);
-            }
-        }
-        fn recvResponseHeaderCallback(
-            self: *Context,
-            result: Client.RecvResponseHeaderError!usize,
-        ) void {
-            std.debug.print("Context.recvResponseHeaderCallback start, result={}\n", .{result});
-            if (result) |_| {
-                self.response_content_length = self.client.response_content_length;
-                self.received_content = self.client.response_content_fragment_buf;
-                if (!self.client.fullyReadResponseContent()) {
-                    self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
-                    return;
-                }
-
-                std.debug.print("Context.recvResponseHeaderCallback before calling self.client.close\n", .{});
+            if (result) |sent| {
+                std.debug.print("Context.sendFullCallback sent={}\n", .{sent});
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.debug.print("recvResponseHeaderCallback err={s}\n", .{@errorName(err)});
-                self.exitTestWithError(err);
-            }
-        }
-        fn recvResponseContentFragmentCallback(
-            self: *Context,
-            result: Client.RecvResponseBodyFragmentError!usize,
-        ) void {
-            std.debug.print("Context.recvResponseContentFragmentCallback start, result={}\n", .{result});
-            if (result) |_| {
-                if (!self.client.fullyReadResponseContent()) {
-                    self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
-                    return;
-                }
-
-                std.debug.print("Context.recvResponseContentFragmentCallback before calling self.client.close\n", .{});
-                self.client.close();
+                std.debug.print("Context.sendFullCallback err={s}\n", .{@errorName(err)});
                 self.exitTest();
-            } else |err| {
-                std.debug.print("recvResponseContentFragmentCallback err={s}\n", .{@errorName(err)});
-                self.exitTestWithError(err);
+                std.debug.print("Context.sendFullCallback exit\n", .{});
             }
         }
 
         fn exitTest(self: *Context) void {
-            self.server.requestShutdown();
-        }
-
-        fn exitTestWithError(self: *Context, test_error: anyerror) void {
-            self.test_error = test_error;
             self.server.requestShutdown();
         }
 
@@ -186,8 +147,10 @@ test "real / success / simple get" {
             defer io.deinit();
 
             const allocator = testing.allocator;
-            // Use a random port
-            const address = try std.net.Address.parseIp4("127.0.0.1", 0);
+
+            defer iptables.deleteRule(allocator, dest_addr, dest_port, .drop) catch @panic("delete iptables rule");
+
+            const address = try std.net.Address.parseIp4(dest_addr, dest_port);
 
             var self: Context = .{
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
@@ -196,21 +159,31 @@ test "real / success / simple get" {
             defer self.buffer.deinit();
             defer self.server.deinit();
 
-            self.client = try Client.init(allocator, &io, &self, &.{});
+            self.client = try Client.init(allocator, &io, &self, &.{
+                .connect_timeout_ns = 100 * time.ns_per_ms,
+                .recv_timeout_ns = 100 * time.ns_per_ms,
+                .send_timeout_ns = 100 * time.ns_per_ms,
+            });
             defer self.client.deinit();
+            std.debug.print("server=0x{x}, completion=0x{x}\n", .{
+                @ptrToInt(&self.server),
+                @ptrToInt(&self.server.completion),
+            });
+            std.debug.print("client=0x{x}, main_completion=0x{x}, linked_completion=0x{x}\n", .{
+                @ptrToInt(&self.client),
+                @ptrToInt(&self.client.completion.linked_completion.main_completion),
+                @ptrToInt(&self.client.completion.linked_completion.linked_completion),
+            });
 
             try self.server.start();
-            try self.client.connect(self.server.bound_address, connectCallback);
+            try self.client.connect(address, connectCallback);
 
             while (!self.client.done or !self.server.done) {
                 try io.tick();
             }
 
-            if (self.test_error) |err| {
-                return err;
-            }
-            try testing.expectEqual(content.len, self.response_content_length.?);
-            try testing.expectEqualStrings(content, self.received_content.?);
+            std.debug.print("after io.tick loop\n", .{});
+            try testing.expectError(error.Canceled, self.connect_result);
         }
     }.runTest();
 }
