@@ -4,6 +4,8 @@ pub const Version = @import("version.zig").Version;
 pub const Method = @import("method.zig").Method;
 pub const StatusCode = @import("status_code.zig").StatusCode;
 
+pub const FieldLineIterator = @import("fields.zig").FieldLineIterator;
+pub const FieldNameLineIterator = @import("fields.zig").FieldNameLineIterator;
 pub const FieldsEditor = @import("fields_editor.zig").FieldsEditor;
 
 pub const RecvRequest = @import("recv_request.zig").RecvRequest;

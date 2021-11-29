@@ -279,7 +279,7 @@ pub fn Server(comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
-                http_log.debug("Conn.recvRequestHeaderCallback result={}", .{result});
+                http_log.info("Conn.recvRequestHeaderCallback result={}", .{result});
                 http_log.debug("Conn.recvRequestHeaderCallback main_completion=0x{x}", .{@ptrToInt(&linked_completion.main_completion)});
                 http_log.debug("Conn.recvRequestHeaderCallback linked_completion=0x{x}", .{@ptrToInt(&linked_completion.linked_completion)});
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
@@ -299,6 +299,11 @@ pub fn Server(comptime Handler: type) type {
                     comp.processed_len += received;
                     const buf = self.request_header_buf;
                     if (self.request_scanner.scan(buf[old..comp.processed_len])) |done| {
+                        http_log.info("Server.Conn.recvRequestHeaderCallback scan_done={}, processed_len={}, buf.len={}", .{
+                            done,
+                            comp.processed_len,
+                            buf.len,
+                        });
                         if (done) {
                             const total = self.request_scanner.totalBytesRead();
                             if (RecvRequest.init(buf[0..total], &self.request_scanner)) |req| {
@@ -334,7 +339,7 @@ pub fn Server(comptime Handler: type) type {
                                 return;
                             }
                         } else {
-                            if (old + received == buf.len) {
+                            if (comp.processed_len == buf.len) {
                                 const new_len =
                                     if (self.request_header_buf.len == self.server.config.request_header_buf_len)
                                 blk1: {
@@ -345,6 +350,7 @@ pub fn Server(comptime Handler: type) type {
                                 };
                                 const max_len = self.server.config.large_request_header_buf_len *
                                     self.server.config.large_request_header_buf_max_count;
+                                http_log.info("Server.Conn.recvRequestHeaderCallback new_len={}, max_len={}", .{ new_len, max_len });
                                 if (max_len < new_len) {
                                     const err_result: RecvRequestHeaderError!usize = error.HeaderTooLong;
                                     comp.callback(&self.handler, &err_result);
@@ -357,18 +363,22 @@ pub fn Server(comptime Handler: type) type {
                                     self.sendError(.internal_server_error);
                                     return;
                                 };
-
-                                self.server.io.recvWithTimeout(
-                                    *Conn,
-                                    self,
-                                    recvRequestHeaderCallback,
-                                    linked_completion,
-                                    self.socket,
-                                    self.request_header_buf[comp.processed_len..],
-                                    linked_completion.main_completion.operation.recv.flags,
-                                    @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
-                                );
                             }
+
+                            http_log.info("Server.Conn.recvRequestHeaderCallback calling recvWithTimeout processed_len={}, recv_len={}", .{
+                                comp.processed_len,
+                                self.request_header_buf.len - comp.processed_len,
+                            });
+                            self.server.io.recvWithTimeout(
+                                *Conn,
+                                self,
+                                recvRequestHeaderCallback,
+                                linked_completion,
+                                self.socket,
+                                self.request_header_buf[comp.processed_len..],
+                                linked_completion.main_completion.operation.recv.flags,
+                                @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                            );
                         }
                     } else |err| {
                         const err_result: RecvRequestHeaderError!usize = err;
