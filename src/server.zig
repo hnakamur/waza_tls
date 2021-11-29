@@ -202,6 +202,9 @@ pub fn Server(comptime Handler: type) type {
                     .request_header_buf = request_header_buf,
                     .send_buf = send_buf,
                 };
+                if (@hasDecl(Handler, "init")) {
+                    try self.handler.init();
+                }
                 http_log.debug("Conn main_completion=0x{x}, linked_completion=0x{x}", .{
                     @ptrToInt(&self.completion.linked_completion.main_completion),
                     @ptrToInt(&self.completion.linked_completion.linked_completion),
@@ -212,6 +215,9 @@ pub fn Server(comptime Handler: type) type {
             fn deinit(self: *Conn) !void {
                 self.server.removeConnId(self.conn_id);
                 http_log.debug("Conn.deinit after removeConnId server.done={}", .{self.server.done});
+                if (@hasDecl(Handler, "deinit")) {
+                    self.handler.deinit();
+                }
                 self.server.allocator.free(self.send_buf);
                 if (self.request_content_fragment_buf) |buf| {
                     self.server.allocator.free(buf);
@@ -311,6 +317,9 @@ pub fn Server(comptime Handler: type) type {
                                     self.sendError(.bad_request);
                                     return;
                                 };
+                                http_log.info("Server.Conn.recvRequestHeaderCallback request_content_length={}", .{
+                                    self.request_content_length,
+                                });
                                 self.request = req;
                                 const content_fragment_len = comp.processed_len - total;
                                 self.content_len_read_so_far = content_fragment_len;

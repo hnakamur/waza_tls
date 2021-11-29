@@ -257,6 +257,7 @@ pub fn Client(comptime Context: type) type {
                                 self.close();
                                 return;
                             };
+                            http_log.info("Client.recvResponseHeaderCallback response_content_length={}", .{self.response_content_length});
 
                             const content_fragment_len = comp.processed_len - total;
                             self.content_len_read_so_far = content_fragment_len;
