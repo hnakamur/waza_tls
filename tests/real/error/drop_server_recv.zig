@@ -134,7 +134,7 @@ test "real / error / drop server recv" {
             if (result) |_| {
                 var w = self.buffer.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
-                    (http.Method{ .get = undefined }).toText(),
+                    (http.Method{ .get = undefined }).toBytes(),
                     "/",
                     http.Version.http1_1.toBytes(),
                 }) catch unreachable;

@@ -27,7 +27,7 @@ pub const RecvRequest = struct {
         const request_line_len = result.total_bytes_read;
         const headers_len = scanner.headers.total_bytes_read;
 
-        const method = Method.fromText(buf[0..method_len]) catch unreachable;
+        const method = Method.fromBytes(buf[0..method_len]) catch unreachable;
         const uri = buf[result.uri_start_pos .. result.uri_start_pos + result.uri_len];
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
         const version = Version.fromBytes(ver_buf) catch |_| return error.BadRequest;

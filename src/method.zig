@@ -30,7 +30,7 @@ pub const Method = union(MethodType) {
         InvalidInput,
     };
 
-    pub fn toText(self: Method) []const u8 {
+    pub fn toBytes(self: Method) []const u8 {
         return switch (self) {
             .get => "GET",
             .head => "HEAD",
@@ -54,7 +54,7 @@ pub const Method = union(MethodType) {
         return Method{ .custom = value };
     }
 
-    pub fn fromText(value: []const u8) Error!Method {
+    pub fn fromBytes(value: []const u8) Error!Method {
         switch (value.len) {
             3 => {
                 if (std.mem.eql(u8, value, "GET")) return .get;
@@ -83,30 +83,30 @@ pub const Method = union(MethodType) {
 const testing = std.testing;
 
 test "Convert to Text" {
-    try testing.expectEqualStrings((Method{ .get = undefined }).toText(), "GET");
-    try testing.expectEqualStrings((Method{ .head = undefined }).toText(), "HEAD");
-    try testing.expectEqualStrings((Method{ .post = undefined }).toText(), "POST");
-    try testing.expectEqualStrings((Method{ .put = undefined }).toText(), "PUT");
-    try testing.expectEqualStrings((Method{ .delete = undefined }).toText(), "DELETE");
-    try testing.expectEqualStrings((Method{ .options = undefined }).toText(), "OPTIONS");
-    try testing.expectEqualStrings((Method{ .connect = undefined }).toText(), "CONNECT");
-    try testing.expectEqualStrings((Method{ .trace = undefined }).toText(), "TRACE");
-    try testing.expectEqualStrings((Method{ .custom = "PURGE_ALL" }).toText(), "PURGE_ALL");
+    try testing.expectEqualStrings((Method{ .get = undefined }).toBytes(), "GET");
+    try testing.expectEqualStrings((Method{ .head = undefined }).toBytes(), "HEAD");
+    try testing.expectEqualStrings((Method{ .post = undefined }).toBytes(), "POST");
+    try testing.expectEqualStrings((Method{ .put = undefined }).toBytes(), "PUT");
+    try testing.expectEqualStrings((Method{ .delete = undefined }).toBytes(), "DELETE");
+    try testing.expectEqualStrings((Method{ .options = undefined }).toBytes(), "OPTIONS");
+    try testing.expectEqualStrings((Method{ .connect = undefined }).toBytes(), "CONNECT");
+    try testing.expectEqualStrings((Method{ .trace = undefined }).toBytes(), "TRACE");
+    try testing.expectEqualStrings((Method{ .custom = "PURGE_ALL" }).toBytes(), "PURGE_ALL");
 }
 
 test "FromText - Success" {
-    try testing.expectEqual(Method.get, try Method.fromText("GET"));
-    try testing.expectEqual(Method.head, try Method.fromText("HEAD"));
-    try testing.expectEqual(Method.post, try Method.fromText("POST"));
-    try testing.expectEqual(Method.put, try Method.fromText("PUT"));
-    try testing.expectEqual(Method.delete, try Method.fromText("DELETE"));
-    try testing.expectEqual(Method.options, try Method.fromText("OPTIONS"));
-    try testing.expectEqual(Method.connect, try Method.fromText("CONNECT"));
-    try testing.expectEqual(Method.trace, try Method.fromText("TRACE"));
-    try testing.expectEqualStrings("PURGE_ALL", (try Method.fromText("PURGE_ALL")).custom);
+    try testing.expectEqual(Method.get, try Method.fromBytes("GET"));
+    try testing.expectEqual(Method.head, try Method.fromBytes("HEAD"));
+    try testing.expectEqual(Method.post, try Method.fromBytes("POST"));
+    try testing.expectEqual(Method.put, try Method.fromBytes("PUT"));
+    try testing.expectEqual(Method.delete, try Method.fromBytes("DELETE"));
+    try testing.expectEqual(Method.options, try Method.fromBytes("OPTIONS"));
+    try testing.expectEqual(Method.connect, try Method.fromBytes("CONNECT"));
+    try testing.expectEqual(Method.trace, try Method.fromBytes("TRACE"));
+    try testing.expectEqualStrings("PURGE_ALL", (try Method.fromBytes("PURGE_ALL")).custom);
 }
 
 test "FromText - Invalid character" {
-    try testing.expectError(error.InvalidInput, Method.fromText("PURGE\r\nALL"));
-    try testing.expectError(error.InvalidInput, Method.fromText("PURGE ALL"));
+    try testing.expectError(error.InvalidInput, Method.fromBytes("PURGE\r\nALL"));
+    try testing.expectError(error.InvalidInput, Method.fromBytes("PURGE ALL"));
 }

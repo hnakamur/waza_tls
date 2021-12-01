@@ -149,7 +149,7 @@ test "real / success / long content" {
             if (result) |_| {
                 var w = self.header_buf.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
-                    (http.Method{ .get = undefined }).toText(),
+                    (http.Method{ .get = undefined }).toBytes(),
                     "/",
                     http.Version.http1_1.toBytes(),
                 }) catch unreachable;

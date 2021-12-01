@@ -173,7 +173,7 @@ test "real / success / long header" {
                 var fbs = std.io.fixedBufferStream(self.send_header_buf);
                 var w = fbs.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
-                    (http.Method{ .get = undefined }).toText(),
+                    (http.Method{ .get = undefined }).toBytes(),
                     "/",
                     http.Version.http1_1.toBytes(),
                 }) catch unreachable;
