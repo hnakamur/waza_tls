@@ -43,4 +43,10 @@ test "http.Version" {
     try testing.expectEqual(Version.http2, try Version.fromBytes("HTTP/2"));
     try testing.expectEqual(Version.http3, try Version.fromBytes("HTTP/3"));
     try testing.expectError(error.BadVersion, Version.fromBytes("HTTP/1.1 "));
+
+    try testing.expectEqualStrings("HTTP/0.9", Version.http0_9.toBytes());
+    try testing.expectEqualStrings("HTTP/1.0", Version.http1_0.toBytes());
+    try testing.expectEqualStrings("HTTP/1.1", Version.http1_1.toBytes());
+    try testing.expectEqualStrings("HTTP/2", Version.http2.toBytes());
+    try testing.expectEqualStrings("HTTP/3", Version.http3.toBytes());
 }
