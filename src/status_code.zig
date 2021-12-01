@@ -93,7 +93,7 @@ pub const StatusCode = enum(u10) {
         return self.group() != .invalid;
     }
 
-    pub fn fromText(input: []const u8) !StatusCode {
+    pub fn fromBytes(input: []const u8) !StatusCode {
         if (input.len != 3) return error.InvalidInput;
         var v: u10 = 0;
         for (input) |c| {
@@ -202,10 +202,10 @@ test "StatusCode" {
     try testing.expectEqual(@as(u10, 100), StatusCode.@"continue".code());
     try testing.expectEqual(@as(u10, 499), @intToEnum(StatusCode, 499).code());
 
-    try testing.expectEqual(StatusCode.@"continue", try StatusCode.fromText("100"));
-    try testing.expectEqual(StatusCode.network_authentication_required, try StatusCode.fromText("511"));
-    try testing.expectError(error.InvalidInput, StatusCode.fromText("5110"));
-    try testing.expectError(error.InvalidCharacter, StatusCode.fromText("51A"));
+    try testing.expectEqual(StatusCode.@"continue", try StatusCode.fromBytes("100"));
+    try testing.expectEqual(StatusCode.network_authentication_required, try StatusCode.fromBytes("511"));
+    try testing.expectError(error.InvalidInput, StatusCode.fromBytes("5110"));
+    try testing.expectError(error.InvalidCharacter, StatusCode.fromBytes("51A"));
 
     try testing.expectEqualStrings("Continue", StatusCode.@"continue".toText());
     try testing.expectEqualStrings("Switching Protocols", StatusCode.switching_protocols.toText());
@@ -268,15 +268,15 @@ test "StatusCode" {
     try testing.expectEqualStrings("Loop Detected", StatusCode.loop_detected.toText());
     try testing.expectEqualStrings("Not Extended", StatusCode.not_extended.toText());
     try testing.expectEqualStrings("Network Authentication Required", StatusCode.network_authentication_required.toText());
-    try testing.expectEqualStrings("", (try StatusCode.fromText("418")).toText());
+    try testing.expectEqualStrings("", (try StatusCode.fromBytes("418")).toText());
 
     try testing.expectEqual(StatusCode.Group.info, StatusCode.@"continue".group());
     try testing.expectEqual(StatusCode.Group.success, StatusCode.ok.group());
     try testing.expectEqual(StatusCode.Group.redirect, StatusCode.multiple_choices.group());
     try testing.expectEqual(StatusCode.Group.client_error, StatusCode.bad_request.group());
     try testing.expectEqual(StatusCode.Group.server_error, StatusCode.internal_server_error.group());
-    try testing.expectEqual(StatusCode.Group.invalid, (try StatusCode.fromText("600")).group());
+    try testing.expectEqual(StatusCode.Group.invalid, (try StatusCode.fromBytes("600")).group());
 
     try testing.expect(StatusCode.@"continue".isValid());
-    try testing.expect(!(try StatusCode.fromText("600")).isValid());
+    try testing.expect(!(try StatusCode.fromBytes("600")).isValid());
 }

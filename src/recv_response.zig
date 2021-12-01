@@ -27,7 +27,7 @@ pub const RecvResponse = struct {
         const ver_buf = buf[0..result.version_len];
         const version = Version.fromText(ver_buf) catch |_| return error.BadGateway;
         const code_buf = buf[result.status_code_start_pos .. result.status_code_start_pos + result.status_code_len];
-        const status_code = StatusCode.fromText(code_buf) catch |_| return error.BadGateway;
+        const status_code = StatusCode.fromBytes(code_buf) catch |_| return error.BadGateway;
         const reason_phrase = buf[result.reason_phrase_start_pos .. result.reason_phrase_start_pos + result.reason_phrase_len];
         const headers = Fields.init(buf[status_line_len .. status_line_len + headers_len]);
 
