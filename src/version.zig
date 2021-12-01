@@ -7,7 +7,7 @@ pub const Version = enum {
     http2,
     http3,
 
-    pub fn fromText(input: []const u8) !Version {
+    pub fn fromBytes(input: []const u8) !Version {
         if (std.mem.startsWith(u8, input, "HTTP/")) {
             const v: []const u8 = input["HTTP/".len..];
             if (v.len == 1) {
@@ -23,7 +23,7 @@ pub const Version = enum {
         return error.BadVersion;
     }
 
-    pub fn toText(self: Version) []const u8 {
+    pub fn toBytes(self: Version) []const u8 {
         return switch (self) {
             .http0_9 => "HTTP/0.9",
             .http1_0 => "HTTP/1.0",
@@ -37,10 +37,10 @@ pub const Version = enum {
 const testing = std.testing;
 
 test "http.Version" {
-    try testing.expectEqual(Version.http0_9, try Version.fromText("HTTP/0.9"));
-    try testing.expectEqual(Version.http1_0, try Version.fromText("HTTP/1.0"));
-    try testing.expectEqual(Version.http1_1, try Version.fromText("HTTP/1.1"));
-    try testing.expectEqual(Version.http2, try Version.fromText("HTTP/2"));
-    try testing.expectEqual(Version.http3, try Version.fromText("HTTP/3"));
-    try testing.expectError(error.BadVersion, Version.fromText("HTTP/1.1 "));
+    try testing.expectEqual(Version.http0_9, try Version.fromBytes("HTTP/0.9"));
+    try testing.expectEqual(Version.http1_0, try Version.fromBytes("HTTP/1.0"));
+    try testing.expectEqual(Version.http1_1, try Version.fromBytes("HTTP/1.1"));
+    try testing.expectEqual(Version.http2, try Version.fromBytes("HTTP/2"));
+    try testing.expectEqual(Version.http3, try Version.fromBytes("HTTP/3"));
+    try testing.expectError(error.BadVersion, Version.fromBytes("HTTP/1.1 "));
 }

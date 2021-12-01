@@ -79,7 +79,7 @@ test "real / success / long content" {
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                http.Version.http1_1.toText(),
+                http.Version.http1_1.toBytes(),
                 http.StatusCode.ok.code(),
                 http.StatusCode.ok.toText(),
             }) catch unreachable;
@@ -151,8 +151,7 @@ test "real / success / long content" {
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
                     (http.Method{ .get = undefined }).toText(),
                     "/",
-                    // "/" ++ "a" ** 8192,
-                    http.Version.http1_1.toText(),
+                    http.Version.http1_1.toBytes(),
                 }) catch unreachable;
                 std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
                 std.fmt.format(w, "Content-Type: application/octet-stream\r\n", .{}) catch unreachable;

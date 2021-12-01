@@ -25,7 +25,7 @@ pub const RecvResponse = struct {
         const headers_len = scanner.headers.total_bytes_read;
 
         const ver_buf = buf[0..result.version_len];
-        const version = Version.fromText(ver_buf) catch |_| return error.BadGateway;
+        const version = Version.fromBytes(ver_buf) catch |_| return error.BadGateway;
         const code_buf = buf[result.status_code_start_pos .. result.status_code_start_pos + result.status_code_len];
         const status_code = StatusCode.fromBytes(code_buf) catch |_| return error.BadGateway;
         const reason_phrase = buf[result.reason_phrase_start_pos .. result.reason_phrase_start_pos + result.reason_phrase_len];
@@ -90,7 +90,7 @@ const StatusLineScanner = struct {
         reason_phrase_len: usize = 0,
     };
 
-    const version_max_len: usize = Version.http1_1.toText().len;
+    const version_max_len: usize = Version.http1_1.toBytes().len;
     const status_code_expected_len: usize = 3;
     const reason_phrase_max_len: usize = config.reason_phrase_max_len;
 

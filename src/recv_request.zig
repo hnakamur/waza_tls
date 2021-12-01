@@ -30,7 +30,7 @@ pub const RecvRequest = struct {
         const method = Method.fromText(buf[0..method_len]) catch unreachable;
         const uri = buf[result.uri_start_pos .. result.uri_start_pos + result.uri_len];
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
-        const version = Version.fromText(ver_buf) catch |_| return error.BadRequest;
+        const version = Version.fromBytes(ver_buf) catch |_| return error.BadRequest;
         const headers = Fields.init(buf[request_line_len .. request_line_len + headers_len]);
         // TODO: validate headers
 
@@ -101,7 +101,7 @@ const RequestLineScanner = struct {
         version_len: usize = 0,
     };
 
-    const version_max_len: usize = Version.http1_1.toText().len;
+    const version_max_len: usize = Version.http1_1.toBytes().len;
 
     method_max_len: usize = config.method_max_len,
     uri_max_len: usize = config.uri_max_len,
@@ -198,7 +198,7 @@ test "RecvRequest - GET method" {
     var req = try RecvRequest.init(input, &scanner);
     try testing.expectEqual(Method{ .get = undefined }, req.method);
     try testing.expectEqualStrings(uri, req.uri);
-    try testing.expectEqual(try Version.fromText(version), req.version);
+    try testing.expectEqual(try Version.fromBytes(version), req.version);
     try testing.expectEqualStrings(headers, req.headers.fields);
 }
 
@@ -220,7 +220,7 @@ test "RecvRequest - custom method" {
         else => unreachable,
     }
     try testing.expectEqualStrings(uri, req.uri);
-    try testing.expectEqual(try Version.fromText(version), req.version);
+    try testing.expectEqual(try Version.fromBytes(version), req.version);
     try testing.expectEqualStrings(headers, req.headers.fields);
 }
 

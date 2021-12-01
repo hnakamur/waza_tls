@@ -472,7 +472,7 @@ pub fn Server(comptime Handler: type) type {
                 var fbs = std.io.fixedBufferStream(self.send_buf);
                 var w = fbs.writer();
                 std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                    Version.http1_1.toText(),
+                    Version.http1_1.toBytes(),
                     status_code.code(),
                     status_code.toText(),
                 }) catch unreachable;
