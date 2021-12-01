@@ -316,6 +316,7 @@ pub fn Server(comptime Handler: type) type {
                         if (done) {
                             const total = self.request_scanner.totalBytesRead();
                             if (RecvRequest.init(buf[0..total], &self.request_scanner)) |req| {
+                                http_log.info("Server.Conn.recvRequestHeaderCallback RecvRequest.init ok", .{});
                                 if (req.isKeepAlive()) |keep_alive| {
                                     self.keep_alive = keep_alive;
                                 } else |err| {
@@ -342,6 +343,7 @@ pub fn Server(comptime Handler: type) type {
                                 comp.callback(&self.handler, &result);
                                 if (has_content) self.request_content_fragment_buf = null;
                             } else |err| {
+                                http_log.info("Server.Conn.recvRequestHeaderCallback RecvRequest.init err={s}", .{@errorName(err)});
                                 const err_result: RecvRequestHeaderError!usize = err;
                                 comp.callback(&self.handler, &err_result);
                                 self.sendError(.bad_request);
@@ -390,6 +392,7 @@ pub fn Server(comptime Handler: type) type {
                             );
                         }
                     } else |err| {
+                        http_log.info("Server.Conn.recvRequestHeaderCallback scan err={s}", .{@errorName(err)});
                         const err_result: RecvRequestHeaderError!usize = err;
                         comp.callback(&self.handler, &err_result);
                         const status_code: StatusCode = switch (err) {
