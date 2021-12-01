@@ -25,6 +25,8 @@ pub fn Server(comptime Handler: type) type {
         const Config = struct {
             recv_timeout_ns: u63 = 5 * time.ns_per_s,
             send_timeout_ns: u63 = 5 * time.ns_per_s,
+            method_max_len: usize = 32,
+            uri_max_len: usize = 8192,
             request_header_buf_len: usize = 1024,
             large_request_header_buf_len: usize = 8192,
             large_request_header_buf_max_count: usize = 4,
@@ -34,6 +36,8 @@ pub fn Server(comptime Handler: type) type {
             fn validate(self: Config) !void {
                 assert(self.recv_timeout_ns > 0);
                 assert(self.send_timeout_ns > 0);
+                assert(self.method_max_len > 0);
+                assert(self.uri_max_len > 0);
                 assert(self.request_header_buf_len > 0);
                 assert(self.large_request_header_buf_len > self.request_header_buf_len);
                 assert(self.large_request_header_buf_max_count > 0);
@@ -260,7 +264,12 @@ pub fn Server(comptime Handler: type) type {
                 };
 
                 self.processing = true;
-                self.request_scanner = RecvRequestScanner{};
+                self.request_scanner = RecvRequestScanner{
+                    .request_line = .{
+                        .method_max_len = self.server.config.method_max_len,
+                        .uri_max_len = self.server.config.uri_max_len,
+                    },
+                };
                 http_log.debug("Conn.recvRequestHeader main_completion=0x{x}", .{@ptrToInt(&self.completion.linked_completion.main_completion)});
                 http_log.debug("Conn.recvRequestHeader linked_completion=0x{x}", .{@ptrToInt(&self.completion.linked_completion.linked_completion)});
                 self.server.io.recvWithTimeout(
@@ -383,7 +392,12 @@ pub fn Server(comptime Handler: type) type {
                     } else |err| {
                         const err_result: RecvRequestHeaderError!usize = err;
                         comp.callback(&self.handler, &err_result);
-                        self.sendError(.bad_request);
+                        const status_code: StatusCode = switch (err) {
+                            error.UriTooLong => .uri_too_long,
+                            error.VersionNotSupported => .http_version_not_supported,
+                            else => .bad_request,
+                        };
+                        self.sendError(status_code);
                         return;
                     }
                 } else |_| {

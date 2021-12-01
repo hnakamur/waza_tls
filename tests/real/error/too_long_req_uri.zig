@@ -11,10 +11,8 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "real / error / too long req header" {
+test "real / error / too long req uri" {
     // testing.log_level = .info;
-
-    const long_header_name = "X-Long";
 
     const Handler = struct {
         const Self = @This();
@@ -37,8 +35,8 @@ test "real / error / too long req header" {
 
                 self.sendResponse();
             } else |err| {
-                if (err != error.HeaderTooLong) {
-                    std.log.err("Handler.recvRequestHeaderCallback should get error.HeaderTooLong, found={s}", .{@errorName(err)});
+                if (err != error.UriTooLong) {
+                    std.log.err("Handler.recvRequestHeaderCallback should get error.UriTooLong, found={s}", .{@errorName(err)});
                 }
             }
         }
@@ -107,15 +105,13 @@ test "real / error / too long req header" {
             if (result) |_| {
                 var fbs = std.io.fixedBufferStream(self.send_header_buf);
                 var w = fbs.writer();
-                std.fmt.format(w, "{s} {s} {s}\r\n", .{
+                std.fmt.format(w, "{s} {s}{s} {s}\r\n", .{
                     (http.Method{ .get = undefined }).toBytes(),
                     "/",
+                    &[_]u8{'a'} ** 8193,
                     http.Version.http1_1.toBytes(),
                 }) catch unreachable;
-                std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
-                std.fmt.format(w, "{s}: ", .{long_header_name}) catch unreachable;
-                std.mem.set(u8, self.send_header_buf[fbs.pos..], 'a');
-                self.client.sendFull(self.send_header_buf, sendHeaderCallback);
+                self.client.sendFull(fbs.getWritten(), sendHeaderCallback);
             } else |err| {
                 std.log.err("Context.connectCallback err={s}", .{@errorName(err)});
                 self.exitTest();
@@ -219,7 +215,7 @@ test "real / error / too long req header" {
             }
 
             try testing.expectEqual(
-                http.StatusCode.request_header_fields_too_large,
+                http.StatusCode.uri_too_long,
                 self.client.response.status_code,
             );
         }

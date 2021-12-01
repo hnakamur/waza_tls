@@ -103,8 +103,8 @@ const RequestLineScanner = struct {
 
     const version_max_len: usize = Version.http1_1.toBytes().len;
 
-    method_max_len: usize = config.method_max_len,
-    uri_max_len: usize = config.uri_max_len,
+    method_max_len: usize = 32,
+    uri_max_len: usize = 8192,
     state: State = .on_method,
     result: Result = Result{},
 
