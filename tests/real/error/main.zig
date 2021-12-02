@@ -15,6 +15,7 @@ const http2_unsupported = @import("http2_unsupported.zig");
 const too_long_req_hdr = @import("too_long_req_hdr.zig");
 const too_long_req_method = @import("too_long_req_method.zig");
 const too_long_req_uri = @import("too_long_req_uri.zig");
+const too_long_resp_hdr = @import("too_long_resp_hdr.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
