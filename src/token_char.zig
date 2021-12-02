@@ -54,10 +54,6 @@ fn _isVisibleChar(c: u8) bool {
     return c > '\x20' and c < '\x7f';
 }
 
-fn _isObsTextChar(c: u8) bool {
-    return c >= '\x80';
-}
-
 const testing = std.testing;
 
 test "isDelimChar" {
