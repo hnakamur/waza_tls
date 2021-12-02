@@ -12,6 +12,7 @@ const bad_resp_status = @import("bad_resp_status.zig");
 const drop_server_recv = @import("drop_server_recv.zig");
 const http09_unsupported = @import("http09_unsupported.zig");
 const http2_unsupported = @import("http2_unsupported.zig");
+const resp_content_eof = @import("resp_content_eof.zig");
 const resp_hdr_eof = @import("resp_hdr_eof.zig");
 const too_long_req_hdr = @import("too_long_req_hdr.zig");
 const too_long_req_method = @import("too_long_req_method.zig");

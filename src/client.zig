@@ -376,12 +376,8 @@ pub fn Client(comptime Context: type) type {
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
                 if (received == 0) {
-                    if (self.fullyReadResponseContent()) {
-                        comp.callback(self.context, &result);
-                    } else {
-                        const err_result: RecvResponseContentFragmentError!usize = error.UnexpectedEof;
-                        comp.callback(self.context, &err_result);
-                    }
+                    const err_result: RecvResponseContentFragmentError!usize = error.UnexpectedEof;
+                    comp.callback(self.context, &err_result);
                     http_log.debug("Client.recvResponseContentFragmentCallback before calling close#1", .{});
                     self.close();
                     return;
