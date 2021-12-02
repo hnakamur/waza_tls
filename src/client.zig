@@ -194,7 +194,7 @@ pub fn Client(comptime Context: type) type {
             HeaderTooLong,
             BadGateway,
             OutOfMemory,
-        } || IO.RecvError || Fields.ContentLengthError ;
+        } || IO.RecvError || Fields.ContentLengthError;
 
         pub fn recvResponseHeader(
             self: *Self,
@@ -232,6 +232,7 @@ pub fn Client(comptime Context: type) type {
             linked_completion: *IO.LinkedCompletion,
             result: IO.RecvError!usize,
         ) void {
+            http_log.debug("Client.recvResponseHeaderCallback result={}", .{result});
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             if (result) |received| {
                 if (received == 0) {

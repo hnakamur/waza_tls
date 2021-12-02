@@ -6,6 +6,8 @@ const Fields = @import("fields.zig").Fields;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 const config = @import("config.zig");
 
+const http_log = std.log.scoped(.http);
+
 /// A receiving response.
 pub const RecvResponse = struct {
     const Error = error{
@@ -55,9 +57,15 @@ pub const RecvResponseScanner = struct {
                 return false;
             }
             const read = self.status_line.result.total_bytes_read - old;
-            return self.headers.scan(chunk[read..]) catch |_| error.BadGateway;
+            return self.headers.scan(chunk[read..]) catch |err| blk: {
+                http_log.notice("RecvResponseScanner.scan err#1={s}", .{@errorName(err)});
+                break :blk error.BadGateway;
+            };
         }
-        return self.headers.scan(chunk) catch |_| error.BadGateway;
+        return self.headers.scan(chunk) catch |err| blk: {
+            http_log.notice("RecvResponseScanner.scan err#2={s}", .{@errorName(err)});
+            break :blk error.BadGateway;
+        };
     }
 
     pub fn totalBytesRead(self: *const RecvResponseScanner) usize {
