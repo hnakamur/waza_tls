@@ -276,8 +276,8 @@ pub fn Client(comptime Context: type) type {
                         if (old + received == buf.len) {
                             const new_len = buf.len + self.config.response_header_buf_ini_len;
                             if (self.config.response_header_buf_max_len < new_len) {
-                                const err = error.HeaderTooLong;
-                                comp.callback(self.context, &result);
+                                const err_result: RecvResponseHeaderError!usize = error.HeaderTooLong;
+                                comp.callback(self.context, &err_result);
                                 http_log.debug("Client.recvResponseHeaderCallback before calling close#4", .{});
                                 self.close();
                                 return;
