@@ -4,6 +4,7 @@ const mem = std.mem;
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
+const Fields = @import("fields.zig").Fields;
 const RecvResponseScanner = @import("recv_response.zig").RecvResponseScanner;
 const RecvResponse = @import("recv_response.zig").RecvResponse;
 const Method = @import("method.zig").Method;
@@ -193,7 +194,7 @@ pub fn Client(comptime Context: type) type {
             HeaderTooLong,
             BadGateway,
             OutOfMemory,
-        } || IO.RecvError;
+        } || IO.RecvError || Fields.ContentLengthError ;
 
         pub fn recvResponseHeader(
             self: *Self,
@@ -251,7 +252,7 @@ pub fn Client(comptime Context: type) type {
                             self.response = resp;
                             self.response_content_length = if (self.response.headers.getContentLength()) |len| len else |err| {
                                 http_log.debug("bad response, invalid content-length, err={s}", .{@errorName(err)});
-                                const err_result: RecvResponseHeaderError!usize = error.UnexpectedEof;
+                                const err_result: RecvResponseHeaderError!usize = err;
                                 comp.callback(self.context, &err_result);
                                 http_log.debug("Client.recvResponseHeaderCallback before calling close#2", .{});
                                 self.close();
