@@ -177,7 +177,7 @@ pub fn Client(comptime Context: type) type {
                         self.socket,
                         buf[comp.processed_len..],
                         linked_completion.main_completion.operation.send.flags,
-                        send_flags,
+                        self.config.send_timeout_ns,
                     );
                     return;
                 }
