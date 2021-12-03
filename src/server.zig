@@ -374,6 +374,9 @@ pub fn Server(comptime Handler: type) type {
                                 self.request_header_buf = self.server.allocator.realloc(self.request_header_buf, new_len) catch |err| {
                                     const err_result: RecvRequestHeaderError!usize = err;
                                     comp.callback(&self.handler, &err_result);
+                                    http_log.info("Server.Conn.recvRequestHeaderCallback sending internal_server_error after realloc err={s}", .{@errorName(err)});
+                                    // TODO: Decide what to do for the case causing error.ConnectionResetByPeer
+                                    // in a client in server_alloc_fail_case1 test.
                                     self.sendError(.internal_server_error);
                                     return;
                                 };
