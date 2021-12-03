@@ -12,7 +12,7 @@ const IO = @import("tigerbeetle-io").IO;
 const testing = std.testing;
 
 test "real / error / req content eof" {
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
 
     const Handler = struct {
         const Self = @This();

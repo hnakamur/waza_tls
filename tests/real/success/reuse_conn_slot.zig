@@ -8,8 +8,8 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "real / success / graceful shutdown" {
-    // testing.log_level = .info;
+test "real / success / reuse conn slot" {
+    // testing.log_level = .debug;
     const content = "Hello from http.Server\n";
 
     const Handler = struct {
@@ -99,6 +99,7 @@ test "real / success / graceful shutdown" {
         response_content_length: ?u64 = null,
         received_content: ?[]const u8 = null,
         test_error: ?anyerror = null,
+        req_count: usize = 0,
 
         fn connectCallback(
             self: *Context,
@@ -126,7 +127,6 @@ test "real / success / graceful shutdown" {
             std.log.debug("Context.sendFullCallback start, result={}", .{result});
             if (result) |_| {
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
-                self.server.requestShutdown();
             } else |err| {
                 std.log.err("Connect.sendFullCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
@@ -147,7 +147,14 @@ test "real / success / graceful shutdown" {
 
                 std.log.debug("Context.recvResponseHeaderCallback before calling self.client.close", .{});
                 self.client.close();
-                self.exitTest();
+                self.req_count += 1;
+                if (self.req_count == 1) {
+                    if (self.client.connect(self.server.bound_address, connectCallback)) |_| {} else |err| {
+                        std.log.err("recvResponseContentFragmentCallback connect err={s}", .{@errorName(err)});
+                    }
+                } else {
+                    self.exitTest();
+                }
             } else |err| {
                 std.log.err("recvResponseHeaderCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
@@ -166,7 +173,14 @@ test "real / success / graceful shutdown" {
 
                 std.log.debug("Context.recvResponseContentFragmentCallback before calling self.client.close", .{});
                 self.client.close();
-                self.exitTest();
+                self.req_count += 1;
+                if (self.req_count == 1) {
+                    if (self.client.connect(self.server.bound_address, connectCallback)) |_| {} else |err| {
+                        std.log.err("recvResponseContentFragmentCallback connect err={s}", .{@errorName(err)});
+                    }
+                } else {
+                    self.exitTest();
+                }
             } else |err| {
                 std.log.err("recvResponseContentFragmentCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
@@ -212,6 +226,7 @@ test "real / success / graceful shutdown" {
             }
             try testing.expectEqual(content.len, self.response_content_length.?);
             try testing.expectEqualStrings(content, self.received_content.?);
+            try testing.expectEqual(@as(usize, 2), self.req_count);
         }
     }.runTest();
 }
