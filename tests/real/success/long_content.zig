@@ -283,7 +283,7 @@ test "real / success / long content" {
             }
 
             try testing.expectEqual(self.send_content_buf.len, self.response_content_length.?);
-            // try testing.expectEqualStrings(self.send_content_buf, self.recv_content_buf.readableSlice(0));
+            try testing.expectEqualStrings(self.send_content_buf, self.recv_content_buf.readableSlice(0));
         }
     }.runTest();
 }
