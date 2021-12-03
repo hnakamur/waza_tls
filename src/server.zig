@@ -467,12 +467,8 @@ pub fn Server(comptime Handler: type) type {
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
-                        if (self.fullyReadRequestContent()) {
-                            comp.callback(&self.handler, &result);
-                        } else {
-                            const err_result: RecvRequestContentFragmentError!usize = error.UnexpectedEof;
-                            comp.callback(&self.handler, &err_result);
-                        }
+                        const err_result: RecvRequestContentFragmentError!usize = error.UnexpectedEof;
+                        comp.callback(&self.handler, &err_result);
                         self.close();
                         return;
                     }
