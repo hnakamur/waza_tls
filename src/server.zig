@@ -387,8 +387,8 @@ pub fn Server(comptime Handler: type) type {
                                 linked_completion,
                                 self.socket,
                                 self.request_header_buf[comp.processed_len..],
-                                linked_completion.main_completion.operation.recv.flags,
-                                @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                                recv_flags,
+                                self.server.config.recv_timeout_ns,
                             );
                         }
                     } else |err| {
@@ -464,6 +464,7 @@ pub fn Server(comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
+                http_log.info("Server.Conn.recvRequestContentFragmentCallback result={}, content_len_read_so_far={}", .{ result, self.content_len_read_so_far });
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
@@ -564,8 +565,8 @@ pub fn Server(comptime Handler: type) type {
                             &self.completion.linked_completion,
                             self.socket,
                             comp.buffer[comp.processed_len..],
-                            linked_completion.main_completion.operation.send.flags,
-                            @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                            send_flags,
+                            self.server.config.send_timeout_ns,
                         );
                         return;
                     }

@@ -169,6 +169,11 @@ pub fn Client(comptime Context: type) type {
                 comp.processed_len += sent;
                 const buf = comp.send_buffer;
                 if (comp.processed_len < buf.len) {
+                    http_log.info("Client.sendCallback, processed_len={} < buf.len={}, timeout_result={}", .{
+                        comp.processed_len,
+                        buf.len,
+                        linked_completion.linked_result,
+                    });
                     self.io.sendWithTimeout(
                         *Self,
                         self,
@@ -299,8 +304,8 @@ pub fn Client(comptime Context: type) type {
                             linked_completion,
                             self.socket,
                             self.response_header_buf[comp.processed_len..],
-                            linked_completion.main_completion.operation.recv.flags,
-                            @intCast(u63, linked_completion.linked_completion.operation.link_timeout.timespec.tv_nsec),
+                            recv_flags,
+                            self.config.recv_timeout_ns,
                         );
                     }
                 } else |err| {
