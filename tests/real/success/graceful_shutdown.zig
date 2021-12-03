@@ -1,8 +1,5 @@
 const std = @import("std");
 const os = std.os;
-const math = std.math;
-const mem = std.mem;
-const rand = std.rand;
 const time = std.time;
 
 const datetime = @import("datetime");
@@ -11,8 +8,9 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "real / error / req content eof" {
-    testing.log_level = .debug;
+test "real / success / graceful shutdown" {
+    testing.log_level = .info;
+    const content = "Hello from http.Server\n";
 
     const Handler = struct {
         const Self = @This();
@@ -26,7 +24,7 @@ test "real / error / req content eof" {
         }
 
         pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            std.log.info("Handler.recvRequestHeaderCallback start, result={}", .{result});
+            std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
                     self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
@@ -49,9 +47,7 @@ test "real / error / req content eof" {
 
                 self.sendResponse();
             } else |err| {
-                if (err != error.UnexpectedEof) {
-                    std.log.err("Handler.recvRequestContentFragmentCallback should get error.UnexpectedEof, found={s}", .{@errorName(err)});
-                }
+                std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
             }
         }
 
@@ -61,8 +57,8 @@ test "real / error / req content eof" {
             var w = fbs.writer();
             std.fmt.format(w, "{s} {d} {s}\r\n", .{
                 http.Version.http1_1.toBytes(),
-                http.StatusCode.no_content.code(),
-                http.StatusCode.no_content.toText(),
+                http.StatusCode.ok.code(),
+                http.StatusCode.ok.toText(),
             }) catch unreachable;
             http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
 
@@ -75,16 +71,19 @@ test "real / error / req content eof" {
                 },
                 else => {},
             }
+            const content_length = content.len;
+            std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
             std.fmt.format(w, "\r\n", .{}) catch unreachable;
-            self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+            std.fmt.format(w, "{s}", .{content}) catch unreachable;
+            self.conn.sendFull(fbs.getWritten(), sendFullCallback);
         }
 
-        fn sendHeaderCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+        fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
+            std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
             if (last_result) |_| {
                 self.conn.finishSend();
             } else |err| {
-                std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
             }
         }
     };
@@ -93,10 +92,13 @@ test "real / error / req content eof" {
         const Context = @This();
         const Client = http.Client(Context);
 
-        server: Handler.Server = undefined,
         client: Client = undefined,
-        allocator: *mem.Allocator = undefined,
-        send_header_buf: []u8 = undefined,
+        buffer: std.fifo.LinearFifo(u8, .Dynamic),
+        content_read_so_far: u64 = undefined,
+        server: Handler.Server = undefined,
+        response_content_length: ?u64 = null,
+        received_content: ?[]const u8 = null,
+        test_error: ?anyerror = null,
 
         fn connectCallback(
             self: *Context,
@@ -104,37 +106,79 @@ test "real / error / req content eof" {
         ) void {
             std.log.debug("Context.connectCallback start, result={}", .{result});
             if (result) |_| {
-                var fbs = std.io.fixedBufferStream(self.send_header_buf);
-                var w = fbs.writer();
+                var w = self.buffer.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
                     (http.Method{ .get = undefined }).toBytes(),
                     "/",
                     http.Version.http1_1.toBytes(),
                 }) catch unreachable;
-                std.fmt.format(w, "Host: {s}\r\n", .{"example.com"}) catch unreachable;
-                std.fmt.format(w, "Content-Length: {d}\r\n", .{100}) catch unreachable;
-                std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                self.client.sendFull(fbs.getWritten(), sendHeaderCallback);
+                std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
+                self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
             } else |err| {
-                std.log.err("Context.connectCallback err={s}", .{@errorName(err)});
-                self.exitTest();
+                std.log.err("Connect.connectCallback err={s}", .{@errorName(err)});
+                self.exitTestWithError(err);
             }
         }
-        fn sendHeaderCallback(
+        fn sendFullCallback(
             self: *Context,
             result: IO.SendError!usize,
         ) void {
-            std.log.info("Context.sendHeaderCallback start, result={}", .{result});
+            std.log.debug("Context.sendFullCallback start, result={}", .{result});
             if (result) |_| {
+                self.client.recvResponseHeader(recvResponseHeaderCallback);
+                self.server.requestShutdown();
+            } else |err| {
+                std.log.err("Connect.sendFullCallback err={s}", .{@errorName(err)});
+                self.exitTestWithError(err);
+            }
+        }
+        fn recvResponseHeaderCallback(
+            self: *Context,
+            result: Client.RecvResponseHeaderError!usize,
+        ) void {
+            std.log.debug("Context.recvResponseHeaderCallback start, result={}", .{result});
+            if (result) |_| {
+                self.response_content_length = self.client.response_content_length;
+                self.received_content = self.client.response_content_fragment_buf;
+                if (!self.client.fullyReadResponseContent()) {
+                    self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
+                    return;
+                }
+
+                std.log.debug("Context.recvResponseHeaderCallback before calling self.client.close", .{});
                 self.client.close();
                 self.exitTest();
             } else |err| {
-                std.log.err("Context.sendFullCallback err={s}", .{@errorName(err)});
+                std.log.err("recvResponseHeaderCallback err={s}", .{@errorName(err)});
+                self.exitTestWithError(err);
+            }
+        }
+        fn recvResponseContentFragmentCallback(
+            self: *Context,
+            result: Client.RecvResponseContentFragmentError!usize,
+        ) void {
+            std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
+            if (result) |_| {
+                if (!self.client.fullyReadResponseContent()) {
+                    self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
+                    return;
+                }
+
+                std.log.debug("Context.recvResponseContentFragmentCallback before calling self.client.close", .{});
+                self.client.close();
                 self.exitTest();
+            } else |err| {
+                std.log.err("recvResponseContentFragmentCallback err={s}", .{@errorName(err)});
+                self.exitTestWithError(err);
             }
         }
 
         fn exitTest(self: *Context) void {
+            self.server.requestShutdown();
+        }
+
+        fn exitTestWithError(self: *Context, test_error: anyerror) void {
+            self.test_error = test_error;
             self.server.requestShutdown();
         }
 
@@ -147,11 +191,10 @@ test "real / error / req content eof" {
             const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{
-                .allocator = allocator,
-                .send_header_buf = try allocator.alloc(u8, 8192 * 4),
+                .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
                 .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
-            defer allocator.free(self.send_header_buf);
+            defer self.buffer.deinit();
             defer self.server.deinit();
 
             self.client = try Client.init(allocator, &io, &self, &.{});
@@ -163,6 +206,12 @@ test "real / error / req content eof" {
             while (!self.client.done or !self.server.done) {
                 try io.tick();
             }
+
+            if (self.test_error) |err| {
+                return err;
+            }
+            try testing.expectEqual(content.len, self.response_content_length.?);
+            try testing.expectEqualStrings(content, self.received_content.?);
         }
     }.runTest();
 }

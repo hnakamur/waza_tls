@@ -129,6 +129,7 @@ pub fn Server(comptime Handler: type) type {
         }
 
         fn removeConnId(self: *Self, conn_id: usize) void {
+            http_log.info("Server.removeConnId conn_id={}", .{conn_id});
             self.connections.items[conn_id] = null;
             if (self.shutdown_requested) {
                 self.setDoneIfNoClient();
@@ -140,7 +141,9 @@ pub fn Server(comptime Handler: type) type {
             for (self.connections.items) |conn, i| {
                 if (conn) |c| {
                     if (!c.processing) {
+                        http_log.info("Server.requestShutdown before calling close for i={}", .{i});
                         c.close();
+                        http_log.info("Server.requestShutdown after calling close for i={}", .{i});
                     }
                 }
             }
@@ -231,8 +234,8 @@ pub fn Server(comptime Handler: type) type {
             }
 
             fn close(self: *Conn) void {
+                http_log.debug("Conn.Close start, conn_id={}", .{self.conn_id});
                 os.closeSocket(self.socket);
-                // http_log.debug("Conn.Close not calling deinit", .{});
                 http_log.debug("Conn.Close before calling deinit", .{});
                 if (self.deinit()) |_| {} else |err| {
                     http_log.debug("Conn deinit err={s}", .{@errorName(err)});
@@ -263,7 +266,6 @@ pub fn Server(comptime Handler: type) type {
                     .processed_len = 0,
                 };
 
-                self.processing = true;
                 self.request_scanner = RecvRequestScanner{
                     .request_line = .{
                         .method_max_len = self.server.config.method_max_len,
@@ -272,6 +274,7 @@ pub fn Server(comptime Handler: type) type {
                 };
                 http_log.debug("Conn.recvRequestHeader main_completion=0x{x}", .{@ptrToInt(&self.completion.linked_completion.main_completion)});
                 http_log.debug("Conn.recvRequestHeader linked_completion=0x{x}", .{@ptrToInt(&self.completion.linked_completion.linked_completion)});
+                self.processing = true;
                 self.server.io.recvWithTimeout(
                     *Conn,
                     self,
@@ -506,15 +509,18 @@ pub fn Server(comptime Handler: type) type {
                     send_flags,
                     self.server.config.send_timeout_ns,
                 );
+                http_log.debug("Conn.sendError after sendWithTimeout, conn_id={}", .{self.conn_id});
             }
             fn sendErrorCallback(
                 self: *Conn,
                 completion: *IO.LinkedCompletion,
                 result: IO.SendError!usize,
             ) void {
+                http_log.debug("Conn.sendErrorCallback, result={}, conn_id={}", .{ result, self.conn_id });
                 if (result) |_| {} else |err| {
                     http_log.debug("Conn.sendErrorCallback, err={s}", .{@errorName(err)});
                 }
+                http_log.debug("Conn.sendErrorCallback, calling close, conn_id={}", .{self.conn_id});
                 self.close();
             }
 
