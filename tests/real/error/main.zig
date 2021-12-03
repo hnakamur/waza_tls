@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const client_recv_timeout = @import("client_recv_timeout.zig");
+const client_send_timeout = @import("client_send_timeout.zig");
 const connection_refused = @import("connection_refused.zig");
 const connection_timedout = @import("connection_timedout.zig");
 
