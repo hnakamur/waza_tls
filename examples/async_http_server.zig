@@ -68,7 +68,7 @@ const ClientHandler = struct {
                     var fbs = std.io.fixedBufferStream(self.send_buf);
                     var w = fbs.writer();
                     try std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                        http.Version.http1_1.toText(),
+                        http.Version.http1_1.toBytes(),
                         http.StatusCode.ok.code(),
                         http.StatusCode.ok.toText(),
                     });

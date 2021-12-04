@@ -47,9 +47,9 @@ const Client = struct {
         var fbs = std.io.fixedBufferStream(self.send_buf);
         var w = fbs.writer();
         std.fmt.format(w, "{s} {s} {s}\r\n", .{
-            (http.Method{ .get = undefined }).toText(),
+            (http.Method{ .get = undefined }).toBytes(),
             "/",
-            http.Version.http1_1.toText(),
+            http.Version.http1_1.toBytes(),
         }) catch unreachable;
         std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
         _ = try self.send(self.sock, fbs.getWritten());
