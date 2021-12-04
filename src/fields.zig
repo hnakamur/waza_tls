@@ -5,6 +5,8 @@ const assert = std.debug.assert;
 const FieldIterator = @import("field_iterator.zig").FieldIterator;
 const isWhiteSpaceChar = @import("token_char.zig").isWhiteSpaceChar;
 
+const http_log = std.log.scoped(.http);
+
 pub const Fields = struct {
     fields: []const u8,
 
@@ -89,7 +91,11 @@ pub const FieldLineIterator = struct {
                     };
                 }
             }
-            @panic("FieldLineIterator must be initialized with valid fields in buf.");
+            // NOTE: panic would be more appropriate, but I don't know how to catch panic in test,
+            // so use return for now.
+            // See https://github.com/ziglang/zig/issues/1356
+            http_log.warn("FieldLineIterator must be initialized with valid fields in buf.", .{});
+            return null;
         }
         assert(self.buf.len == 0 or std.mem.eql(u8, self.buf, crlf));
         self.total_bytes_read += self.buf.len;
@@ -126,7 +132,11 @@ pub const FieldNameLineIterator = struct {
                     }
                 }
             }
-            @panic("FieldNameLineIterator must be initialized with valid fields in buf.");
+            // NOTE: panic would be more appropriate, but I don't know how to catch panic in test,
+            // so use return for now.
+            // See https://github.com/ziglang/zig/issues/1356
+            http_log.warn("FieldNameLineIterator must be initialized with valid fields in buf.", .{});
+            return null;
         }
         assert(self.buf.len == 0 or std.mem.eql(u8, self.buf, crlf));
         return null;
@@ -213,16 +223,21 @@ pub fn parseDecimalDigits(digits: []const u8) DecimalDigitsParseError!u64 {
 
 const testing = std.testing;
 
+test "hasConnectionToken" {
+    const input =
+        "Connection: close\r\n" ++
+        "\r\n";
+
+    var fields = Fields.init(input);
+    try testing.expect(fields.hasConnectionToken("close"));
+}
+
 fn testSimpleCSVIterator(input: []const u8, wants: [][]const u8) !void {
     var it = SimpleCSVIterator.init(input);
     var i: usize = 0;
     while (it.next()) |v| {
         const want = wants[i];
-        if (testing.expectEqualStrings(want, v)) |_| {} else |err| {
-            std.debug.print("input={s}, i={d}\n", .{ input, i });
-            return err;
-        }
-
+        try testing.expectEqualStrings(want, v);
         i += 1;
     }
     try testing.expectEqual(wants.len, i);
@@ -269,9 +284,14 @@ test "SimpleCSVIterator" {
         var wants = [_][]const u8{ "\"123", "456\"", "789" };
         try testSimpleCSVIterator("\"123,456\",789", &wants);
     }
+
+    {
+        var it = SimpleCSVIterator.init(" ");
+        try testing.expectEqual(@as( ?[]const u8, null), it.next());
+    }
 }
 
-test "fieldLineIterator" {
+test "FieldLineIterator" {
     // value may contain optional white spaces.
     const input =
         "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
@@ -329,7 +349,13 @@ test "fieldLineIterator" {
     try testing.expectEqual(input.len, it.totalBytesRead());
 }
 
-test "fieldNameLineIterator" {
+test "FieldLineIterator - bad usage" {
+    const input = "Date:";
+    var it = FieldLineIterator.init(input);
+    try testing.expectEqual(@as(?FieldLine, null), it.next());
+}
+
+test "FieldNameLineIterator" {
     const input =
         "Date:  \tMon, 27 Jul 2009 12:28:53 GMT \r\n" ++
         "Cache-Control: public, s-maxage=60\r\n" ++
@@ -344,17 +370,17 @@ test "fieldNameLineIterator" {
     var it = FieldNameLineIterator.init(input, "cache-control");
     var i: usize = 0;
     while (it.next()) |f| {
-        if (!std.ascii.eqlIgnoreCase(f.name(), "cache-control")) {
-            std.debug.print("field name mismatch, got {s}, should sqlIgnoreCase to {s}", .{
-                f.name(),
-                "cache-control",
-            });
-            return error.TestExpectedError;
-        }
+        try testing.expect(std.ascii.eqlIgnoreCase(f.name(), "cache-control"));
         try testing.expectEqualStrings(values[i], f.value());
         i += 1;
     }
     try testing.expectEqual(values.len, i);
+}
+
+test "FieldNameLineIterator - bad usage" {
+    const input = "Date:";
+    var it = FieldNameLineIterator.init(input, "Date");
+    try testing.expectEqual(@as(?FieldLine, null), it.next());
 }
 
 test "parseDecimalDigits" {
