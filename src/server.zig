@@ -372,9 +372,9 @@ pub fn Server(comptime Handler: type) type {
                                     return;
                                 }
                                 self.request_header_buf = self.server.allocator.realloc(self.request_header_buf, new_len) catch |err| {
+                                    http_log.warn("Server.Conn.recvRequestHeaderCallback sending internal_server_error after realloc err={s}", .{@errorName(err)});
                                     const err_result: RecvRequestHeaderError!usize = err;
                                     comp.callback(&self.handler, &err_result);
-                                    http_log.info("Server.Conn.recvRequestHeaderCallback sending internal_server_error after realloc err={s}", .{@errorName(err)});
                                     // TODO: Decide what to do for the case causing error.ConnectionResetByPeer
                                     // in a client in server_alloc_fail_case1 test.
                                     self.sendError(.internal_server_error);
@@ -447,8 +447,11 @@ pub fn Server(comptime Handler: type) type {
                     if (self.server.allocator.alloc(u8, self.server.config.request_content_fragment_buf_len)) |buf| {
                         self.request_content_fragment_buf = buf;
                     } else |err| {
+                        http_log.warn("Server.Conn.recvRequestContentFragment alloc request_content_fragment_buf err={s}", .{@errorName(err)});
                         const err_result: RecvRequestContentFragmentError!usize = err;
                         self.completion.callback(&self.handler, &err_result);
+                        // TODO: Decide what to do for the case causing error.ConnectionResetByPeer
+                        // in a client in server_alloc_fail_case2 test.
                         self.sendError(.internal_server_error);
                         return;
                     }
