@@ -14,6 +14,7 @@ pub const RecvResponse = struct {
         BadGateway,
     };
 
+    buf: []const u8,
     version: Version,
     status_code: StatusCode,
     reason_phrase: []const u8,
@@ -34,6 +35,7 @@ pub const RecvResponse = struct {
         const headers = Fields.init(buf[status_line_len .. status_line_len + headers_len]);
 
         return RecvResponse{
+            .buf = buf,
             .version = version,
             .status_code = status_code,
             .reason_phrase = reason_phrase,

@@ -16,6 +16,7 @@ pub const RecvResponseScanner = @import("recv_response.zig").RecvResponseScanner
 
 pub const Client = @import("client.zig").Client;
 pub const Server = @import("server.zig").Server;
+pub const Proxy = @import("proxy.zig").Proxy;
 
 pub const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 

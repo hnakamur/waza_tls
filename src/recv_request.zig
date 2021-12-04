@@ -16,6 +16,7 @@ pub const RecvRequest = struct {
         UriTooLong,
     };
 
+    buf: []const u8,
     method: Method,
     uri: []const u8,
     version: Version,
@@ -36,6 +37,7 @@ pub const RecvRequest = struct {
         const headers = Fields.init(buf[request_line_len .. request_line_len + headers_len]);
 
         return RecvRequest{
+            .buf = buf,
             .method = method,
             .uri = uri,
             .version = version,

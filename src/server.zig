@@ -22,7 +22,7 @@ const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else
 pub fn Server(comptime Context: type, comptime Handler: type) type {
     return struct {
         const Self = @This();
-        const Config = struct {
+        pub const Config = struct {
             recv_timeout_ns: u63 = 5 * time.ns_per_s,
             send_timeout_ns: u63 = 5 * time.ns_per_s,
             method_max_len: usize = 32,
