@@ -54,16 +54,17 @@ pub const RecvResponseScanner = struct {
         if (self.status_line.state != .done) {
             const old = self.status_line.result.total_bytes_read;
             if (!try self.status_line.scan(chunk)) {
+                http_log.debug("RecvResponseScanner.scan status line not complete", .{});
                 return false;
             }
             const read = self.status_line.result.total_bytes_read - old;
             return self.headers.scan(chunk[read..]) catch |err| blk: {
-                http_log.notice("RecvResponseScanner.scan err#1={s}", .{@errorName(err)});
+                http_log.debug("RecvResponseScanner.scan err#1={s}", .{@errorName(err)});
                 break :blk error.BadGateway;
             };
         }
         return self.headers.scan(chunk) catch |err| blk: {
-            http_log.notice("RecvResponseScanner.scan err#2={s}", .{@errorName(err)});
+            http_log.debug("RecvResponseScanner.scan err#2={s}", .{@errorName(err)});
             break :blk error.BadGateway;
         };
     }
@@ -118,6 +119,7 @@ const StatusLineScanner = struct {
                     } else {
                         self.result.version_len += 1;
                         if (self.result.version_len > version_max_len) {
+                            http_log.debug("StatusLineScanner.scan err#1", .{});
                             return error.BadGateway;
                         }
                     }
@@ -127,12 +129,14 @@ const StatusLineScanner = struct {
                         self.result.status_code_len += 1;
                         self.state = .on_status_code;
                     } else {
+                        http_log.debug("StatusLineScanner.scan err#2", .{});
                         return error.BadGateway;
                     }
                 },
                 .on_status_code => {
                     if (c == ' ') {
                         if (self.result.status_code_len != status_code_expected_len) {
+                            http_log.debug("StatusLineScanner.scan err#3", .{});
                             return error.BadGateway;
                         }
                         self.state = .post_status_code;
@@ -140,6 +144,7 @@ const StatusLineScanner = struct {
                     } else {
                         self.result.status_code_len += 1;
                         if (self.result.status_code_len > status_code_expected_len) {
+                            http_log.debug("StatusLineScanner.scan err#4", .{});
                             return error.BadGateway;
                         }
                     }
@@ -151,6 +156,7 @@ const StatusLineScanner = struct {
                         self.result.reason_phrase_len += 1;
                         self.state = .on_reason_phrase;
                     } else {
+                        http_log.debug("StatusLineScanner.scan err#5", .{});
                         return error.BadGateway;
                     }
                 },
@@ -160,6 +166,7 @@ const StatusLineScanner = struct {
                     } else {
                         self.result.reason_phrase_len += 1;
                         if (self.result.reason_phrase_len > reason_phrase_max_len) {
+                            http_log.debug("StatusLineScanner.scan err#6", .{});
                             return error.BadGateway;
                         }
                     }
@@ -169,9 +176,18 @@ const StatusLineScanner = struct {
                         self.state = .done;
                         return true;
                     }
+                    http_log.debug("StatusLineScanner.scan err#7", .{});
                     return error.BadGateway;
                 },
-                .done => return true,
+                .done => {
+                    // NOTE: panic would be more appropriate since calling scan after complete
+                    // is a programming bug. But I don't know how to catch panic in test, so
+                    // use return for now.
+                    // See https://github.com/ziglang/zig/issues/1356
+                    // @panic("StatusLineScanner.scan called again after scan is complete");
+                    http_log.debug("StatusLineScanner.scan err#8", .{});
+                    return error.BadGateway;
+                },
             }
         }
         return false;
@@ -198,7 +214,7 @@ test "RecvResponse - 200 OK" {
     try testing.expectEqualStrings(headers, resp.headers.fields);
 }
 
-test "RecvResponseScanner" {
+test "RecvResponseScanner - scan once complete" {
     const version = "HTTP/1.1";
     const status_code = "200";
     const reason_phrase = "OK";
@@ -218,6 +234,64 @@ test "RecvResponseScanner" {
     try testing.expectEqual(reason_phrase.len, result.reason_phrase_len);
     try testing.expectEqual(status_line.len, result.total_bytes_read);
     try testing.expectEqual(headers.len, scanner.headers.total_bytes_read);
+}
+
+test "RecvResponseScanner - middle of status line" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const status_code = "200";
+    const reason_phrase = "OK";
+    const headers = "Date: Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Server: Apache\r\n" ++
+        "\r\n";
+    const status_line = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
+    const input = status_line ++ headers;
+
+    var scanner = RecvResponseScanner{};
+    try testing.expect(!try scanner.scan(input[0..status_line.len-1]));
+    try testing.expect(try scanner.scan(input[status_line.len-1..]));
+    const result = scanner.status_line.result;
+    try testing.expectEqual(version.len, result.version_len);
+    try testing.expectEqual(version.len + 1, result.status_code_start_pos);
+    try testing.expectEqual(status_code.len, result.status_code_len);
+    try testing.expectEqual(version.len + 1 + status_code.len + 1, result.reason_phrase_start_pos);
+    try testing.expectEqual(reason_phrase.len, result.reason_phrase_len);
+    try testing.expectEqual(status_line.len, result.total_bytes_read);
+    try testing.expectEqual(headers.len, scanner.headers.total_bytes_read);
+}
+
+test "RecvResponseScanner - bad header with status line" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const status_code = "200";
+    const reason_phrase = "OK";
+    const headers = "Date : Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Server: Apache\r\n" ++
+        "\r\n";
+    const status_line = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
+    const input = status_line ++ headers;
+
+    var scanner = RecvResponseScanner{};
+    try testing.expectError(error.BadGateway, scanner.scan(input));
+}
+
+test "RecvResponseScanner - bad header after status line" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const status_code = "200";
+    const reason_phrase = "OK";
+    const headers = "Date : Mon, 27 Jul 2009 12:28:53 GMT\r\n" ++
+        "Server: Apache\r\n" ++
+        "\r\n";
+    const status_line = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
+    const input = status_line ++ headers;
+
+    var scanner = RecvResponseScanner{};
+    try testing.expect(!try scanner.scan(input[0..status_line.len+1]));
+    try testing.expectError(error.BadGateway, scanner.scan(input[status_line.len+1..]));
 }
 
 test "StatusLineScanner - whole in one buf with reason phrase" {
@@ -351,11 +425,59 @@ test "StatusLineScanner - invalid status code character must be handled later" {
 }
 
 test "StatusLineScanner - too long reason phrase" {
+    // testing.log_level = .debug;
+
     const version = "HTTP/1.1";
-    const status_code = "2000";
+    const status_code = "200";
     const reason_phrase = "a" ** (config.reason_phrase_max_len + 1);
     const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
 
     var scanner = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, scanner.scan(input));
+}
+
+test "StatusLineScanner - two spaces after vrsion" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const input = version ++ "  ";
+
+    var scanner = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, scanner.scan(input));
+}
+
+test "StatusLineScanner - two spaces after status code" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const status_code = "200";
+    const input = version ++ " " ++ status_code ++ "  ";
+
+    var scanner = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, scanner.scan(input));
+}
+
+test "StatusLineScanner - not lf after cr" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const status_code = "200";
+    const reason_phrase = "OK";
+    const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\r";
+
+    var scanner = StatusLineScanner{};
+    try testing.expectError(error.BadGateway, scanner.scan(input));
+}
+
+test "StatusLineScanner - called again after scan is complete" {
+    // testing.log_level = .debug;
+
+    const version = "HTTP/1.1";
+    const status_code = "200";
+    const reason_phrase = "OK";
+    const input = version ++ " " ++ status_code ++ " " ++ reason_phrase ++ "\r\n";
+
+    var scanner = StatusLineScanner{};
+    try testing.expect(try scanner.scan(input));
     try testing.expectError(error.BadGateway, scanner.scan(input));
 }
