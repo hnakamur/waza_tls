@@ -12,118 +12,116 @@ const testing = std.testing;
 test "real / error / client send timeout" {
     // testing.log_level = .debug;
 
-    const Handler = struct {
-        const Self = @This();
-        pub const Server = http.Server(Self);
-
-        conn: *Server.Conn = undefined,
-        recv_content_buf: std.fifo.LinearFifo(u8, .Dynamic) = undefined,
-
-        pub fn init(self: *Self) !void {
-            const allocator = self.conn.server.allocator;
-            self.recv_content_buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
-        }
-
-        pub fn deinit(self: *Self) void {
-            const allocator = self.conn.server.allocator;
-            self.recv_content_buf.deinit();
-        }
-
-        pub fn start(self: *Self) void {
-            std.log.debug("Handler.start", .{});
-            self.recv_content_buf.discard(self.recv_content_buf.count);
-            self.conn.recvRequestHeader(recvRequestHeaderCallback);
-        }
-
-        pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
-            if (result) |_| {
-                if (self.conn.request_content_fragment_buf) |src_buf| {
-                    std.log.info("Server.Conn.recvRequestHeaderCallback src_buf.len={}", .{src_buf.len});
-                    if (self.recv_content_buf.writer().write(src_buf)) |_| {} else |err| {
-                        std.log.err("failed to write to recv_content_buf, err={s}", .{@errorName(err)});
-                    }
-                }
-                if (!self.conn.fullyReadRequestContent()) {
-                    self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
-                    return;
-                }
-
-                self.sendResponse();
-            } else |err| {
-                std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
-            if (result) |received| {
-                const src_buf = self.conn.request_content_fragment_buf.?[0..received];
-                if (self.recv_content_buf.writer().write(src_buf)) |_| {} else |err| {
-                    std.log.err("failed to write to recv_content_buf, err={s}", .{@errorName(err)});
-                }
-                if (!self.conn.fullyReadRequestContent()) {
-                    self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
-                    return;
-                }
-
-                self.sendResponse();
-            } else |err| {
-                std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        pub fn sendResponse(self: *Self) void {
-            std.log.debug("Handler.sendResponse start", .{});
-            var fbs = std.io.fixedBufferStream(self.conn.send_buf);
-            var w = fbs.writer();
-            std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                http.Version.http1_1.toBytes(),
-                http.StatusCode.ok.code(),
-                http.StatusCode.ok.toText(),
-            }) catch unreachable;
-            http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
-
-            switch (self.conn.request.version) {
-                .http1_1 => if (!self.conn.keep_alive) {
-                    std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
-                },
-                .http1_0 => if (self.conn.keep_alive) {
-                    std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
-                },
-                else => {},
-            }
-            if (self.conn.request_content_length) |content_length| {
-                std.fmt.format(w, "Content-Type: {s}\r\n", .{"application/octet-stream"}) catch unreachable;
-                std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
-            }
-            std.fmt.format(w, "\r\n", .{}) catch unreachable;
-            self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
-        }
-
-        fn sendHeaderCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
-            if (last_result) |_| {
-                std.log.info("Server.Conn.sendHeaderCallback send_len={}", .{self.recv_content_buf.readableSlice(0).len});
-                self.conn.sendFull(self.recv_content_buf.readableSlice(0), sendContentCallback);
-            } else |err| {
-                std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        fn sendContentCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.log.info("Handler.sendContentCallback start, last_result={}", .{last_result});
-            if (last_result) |_| {
-                self.conn.finishSend();
-            } else |err| {
-                std.log.err("Handler.sendContentCallback err={s}", .{@errorName(err)});
-            }
-        }
-    };
-
     try struct {
         const Context = @This();
         const Client = http.Client(Context);
+        const Server = http.Server(Context, Handler);
+
+        const Handler = struct {
+            conn: *Server.Conn = undefined,
+            recv_content_buf: std.fifo.LinearFifo(u8, .Dynamic) = undefined,
+
+            pub fn init(self: *Handler) !void {
+                const allocator = self.conn.server.allocator;
+                self.recv_content_buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
+            }
+
+            pub fn deinit(self: *Handler) void {
+                const allocator = self.conn.server.allocator;
+                self.recv_content_buf.deinit();
+            }
+
+            pub fn start(self: *Handler) void {
+                std.log.debug("Handler.start", .{});
+                self.recv_content_buf.discard(self.recv_content_buf.count);
+                self.conn.recvRequestHeader(recvRequestHeaderCallback);
+            }
+
+            pub fn recvRequestHeaderCallback(self: *Handler, result: Server.RecvRequestHeaderError!usize) void {
+                std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
+                if (result) |_| {
+                    if (self.conn.request_content_fragment_buf) |src_buf| {
+                        std.log.info("Server.Conn.recvRequestHeaderCallback src_buf.len={}", .{src_buf.len});
+                        if (self.recv_content_buf.writer().write(src_buf)) |_| {} else |err| {
+                            std.log.err("failed to write to recv_content_buf, err={s}", .{@errorName(err)});
+                        }
+                    }
+                    if (!self.conn.fullyReadRequestContent()) {
+                        self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                        return;
+                    }
+
+                    self.sendResponse();
+                } else |err| {
+                    std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            pub fn recvRequestContentFragmentCallback(self: *Handler, result: Server.RecvRequestContentFragmentError!usize) void {
+                std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
+                if (result) |received| {
+                    const src_buf = self.conn.request_content_fragment_buf.?[0..received];
+                    if (self.recv_content_buf.writer().write(src_buf)) |_| {} else |err| {
+                        std.log.err("failed to write to recv_content_buf, err={s}", .{@errorName(err)});
+                    }
+                    if (!self.conn.fullyReadRequestContent()) {
+                        self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                        return;
+                    }
+
+                    self.sendResponse();
+                } else |err| {
+                    std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            pub fn sendResponse(self: *Handler) void {
+                std.log.debug("Handler.sendResponse start", .{});
+                var fbs = std.io.fixedBufferStream(self.conn.send_buf);
+                var w = fbs.writer();
+                std.fmt.format(w, "{s} {d} {s}\r\n", .{
+                    http.Version.http1_1.toBytes(),
+                    http.StatusCode.ok.code(),
+                    http.StatusCode.ok.toText(),
+                }) catch unreachable;
+                http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
+
+                switch (self.conn.request.version) {
+                    .http1_1 => if (!self.conn.keep_alive) {
+                        std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
+                    },
+                    .http1_0 => if (self.conn.keep_alive) {
+                        std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
+                    },
+                    else => {},
+                }
+                if (self.conn.request_content_length) |content_length| {
+                    std.fmt.format(w, "Content-Type: {s}\r\n", .{"application/octet-stream"}) catch unreachable;
+                    std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
+                }
+                std.fmt.format(w, "\r\n", .{}) catch unreachable;
+                self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+            }
+
+            fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+                if (last_result) |_| {
+                    std.log.info("Server.Conn.sendHeaderCallback send_len={}", .{self.recv_content_buf.readableSlice(0).len});
+                    self.conn.sendFull(self.recv_content_buf.readableSlice(0), sendContentCallback);
+                } else |err| {
+                    std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            fn sendContentCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.info("Handler.sendContentCallback start, last_result={}", .{last_result});
+                if (last_result) |_| {
+                    self.conn.finishSend();
+                } else |err| {
+                    std.log.err("Handler.sendContentCallback err={s}", .{@errorName(err)});
+                }
+            }
+        };
 
         const State = enum {
             send_header,
@@ -132,7 +130,7 @@ test "real / error / client send timeout" {
             recv_content,
         };
 
-        server: Handler.Server = undefined,
+        server: Server = undefined,
         client: Client = undefined,
         header_buf: std.fifo.LinearFifo(u8, .Dynamic),
         send_content_buf: []u8 = undefined,
@@ -256,14 +254,15 @@ test "real / error / client send timeout" {
                 .header_buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
                 .send_content_buf = try allocator.alloc(u8, 3 * 1024 * 1024),
                 .recv_content_buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-                .server = try Handler.Server.init(allocator, &io, address, .{
-                    .request_content_fragment_buf_len = 3 * 1024 * 1024,
-                    .response_buf_len = 4096,
-                }),
             };
             defer self.recv_content_buf.deinit();
             defer allocator.free(self.send_content_buf);
             defer self.header_buf.deinit();
+
+            self.server = try Server.init(allocator, &io, &self, address, .{
+                .request_content_fragment_buf_len = 3 * 1024 * 1024,
+                .response_buf_len = 4096,
+            });
             defer self.server.deinit();
 
             var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp()));

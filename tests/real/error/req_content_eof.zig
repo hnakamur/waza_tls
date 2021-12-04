@@ -14,18 +14,21 @@ const testing = std.testing;
 test "real / error / req content eof" {
     // testing.log_level = .debug;
 
-    const Handler = struct {
-        const Self = @This();
-        pub const Server = http.Server(Self);
 
+    try struct {
+        const Context = @This();
+        const Client = http.Client(Context);
+    const Server = http.Server(Context, Handler);
+
+    const Handler = struct {
         conn: *Server.Conn = undefined,
 
-        pub fn start(self: *Self) void {
+        pub fn start(self: *Handler) void {
             std.log.debug("Handler.start", .{});
             self.conn.recvRequestHeader(recvRequestHeaderCallback);
         }
 
-        pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
+        pub fn recvRequestHeaderCallback(self: *Handler, result: Server.RecvRequestHeaderError!usize) void {
             std.log.info("Handler.recvRequestHeaderCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
@@ -39,7 +42,7 @@ test "real / error / req content eof" {
             }
         }
 
-        pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
+        pub fn recvRequestContentFragmentCallback(self: *Handler, result: Server.RecvRequestContentFragmentError!usize) void {
             std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
             if (result) |_| {
                 if (!self.conn.fullyReadRequestContent()) {
@@ -55,7 +58,7 @@ test "real / error / req content eof" {
             }
         }
 
-        pub fn sendResponse(self: *Self) void {
+        pub fn sendResponse(self: *Handler) void {
             std.log.debug("Handler.sendResponse start", .{});
             var fbs = std.io.fixedBufferStream(self.conn.send_buf);
             var w = fbs.writer();
@@ -79,7 +82,7 @@ test "real / error / req content eof" {
             self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
         }
 
-        fn sendHeaderCallback(self: *Self, last_result: IO.SendError!usize) void {
+        fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
             std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
             if (last_result) |_| {
                 self.conn.finishSend();
@@ -89,11 +92,7 @@ test "real / error / req content eof" {
         }
     };
 
-    try struct {
-        const Context = @This();
-        const Client = http.Client(Context);
-
-        server: Handler.Server = undefined,
+        server: Server = undefined,
         client: Client = undefined,
         allocator: *mem.Allocator = undefined,
         send_header_buf: []u8 = undefined,
@@ -149,9 +148,10 @@ test "real / error / req content eof" {
             var self: Context = .{
                 .allocator = allocator,
                 .send_header_buf = try allocator.alloc(u8, 8192 * 4),
-                .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
             defer allocator.free(self.send_header_buf);
+
+                self.server = try Server.init(allocator, &io, &self, address, .{});
             defer self.server.deinit();
 
             self.client = try Client.init(allocator, &io, &self, &.{});

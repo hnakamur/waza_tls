@@ -16,108 +16,106 @@ test "real / error / drop server recv" {
     const dest_port = 3131;
     const content = "Hello from http.Server\n";
 
-    const Handler = struct {
-        const Self = @This();
-        pub const Server = http.Server(Self);
-
-        conn: *Server.Conn = undefined,
-        recv_req_header_result: Server.RecvRequestHeaderError!usize = undefined,
-
-        pub fn start(self: *Self) void {
-            std.log.debug("Handler.start start", .{});
-            defer std.log.debug("Handler.start exit", .{});
-            
-            const allocator = testing.allocator;
-            iptables.appendRule(allocator, dest_addr, dest_port, .drop) catch @panic("append iptables rule");
-            std.log.debug("Handler.start appended iptables rule", .{});
-
-            self.conn.recvRequestHeader(recvRequestHeaderCallback);
-        }
-
-        pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            testing.expectError(error.Canceled, result) catch |err| {
-                std.log.err("Handler.recvRequestHeaderCallback result should be error.Canceled, but got {}", .{result});
-            };
-            if (result) |received| {
-                std.log.debug("Handler.recvRequestHeaderCallback received={}", .{received});
-                if (!self.conn.fullyReadRequestContent()) {
-                    self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
-                    return;
-                }
-
-                self.sendResponse();
-            } else |err| {
-                if (err != error.Canceled) {
-                    std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
-                } else {
-                    std.log.debug("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
-                }
-            }
-        }
-
-        pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            if (result) |received| {
-                std.log.debug("Handler.recvRequestContentFragmentCallback received={}", .{received});
-                if (!self.conn.fullyReadRequestContent()) {
-                    self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
-                    return;
-                }
-
-                self.sendResponse();
-            } else |err| {
-                std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        pub fn sendResponse(self: *Self) void {
-            std.log.debug("Handler.sendResponse start", .{});
-            defer std.log.debug("Handler.sendResponse exit", .{});
-
-            var fbs = std.io.fixedBufferStream(self.conn.send_buf);
-            var w = fbs.writer();
-            std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                http.Version.http1_1.toBytes(),
-                http.StatusCode.ok.code(),
-                http.StatusCode.ok.toText(),
-            }) catch unreachable;
-            http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
-
-            switch (self.conn.request.version) {
-                .http1_1 => if (!self.conn.keep_alive) {
-                    std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
-                },
-                .http1_0 => if (self.conn.keep_alive) {
-                    std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
-                },
-                else => {},
-            }
-            const content_length = content.len;
-            std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
-            std.fmt.format(w, "\r\n", .{}) catch unreachable;
-            std.fmt.format(w, "{s}", .{content}) catch unreachable;
-            self.conn.sendFull(fbs.getWritten(), sendFullCallback);
-        }
-
-        fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
-            defer std.log.debug("Handler.sendFullCallback exit", .{});
-
-            if (last_result) |_| {
-                self.conn.finishSend();
-            } else |err| {
-                std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
-            }
-        }
-    };
-
     try struct {
         const Context = @This();
         const Client = http.Client(Context);
+        const Server = http.Server(Context, Handler);
+
+        const Handler = struct {
+            conn: *Server.Conn = undefined,
+            recv_req_header_result: Server.RecvRequestHeaderError!usize = undefined,
+
+            pub fn start(self: *Handler) void {
+                std.log.debug("Handler.start start", .{});
+                defer std.log.debug("Handler.start exit", .{});
+
+                const allocator = testing.allocator;
+                iptables.appendRule(allocator, dest_addr, dest_port, .drop) catch @panic("append iptables rule");
+                std.log.debug("Handler.start appended iptables rule", .{});
+
+                self.conn.recvRequestHeader(recvRequestHeaderCallback);
+            }
+
+            pub fn recvRequestHeaderCallback(self: *Handler, result: Server.RecvRequestHeaderError!usize) void {
+                testing.expectError(error.Canceled, result) catch |err| {
+                    std.log.err("Handler.recvRequestHeaderCallback result should be error.Canceled, but got {}", .{result});
+                };
+                if (result) |received| {
+                    std.log.debug("Handler.recvRequestHeaderCallback received={}", .{received});
+                    if (!self.conn.fullyReadRequestContent()) {
+                        self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                        return;
+                    }
+
+                    self.sendResponse();
+                } else |err| {
+                    if (err != error.Canceled) {
+                        std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                    } else {
+                        std.log.debug("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                    }
+                }
+            }
+
+            pub fn recvRequestContentFragmentCallback(self: *Handler, result: Server.RecvRequestContentFragmentError!usize) void {
+                if (result) |received| {
+                    std.log.debug("Handler.recvRequestContentFragmentCallback received={}", .{received});
+                    if (!self.conn.fullyReadRequestContent()) {
+                        self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                        return;
+                    }
+
+                    self.sendResponse();
+                } else |err| {
+                    std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            pub fn sendResponse(self: *Handler) void {
+                std.log.debug("Handler.sendResponse start", .{});
+                defer std.log.debug("Handler.sendResponse exit", .{});
+
+                var fbs = std.io.fixedBufferStream(self.conn.send_buf);
+                var w = fbs.writer();
+                std.fmt.format(w, "{s} {d} {s}\r\n", .{
+                    http.Version.http1_1.toBytes(),
+                    http.StatusCode.ok.code(),
+                    http.StatusCode.ok.toText(),
+                }) catch unreachable;
+                http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
+
+                switch (self.conn.request.version) {
+                    .http1_1 => if (!self.conn.keep_alive) {
+                        std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
+                    },
+                    .http1_0 => if (self.conn.keep_alive) {
+                        std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
+                    },
+                    else => {},
+                }
+                const content_length = content.len;
+                std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
+                std.fmt.format(w, "\r\n", .{}) catch unreachable;
+                std.fmt.format(w, "{s}", .{content}) catch unreachable;
+                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+            }
+
+            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
+                defer std.log.debug("Handler.sendFullCallback exit", .{});
+
+                if (last_result) |_| {
+                    self.conn.finishSend();
+                } else |err| {
+                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                }
+            }
+        };
 
         client: Client = undefined,
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
         content_read_so_far: u64 = undefined,
-        server: Handler.Server = undefined,
+        server: Server = undefined,
         connect_result: IO.ConnectError!void = undefined,
         sent_len: usize = undefined,
         send_result: IO.SendError!usize = undefined,
@@ -180,12 +178,13 @@ test "real / error / drop server recv" {
 
             var self: Context = .{
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-                .server = try Handler.Server.init(allocator, &io, address, .{
-                    .recv_timeout_ns = time.ns_per_s,
-                    .send_timeout_ns = time.ns_per_s,
-                }),
             };
             defer self.buffer.deinit();
+
+            self.server = try Server.init(allocator, &io, &self, address, .{
+                .recv_timeout_ns = time.ns_per_s,
+                .send_timeout_ns = time.ns_per_s,
+            });
             defer self.server.deinit();
 
             self.client = try Client.init(allocator, &io, &self, &.{

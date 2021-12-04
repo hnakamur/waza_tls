@@ -12,107 +12,105 @@ test "real / error / client recv timeout" {
     // testing.log_level = .debug;
     const content = "Hello from http.Server\n";
 
-    const Handler = struct {
-        const Self = @This();
-        pub const Server = http.Server(Self);
-
-        const send_delay: u63 = 100 * time.ns_per_ms;
-
-        conn: *Server.Conn = undefined,
-
-        pub fn start(self: *Self) void {
-            self.conn.recvRequestHeader(recvRequestHeaderCallback);
-        }
-
-        pub fn recvRequestHeaderCallback(self: *Self, result: Server.RecvRequestHeaderError!usize) void {
-            if (result) |_| {
-                if (!self.conn.fullyReadRequestContent()) {
-                    self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
-                    return;
-                }
-
-                self.sendResponseAfterDelay();
-            } else |err| {
-                std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        pub fn recvRequestContentFragmentCallback(self: *Self, result: Server.RecvRequestContentFragmentError!usize) void {
-            if (result) |_| {
-                if (!self.conn.fullyReadRequestContent()) {
-                    self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
-                    return;
-                }
-
-                self.sendResponseAfterDelay();
-            } else |err| {
-                std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        fn sendResponseAfterDelay(self: *Self) void {
-            self.conn.server.io.timeout(
-                *Self,
-                self,
-                timeoutCallback,
-                &self.conn.completion.linked_completion.main_completion,
-                send_delay,
-            );
-        }
-        fn timeoutCallback(
-            self: *Self,
-            completion: *IO.Completion,
-            result: IO.TimeoutError!void,
-        ) void {
-            if (result) |_| {
-                self.sendResponse();
-            } else |err| {
-                std.log.err("Handler.timeoutCallback err={s}", .{@errorName(err)});
-            }
-        }
-
-        pub fn sendResponse(self: *Self) void {
-            var fbs = std.io.fixedBufferStream(self.conn.send_buf);
-            var w = fbs.writer();
-            std.fmt.format(w, "{s} {d} {s}\r\n", .{
-                http.Version.http1_1.toBytes(),
-                http.StatusCode.ok.code(),
-                http.StatusCode.ok.toText(),
-            }) catch unreachable;
-            http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
-
-            switch (self.conn.request.version) {
-                .http1_1 => if (!self.conn.keep_alive) {
-                    std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
-                },
-                .http1_0 => if (self.conn.keep_alive) {
-                    std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
-                },
-                else => {},
-            }
-            const content_length = content.len;
-            std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
-            std.fmt.format(w, "\r\n", .{}) catch unreachable;
-            std.fmt.format(w, "{s}", .{content}) catch unreachable;
-            self.conn.sendFull(fbs.getWritten(), sendFullCallback);
-        }
-
-        fn sendFullCallback(self: *Self, last_result: IO.SendError!usize) void {
-            if (last_result) |_| {
-                self.conn.finishSend();
-            } else |err| {
-                std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
-            }
-        }
-    };
-
     try struct {
         const Context = @This();
         const Client = http.Client(Context);
+        const Server = http.Server(Context, Handler);
 
+        const Handler = struct {
+            const send_delay: u63 = 100 * time.ns_per_ms;
+
+            conn: *Server.Conn = undefined,
+
+            pub fn start(self: *Handler) void {
+                self.conn.recvRequestHeader(recvRequestHeaderCallback);
+            }
+
+            pub fn recvRequestHeaderCallback(self: *Handler, result: Server.RecvRequestHeaderError!usize) void {
+                if (result) |_| {
+                    if (!self.conn.fullyReadRequestContent()) {
+                        self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                        return;
+                    }
+
+                    self.sendResponseAfterDelay();
+                } else |err| {
+                    std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            pub fn recvRequestContentFragmentCallback(self: *Handler, result: Server.RecvRequestContentFragmentError!usize) void {
+                if (result) |_| {
+                    if (!self.conn.fullyReadRequestContent()) {
+                        self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
+                        return;
+                    }
+
+                    self.sendResponseAfterDelay();
+                } else |err| {
+                    std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            fn sendResponseAfterDelay(self: *Handler) void {
+                self.conn.server.io.timeout(
+                    *Handler,
+                    self,
+                    timeoutCallback,
+                    &self.conn.completion.linked_completion.main_completion,
+                    send_delay,
+                );
+            }
+            fn timeoutCallback(
+                self: *Handler,
+                completion: *IO.Completion,
+                result: IO.TimeoutError!void,
+            ) void {
+                if (result) |_| {
+                    self.sendResponse();
+                } else |err| {
+                    std.log.err("Handler.timeoutCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            pub fn sendResponse(self: *Handler) void {
+                var fbs = std.io.fixedBufferStream(self.conn.send_buf);
+                var w = fbs.writer();
+                std.fmt.format(w, "{s} {d} {s}\r\n", .{
+                    http.Version.http1_1.toBytes(),
+                    http.StatusCode.ok.code(),
+                    http.StatusCode.ok.toText(),
+                }) catch unreachable;
+                http.writeDatetimeHeader(w, "Date", datetime.datetime.Datetime.now()) catch unreachable;
+
+                switch (self.conn.request.version) {
+                    .http1_1 => if (!self.conn.keep_alive) {
+                        std.fmt.format(w, "Connection: {s}\r\n", .{"close"}) catch unreachable;
+                    },
+                    .http1_0 => if (self.conn.keep_alive) {
+                        std.fmt.format(w, "Connection: {s}\r\n", .{"keep-alive"}) catch unreachable;
+                    },
+                    else => {},
+                }
+                const content_length = content.len;
+                std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
+                std.fmt.format(w, "\r\n", .{}) catch unreachable;
+                std.fmt.format(w, "{s}", .{content}) catch unreachable;
+                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+            }
+
+            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                if (last_result) |_| {
+                    self.conn.finishSend();
+                } else |err| {
+                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                }
+            }
+        };
+
+        server: Server = undefined,
         client: Client = undefined,
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
-        server: Handler.Server = undefined,
         connect_result: IO.ConnectError!void = undefined,
         send_len: usize = undefined,
         sent_len: usize = undefined,
@@ -175,9 +173,10 @@ test "real / error / client recv timeout" {
 
             var self: Context = .{
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-                .server = try Handler.Server.init(allocator, &io, address, .{}),
             };
             defer self.buffer.deinit();
+
+            self.server = try Server.init(allocator, &io, &self, address, .{});
             defer self.server.deinit();
 
             self.client = try Client.init(allocator, &io, &self, &.{

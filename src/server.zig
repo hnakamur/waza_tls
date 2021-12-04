@@ -19,7 +19,7 @@ const http_log = std.log.scoped(.http);
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 
-pub fn Server(comptime Handler: type) type {
+pub fn Server(comptime Context: type, comptime Handler: type) type {
     return struct {
         const Self = @This();
         const Config = struct {
@@ -47,6 +47,7 @@ pub fn Server(comptime Handler: type) type {
             }
         };
 
+        context: *Context,
         io: *IO,
         socket: os.socket_t,
         allocator: *mem.Allocator,
@@ -57,7 +58,7 @@ pub fn Server(comptime Handler: type) type {
         shutdown_requested: bool = false,
         done: bool = false,
 
-        pub fn init(allocator: *mem.Allocator, io: *IO, address: std.net.Address, config: Config) !Self {
+        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, address: std.net.Address, config: Config) !Self {
             try config.validate();
             const kernel_backlog = 513;
             const socket = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
@@ -79,9 +80,10 @@ pub fn Server(comptime Handler: type) type {
             try os.listen(socket, kernel_backlog);
 
             var self: Self = .{
-                .io = io,
-                .socket = socket,
                 .allocator = allocator,
+                .io = io,
+                .context = context,
+                .socket = socket,
                 .config = config,
                 .bound_address = bound_address,
                 .connections = std.ArrayList(?*Conn).init(allocator),
