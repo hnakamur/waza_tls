@@ -5,6 +5,8 @@ const FieldLine = @import("fields.zig").FieldLine;
 const FieldLineIterator = @import("fields.zig").FieldLineIterator;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
 
+const http_log = std.log.scoped(.http);
+
 const crlf_crlf = "\r\n\r\n";
 const crlf = "\r\n";
 
@@ -37,6 +39,7 @@ pub const FieldsEditor = struct {
         var line_count: usize = 0;
         var scanner = FieldsScanner{};
         if (!try scanner.scan(buf)) {
+            http_log.debug("FieldsScanner.parseOwnedSlice returns err.Invalid", .{});
             return error.Invalid;
         }
         const len = scanner.totalBytesRead();
@@ -175,11 +178,12 @@ pub const FieldsEditor = struct {
 
     pub fn indexOfNamePos(self: *const FieldsEditor, name: []const u8, start_line_index: usize) !?usize {
         try self.validateLineIndex(start_line_index);
+        http_log.debug("FieldsScanner.indexOfNamePos after validateLineIndex", .{});
 
         var i = start_line_index;
         var pos = self.posForLineIndex(start_line_index);
         var end_pos: usize = 0;
-        while (pos < self.len) : ({
+        while (pos + crlf.len < self.len) : ({
             pos = end_pos + crlf.len;
             i += 1;
         }) {
@@ -189,6 +193,7 @@ pub const FieldsEditor = struct {
                 return i;
             }
         }
+        http_log.debug("FieldsScanner.indexOfNamePos returns null", .{});
         return null;
     }
 
@@ -348,15 +353,22 @@ test "FieldsEditor indexOfNamePos" {
     var start: usize = 0;
     while (start < editor.lineCount()) {
         const result = try editor.indexOfNamePos("cache-control", start);
-        if (result) |i| {
-            try testing.expectEqual(wants[j], i);
-            j += 1;
-            start = i + 1;
-        } else {
-            break;
-        }
+        const i = result.?;
+        try testing.expectEqual(wants[j], i);
+        j += 1;
+        start = i + 1;
     }
     try testing.expectEqual(wants.len, j);
+}
+
+test "FieldsEditor indexOfNamePos non match" {
+    const allocator = testing.allocator;
+    var buf = try allocator.alloc(u8, 32);
+    var editor = try FieldsEditor.newFromOwnedSlice(allocator, buf);
+    defer editor.deinit();
+
+    try editor.append("Server", "Apache");
+    try testing.expectEqual(@as(?usize, null), try editor.indexOfNamePos("Date", 0));
 }
 
 test "FieldsEditor get" {
@@ -379,14 +391,11 @@ test "FieldsEditor get" {
     var start: usize = 0;
     while (start < editor.lineCount()) {
         const result = try editor.indexOfNamePos("cache-control", start);
-        if (result) |i| {
-            const f = try editor.get(i);
-            try testing.expectEqualStrings(wants[j], f.value());
-            j += 1;
-            start = i + 1;
-        } else {
-            break;
-        }
+        const i = result.?;
+        const f = try editor.get(i);
+        try testing.expectEqualStrings(wants[j], f.value());
+        j += 1;
+        start = i + 1;
     }
     try testing.expectEqual(wants.len, j);
 }
@@ -435,4 +444,13 @@ test "FieldsEditor parseOwnedSlice" {
 
     try testing.expectEqualStrings(input_fields, editor.slice());
     try testing.expectEqual(@as(usize, 4), editor.lineCount());
+}
+
+test "FieldsEditor parseOwnedSlice invalid" {
+    const input = "Date: Mon, 27 Jul 2009 12:28:53 GMT";
+
+    const allocator = testing.allocator;
+    var buf = try allocator.dupe(u8, input);
+    defer allocator.free(buf);
+    try testing.expectError(error.Invalid, FieldsEditor.parseOwnedSlice(allocator, buf));
 }
