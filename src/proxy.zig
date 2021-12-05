@@ -35,7 +35,7 @@ pub fn Proxy(comptime Context: type) type {
             }
 
             pub fn recvRequestHeaderCallback(self: *Handler, result: Server.RecvRequestHeaderError!usize) void {
-                http_log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
+                http_log.debug("Proxy.Handler.recvRequestHeaderCallback start, result={}", .{result});
                 if (result) |_| {
                     if (self.client_connected) {
                         self.sendRequestHeader();
@@ -45,7 +45,7 @@ pub fn Proxy(comptime Context: type) type {
                         }
                     }
                 } else |err| {
-                    http_log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                    http_log.err("Proxy.Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
                 }
             }
             fn connectCallback(
@@ -63,6 +63,7 @@ pub fn Proxy(comptime Context: type) type {
             fn sendRequestHeader(
                 self: *Handler,
             ) void {
+                http_log.debug("Proxy.Handler.sendRequestHeader start", .{});
                 // TODO: build a modified request.
                 self.client.sendFull(self.conn.request.buf, sendRequestHeaderCallback);
             }
@@ -73,6 +74,7 @@ pub fn Proxy(comptime Context: type) type {
                 http_log.debug("Proxy.Handler.sendRequestHeaderCallback start, result={}", .{result});
                 if (result) |_| {
                     if (self.conn.req_hdr_buf_content_fragment) |frag| {
+                        http_log.debug("Proxy.Handler.sendRequestHeaderCallback send fragment in header buf", .{});
                         self.client.sendFull(
                             frag,
                             sendRequestContentFragmentCallback,
@@ -90,11 +92,11 @@ pub fn Proxy(comptime Context: type) type {
                 }
             }
             pub fn recvRequestContentFragmentCallback(self: *Handler, result: Server.RecvRequestContentFragmentError!usize) void {
-                http_log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
+                http_log.debug("Proxy.Handler.recvRequestContentFragmentCallback start, result={}", .{result});
                 if (result) |received| {
                     self.sendRequestContentFragment(received);
                 } else |err| {
-                    http_log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
+                    http_log.err("Proxy.Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
                 }
             }
             fn sendRequestContentFragment(
@@ -141,8 +143,9 @@ pub fn Proxy(comptime Context: type) type {
             fn sendResponseHeader(
                 self: *Handler,
             ) void {
+                http_log.debug("Proxy.Handler.sendResponseHeader", .{});
                 // TODO: build a modified response.
-                 if (self.client.resp_hdr_buf_content_fragment) |frag| {
+                if (self.client.resp_hdr_buf_content_fragment) |frag| {
                     const len = self.client.response.buf.len + frag.len;
                     self.conn.sendFull(
                         self.client.response_header_buf[0..len],
@@ -183,6 +186,7 @@ pub fn Proxy(comptime Context: type) type {
                 self: *Handler,
                 send_len: usize,
             ) void {
+                http_log.debug("Proxy.Handler.sendResponseContentFragment send_len={}", .{send_len});
                 self.conn.sendFull(
                     self.client.response_content_fragment_buf.?[0..send_len],
                     sendResponseContentFragmentCallback,

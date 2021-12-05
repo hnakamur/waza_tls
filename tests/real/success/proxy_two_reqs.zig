@@ -9,7 +9,7 @@ const IO = @import("tigerbeetle-io").IO;
 const testing = std.testing;
 
 test "real / success / proxy two reqs" {
-    // testing.log_level = .debug;
+    // testing.log_level = .info;
     const content = "Hello from http.OriginServer\n";
 
     try struct {
@@ -122,6 +122,7 @@ test "real / success / proxy two reqs" {
         fn sendRequest(
             self: *Context,
         ) void {
+            std.log.info("sendRequest", .{});
             var w = self.buffer.writer();
             std.fmt.format(w, "{s} {s} {s}\r\n", .{
                 (http.Method{ .get = undefined }).toBytes(),
@@ -158,6 +159,12 @@ test "real / success / proxy two reqs" {
 
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
+                    return;
+                }
+
+                if (self.req_id < 1) {
+                    self.req_id += 1;
+                    self.sendRequest();
                     return;
                 }
 

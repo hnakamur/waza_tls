@@ -10,6 +10,8 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
+const root = @import("root");
+
 test "real / success / proxy post" {
     // testing.log_level = .debug;
 
@@ -21,6 +23,9 @@ test "real / success / proxy post" {
 
         const Handler = struct {
             conn: *OriginServer.Conn = undefined,
+            received_content: ?[]u8 = null,
+            received_len_so_far: usize = 0,
+            content_sent_so_far: usize = 0,
 
             pub fn start(self: *Handler) void {
                 std.log.debug("OriginServer.Handler.start", .{});
@@ -28,39 +33,60 @@ test "real / success / proxy post" {
             }
 
             pub fn recvRequestHeaderCallback(self: *Handler, result: OriginServer.RecvRequestHeaderError!usize) void {
-                std.log.debug("Handler.recvRequestHeaderCallback start, result={}", .{result});
+                std.log.debug("OriginServer.Handler.recvRequestHeaderCallback start, result={}", .{result});
                 if (result) |_| {
+                    if (self.conn.request_content_length) |len| {
+                        if (self.conn.server.allocator.alloc(u8, len)) |buf| {
+                            self.received_content = buf;
+                            if (self.conn.req_hdr_buf_content_fragment) |frag| {
+                                mem.copy(u8, self.received_content.?, frag);
+                                self.received_len_so_far = frag.len;
+                                std.log.debug("OriginServer.Handler.recvRequestHeaderCallback copied frag in header len={}", .{frag.len});
+                            }
+                        } else |err| {
+                            std.log.err("OriginServer.Handler.recvRequestHeaderCallback allocator buf for received_content, err={s}", .{@errorName(err)});
+                            return;
+                        }
+                    }
+
                     if (!self.conn.fullyReadRequestContent()) {
                         self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                         return;
                     }
 
-                    self.sendResponse();
+                    self.sendResponseHeader();
                 } else |err| {
                     if (err == error.Canceled) {
-                        std.log.warn("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                        std.log.warn("OriginServer.Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
                     } else {
-                        std.log.err("Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                        std.log.err("OriginServer.Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
                     }
                 }
             }
 
             pub fn recvRequestContentFragmentCallback(self: *Handler, result: OriginServer.RecvRequestContentFragmentError!usize) void {
-                std.log.debug("Handler.recvRequestContentFragmentCallback start, result={}", .{result});
-                if (result) |_| {
+                std.log.debug("OriginServer.Handler.recvRequestContentFragmentCallback start, result={}", .{result});
+                if (result) |received| {
+                    mem.copy(
+                        u8,
+                        self.received_content.?[self.received_len_so_far..],
+                        self.conn.request_content_fragment_buf.?[0..received],
+                    );
+                    self.received_len_so_far += received;
+
                     if (!self.conn.fullyReadRequestContent()) {
                         self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                         return;
                     }
 
-                    self.sendResponse();
+                    self.sendResponseHeader();
                 } else |err| {
-                    std.log.err("Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
+                    std.log.err("OriginServer.Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
                 }
             }
 
-            pub fn sendResponse(self: *Handler) void {
-                std.log.debug("Handler.sendResponse start", .{});
+            pub fn sendResponseHeader(self: *Handler) void {
+                std.log.debug("OriginServer.Handler.sendResponseHeader start", .{});
                 var fbs = std.io.fixedBufferStream(self.conn.send_buf);
                 var w = fbs.writer();
                 std.fmt.format(w, "{s} {d} {s}\r\n", .{
@@ -80,21 +106,43 @@ test "real / success / proxy post" {
                     else => {},
                 }
                 const content_length = self.conn.request_content_length.?;
+                std.log.debug("OriginServer.Handler request_content_len={}", .{self.conn.request_content_length.?});
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                std.fmt.format(w, "{s}", .{
-                    self.conn.request_content_fragment_buf.?[0..content_length],
-                }) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseHeaderCallback);
             }
 
-            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
+            fn sendResponseHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("OriginServer.Handler.sendResponseHeaderCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
+                    const content_length = self.conn.request_content_length.?;
+                    self.conn.sendFull(
+                        self.received_content.?[0 .. content_length / 2],
+                        sendResponseContentCallback,
+                    );
+                } else |err| {
+                    std.log.err("OriginServer.Handler.sendResponseHeaderCallback err={s}", .{@errorName(err)});
+                }
+            }
+            fn sendResponseContentCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("OriginServer.Handler.sendResponseContentCallback start, last_result={}", .{last_result});
+                if (last_result) |_| {
+                    self.content_sent_so_far += self.conn.completion.processed_len;
+                    const len = self.conn.request_content_length.?;
+                    if (self.content_sent_so_far < len) {
+                        self.conn.sendFull(
+                            self.received_content.?[self.content_sent_so_far..len],
+                            sendResponseContentCallback,
+                        );
+                        return;
+                    }
+
+                    self.conn.server.allocator.free(self.received_content.?);
+                    self.received_content = null;
                     self.conn.finishSend();
                     self.conn.server.context.handler_finished = true;
                 } else |err| {
-                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
+                    std.log.err("OriginServer.Handler.sendResponseContentCallback err={s}", .{@errorName(err)});
                 }
             }
         };
@@ -105,6 +153,7 @@ test "real / success / proxy post" {
         client: Client = undefined,
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
         content: []const u8,
+        content_sent_so_far: u64 = 0,
         content_read_so_far: u64 = undefined,
         response_content_length: ?u64 = null,
         received_content_len: usize = 0,
@@ -138,7 +187,10 @@ test "real / success / proxy post" {
         ) void {
             std.log.debug("Context.sendRequestHeaderCallback start, result={}", .{result});
             if (result) |_| {
-                self.client.sendFull(self.content, sendRequestContentCallback);
+                self.client.sendFull(
+                    self.content[0 .. self.content.len / 2],
+                    sendRequestContentCallback,
+                );
             } else |err| {
                 std.log.err("Connect.sendRequestHeaderCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
@@ -150,6 +202,14 @@ test "real / success / proxy post" {
         ) void {
             std.log.debug("Context.sendRequestContentCallback start, result={}", .{result});
             if (result) |_| {
+                self.content_sent_so_far += self.client.completion.processed_len;
+                if (self.content_sent_so_far < self.content.len) {
+                    self.client.sendFull(
+                        self.content[self.content_sent_so_far..],
+                        sendRequestContentCallback,
+                    );
+                    return;
+                }
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
             } else |err| {
                 std.log.err("Connect.sendRequestContentCallback err={s}", .{@errorName(err)});
@@ -164,11 +224,13 @@ test "real / success / proxy post" {
             if (result) |_| {
                 if (self.client.response_content_length) |len| {
                     self.response_content_length = len;
+                    std.log.debug("Context.recvResponseHeaderCallback set response_content_length to {}", .{len});
                     if (self.allocator.alloc(u8, len)) |buf| {
                         self.received_content = buf;
                         if (self.client.resp_hdr_buf_content_fragment) |frag| {
                             mem.copy(u8, self.received_content.?, frag);
                             self.received_content_len = frag.len;
+                            std.log.debug("Context.recvResponseHeaderCallback copied frag in header len={}", .{frag.len});
                         }
                     } else |err| {
                         std.log.err("allocator buf for received_content, err={s}", .{@errorName(err)});
@@ -197,12 +259,15 @@ test "real / success / proxy post" {
         ) void {
             std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
             if (result) |received| {
+                std.log.debug("Context.recvResponseContentFragmentCallback received_content.len={}, received_content_len={}", .{
+                    self.received_content.?.len, self.received_content_len,
+                });
                 mem.copy(
                     u8,
                     self.received_content.?[self.received_content_len..],
                     self.client.response_content_fragment_buf.?[0..received],
                 );
-                self.received_content_len = received;
+                self.received_content_len += received;
 
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
@@ -262,6 +327,8 @@ test "real / success / proxy post" {
             defer allocator.free(self.content);
             defer if (self.received_content) |c| self.allocator.free(c);
 
+            std.log.debug("content.len={}", .{self.content.len});
+
             self.server = try OriginServer.init(allocator, &io, &self, origin_address, .{
                 .response_buf_len = 8192,
             });
@@ -276,8 +343,12 @@ test "real / success / proxy post" {
                 &self,
                 proxy_address,
                 self.server.bound_address,
-                .{},
-                .{},
+                .{
+                    .request_content_fragment_buf_len = 1024,
+                },
+                .{
+                    .response_content_fragment_buf_len = 1024,
+                },
             );
             defer self.proxy.deinit();
 
