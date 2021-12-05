@@ -72,6 +72,14 @@ pub fn Proxy(comptime Context: type) type {
             ) void {
                 http_log.debug("Proxy.Handler.sendRequestHeaderCallback start, result={}", .{result});
                 if (result) |_| {
+                    if (self.conn.req_hdr_buf_content_fragment) |frag| {
+                        self.client.sendFull(
+                            frag,
+                            sendRequestContentFragmentCallback,
+                        );
+                        return;
+                    }
+
                     if (!self.conn.fullyReadRequestContent()) {
                         self.conn.recvRequestContentFragment(recvRequestContentFragmentCallback);
                         return;
