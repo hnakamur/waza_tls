@@ -109,6 +109,7 @@ pub fn build(b: *std.build.Builder) void {
         "async_http_client",
         "async_http_server",
         "http_client",
+        "http_proxy",
         "http_server",
     }) |example_name| {
         const example = b.addExecutable(example_name, "examples/" ++ example_name ++ ".zig");
