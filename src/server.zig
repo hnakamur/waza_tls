@@ -188,16 +188,17 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             conn_id: usize,
             completion: Completion = undefined,
             request_header_buf: []u8,
-            request_content_fragment_buf: ?[]u8 = null,
-            send_buf: []u8,
+            req_hdr_buf_content_fragment: ?[]u8 = null,
             request_scanner: RecvRequestScanner = undefined,
             request: RecvRequest = undefined,
             request_version: Version = undefined,
             keep_alive: bool = true,
             request_content_length: ?u64 = null,
             content_len_read_so_far: u64 = 0,
-            processing: bool = false,
+            request_content_fragment_buf: ?[]u8 = null,
+            send_buf: []u8,
             is_send_finished: bool = true,
+            processing: bool = false,
 
             fn init(server: *Self, conn_id: usize, socket: os.socket_t) !*Conn {
                 const request_header_buf = try server.allocator.alloc(u8, server.config.request_header_buf_len);
@@ -344,6 +345,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                                 const content_fragment_len = comp.processed_len - total;
                                 self.content_len_read_so_far = content_fragment_len;
                                 const has_content = content_fragment_len > 0;
+                                if (has_content) self.req_hdr_buf_content_fragment = buf[total..comp.processed_len];
                                 if (has_content) self.request_content_fragment_buf = buf[total..comp.processed_len];
                                 comp.callback(&self.handler, &result);
                                 if (has_content) self.request_content_fragment_buf = null;

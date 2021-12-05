@@ -17,21 +17,16 @@ pub fn Proxy(comptime Context: type) type {
             conn: *Server.Conn = undefined,
             client: Client = undefined,
             client_connected: bool = false,
-            resp_first_fragment: []u8 = undefined,
-            resp_first_fragment_len: usize = undefined,
 
             pub fn init(self: *Handler) !void {
                 const allocator = self.conn.server.allocator;
                 const io = self.conn.server.io;
                 const client_config = &self.conn.server.context.client_config;
                 self.client = try Client.init(allocator, io, self, client_config);
-                self.resp_first_fragment = try allocator.alloc(u8, client_config.response_content_fragment_buf_len);
             }
 
             pub fn deinit(self: *Handler) void {
                 self.client.deinit();
-                const allocator = self.conn.server.allocator;
-                allocator.free(self.resp_first_fragment);
             }
 
             pub fn start(self: *Handler) void {
@@ -138,12 +133,6 @@ pub fn Proxy(comptime Context: type) type {
             fn sendResponseHeader(
                 self: *Handler,
             ) void {
-                if (self.client.response_content_fragment_buf) |buf| {
-                    self.resp_first_fragment_len = buf.len;
-                    mem.copy(u8, self.resp_first_fragment, buf);
-                } else {
-                    self.resp_first_fragment_len = 0;
-                }
                 // TODO: build a modified response.
                 self.conn.sendFull(self.client.response.buf, sendResponseHeaderCallback);
             }
@@ -153,9 +142,9 @@ pub fn Proxy(comptime Context: type) type {
             ) void {
                 http_log.debug("Proxy.Handler.sendResponseHeaderCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
-                    if (self.resp_first_fragment_len > 0) {
+                    if (self.client.resp_hdr_buf_content_fragment) |frag| {
                         self.conn.sendFull(
-                            self.resp_first_fragment[0..self.resp_first_fragment_len],
+                            frag,
                             sendResponseContentFragmentCallback,
                         );
                         return;

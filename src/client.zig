@@ -49,15 +49,16 @@ pub fn Client(comptime Context: type) type {
         allocator: *mem.Allocator,
         io: *IO,
         context: *Context,
+        config: *const Config,
         socket: os.socket_t = undefined,
         completion: Completion = undefined,
-        response: RecvResponse = undefined,
-        resp_scanner: RecvResponseScanner = undefined,
         response_header_buf: []u8 = undefined,
+        resp_hdr_buf_content_fragment: ?[]u8 = null,
+        resp_scanner: RecvResponseScanner = undefined,
+        response: RecvResponse = undefined,
         response_content_fragment_buf: ?[]u8 = null,
         response_content_length: ?u64 = null,
         content_len_read_so_far: u64 = undefined,
-        config: *const Config,
         done: bool = false,
 
         pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
@@ -269,6 +270,7 @@ pub fn Client(comptime Context: type) type {
                             const content_fragment_len = comp.processed_len - total;
                             self.content_len_read_so_far = content_fragment_len;
                             const has_content = content_fragment_len > 0;
+                            if (has_content) self.resp_hdr_buf_content_fragment = buf[total..comp.processed_len];
                             if (has_content) self.response_content_fragment_buf = buf[total..comp.processed_len];
                             comp.callback(self.context, &result);
                             if (has_content) self.response_content_fragment_buf = null;
