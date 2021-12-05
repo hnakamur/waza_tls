@@ -142,7 +142,15 @@ pub fn Proxy(comptime Context: type) type {
                 self: *Handler,
             ) void {
                 // TODO: build a modified response.
-                self.conn.sendFull(self.client.response.buf, sendResponseHeaderCallback);
+                 if (self.client.resp_hdr_buf_content_fragment) |frag| {
+                    const len = self.client.response.buf.len + frag.len;
+                    self.conn.sendFull(
+                        self.client.response_header_buf[0..len],
+                        sendResponseHeaderCallback,
+                    );
+                } else {
+                    self.conn.sendFull(self.client.response.buf, sendResponseHeaderCallback);
+                }
             }
             fn sendResponseHeaderCallback(
                 self: *Handler,
@@ -150,14 +158,6 @@ pub fn Proxy(comptime Context: type) type {
             ) void {
                 http_log.debug("Proxy.Handler.sendResponseHeaderCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
-                    if (self.client.resp_hdr_buf_content_fragment) |frag| {
-                        self.conn.sendFull(
-                            frag,
-                            sendResponseContentFragmentCallback,
-                        );
-                        return;
-                    }
-
                     if (!self.client.fullyReadResponseContent()) {
                         self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                         return;

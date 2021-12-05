@@ -1,5 +1,7 @@
 const std = @import("std");
+const mem = std.mem;
 const os = std.os;
+const rand = std.rand;
 const time = std.time;
 
 const datetime = @import("datetime");
@@ -8,9 +10,8 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "real / success / proxy simple get" {
+test "real / success / proxy post" {
     // testing.log_level = .debug;
-    const content = "Hello from http.OriginServer\n";
 
     try struct {
         const Context = @This();
@@ -78,31 +79,36 @@ test "real / success / proxy simple get" {
                     },
                     else => {},
                 }
-                const content_length = content.len;
+                const content_length = self.conn.request_content_length.?;
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                std.fmt.format(w, "{s}", .{content}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+                std.fmt.format(w, "{s}", .{
+                    self.conn.request_content_fragment_buf.?[0..content_length],
+                }) catch unreachable;
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                     self.conn.server.context.handler_finished = true;
                 } else |err| {
-                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };
 
+        allocator: *mem.Allocator,
         server: OriginServer = undefined,
         proxy: *Proxy = undefined,
         client: Client = undefined,
         buffer: std.fifo.LinearFifo(u8, .Dynamic),
+        content: []const u8,
         content_read_so_far: u64 = undefined,
         response_content_length: ?u64 = null,
-        received_content: ?[]const u8 = null,
+        received_content_len: usize = 0,
+        received_content: ?[]u8 = null,
         test_error: ?anyerror = null,
         handler_finished: ?bool = null,
 
@@ -114,26 +120,39 @@ test "real / success / proxy simple get" {
             if (result) |_| {
                 var w = self.buffer.writer();
                 std.fmt.format(w, "{s} {s} {s}\r\n", .{
-                    (http.Method{ .get = undefined }).toBytes(),
+                    (http.Method{ .post = undefined }).toBytes(),
                     "/",
                     http.Version.http1_1.toBytes(),
                 }) catch unreachable;
-                std.fmt.format(w, "Host: example.com\r\n\r\n", .{}) catch unreachable;
-                self.client.sendFull(self.buffer.readableSlice(0), sendFullCallback);
+                std.fmt.format(w, "Host: example.com\r\n", .{}) catch unreachable;
+                std.fmt.format(w, "Content-Length: {}\r\n\r\n", .{self.content.len}) catch unreachable;
+                self.client.sendFull(self.buffer.readableSlice(0), sendRequestHeaderCallback);
             } else |err| {
                 std.log.err("Connect.connectCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
             }
         }
-        fn sendFullCallback(
+        fn sendRequestHeaderCallback(
             self: *Context,
             result: IO.SendError!usize,
         ) void {
-            std.log.debug("Context.sendFullCallback start, result={}", .{result});
+            std.log.debug("Context.sendRequestHeaderCallback start, result={}", .{result});
+            if (result) |_| {
+                self.client.sendFull(self.content, sendRequestContentCallback);
+            } else |err| {
+                std.log.err("Connect.sendRequestHeaderCallback err={s}", .{@errorName(err)});
+                self.exitTestWithError(err);
+            }
+        }
+        fn sendRequestContentCallback(
+            self: *Context,
+            result: IO.SendError!usize,
+        ) void {
+            std.log.debug("Context.sendRequestContentCallback start, result={}", .{result});
             if (result) |_| {
                 self.client.recvResponseHeader(recvResponseHeaderCallback);
             } else |err| {
-                std.log.err("Connect.sendFullCallback err={s}", .{@errorName(err)});
+                std.log.err("Connect.sendRequestContentCallback err={s}", .{@errorName(err)});
                 self.exitTestWithError(err);
             }
         }
@@ -145,8 +164,17 @@ test "real / success / proxy simple get" {
             if (result) |_| {
                 if (self.client.response_content_length) |len| {
                     self.response_content_length = len;
-                    if (self.client.resp_hdr_buf_content_fragment) |frag| {
-                        self.received_content = frag;
+                    if (self.allocator.alloc(u8, len)) |buf| {
+                        self.received_content = buf;
+                        if (self.client.resp_hdr_buf_content_fragment) |frag| {
+                            mem.copy(u8, self.received_content.?, frag);
+                            self.received_content_len = frag.len;
+                        }
+                    } else |err| {
+                        std.log.err("allocator buf for received_content, err={s}", .{@errorName(err)});
+                        self.client.close();
+                        self.exitTestWithError(err);
+                        return;
                     }
                 }
 
@@ -169,6 +197,13 @@ test "real / success / proxy simple get" {
         ) void {
             std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
             if (result) |received| {
+                mem.copy(
+                    u8,
+                    self.received_content.?[self.received_content_len..],
+                    self.client.response_content_fragment_buf.?[0..received],
+                );
+                self.received_content_len = received;
+
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
@@ -196,6 +231,18 @@ test "real / success / proxy simple get" {
             self.proxy.server.requestShutdown();
         }
 
+        fn generateRandomText(allocator: *mem.Allocator) ![]const u8 {
+            var bin_buf: [2048]u8 = undefined;
+            var encoded_buf: [4096]u8 = undefined;
+
+            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp()));
+            rand.Random.bytes(&r.random, &bin_buf);
+
+            const encoder = std.base64.url_safe_no_pad.Encoder;
+            const encoded = encoder.encode(&encoded_buf, &bin_buf);
+            return try allocator.dupe(u8, encoded);
+        }
+
         fn runTest() !void {
             var io = try IO.init(32, 0);
             defer io.deinit();
@@ -207,11 +254,17 @@ test "real / success / proxy simple get" {
             const proxy_address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{
+                .allocator = allocator,
                 .buffer = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
+                .content = try generateRandomText(allocator),
             };
             defer self.buffer.deinit();
+            defer allocator.free(self.content);
+            defer if (self.received_content) |c| self.allocator.free(c);
 
-            self.server = try OriginServer.init(allocator, &io, &self, origin_address, .{});
+            self.server = try OriginServer.init(allocator, &io, &self, origin_address, .{
+                .response_buf_len = 8192,
+            });
             defer self.server.deinit();
 
             try self.server.start();
@@ -240,11 +293,8 @@ test "real / success / proxy simple get" {
                 try io.tick();
             }
 
-            // if (self.test_error) |err| {
-            //     return err;
-            // }
-            try testing.expectEqual(content.len, self.response_content_length.?);
-            try testing.expectEqualStrings(content, self.received_content.?);
+            try testing.expectEqual(self.content.len, self.response_content_length.?);
+            try testing.expectEqualStrings(self.content, self.received_content.?);
             try testing.expect(self.handler_finished.?);
         }
     }.runTest();

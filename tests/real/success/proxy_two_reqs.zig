@@ -9,7 +9,7 @@ const IO = @import("tigerbeetle-io").IO;
 const testing = std.testing;
 
 test "real / success / proxy two reqs" {
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
     const content = "Hello from http.OriginServer\n";
 
     try struct {
@@ -149,6 +149,13 @@ test "real / success / proxy two reqs" {
         ) void {
             std.log.debug("Context.recvResponseHeaderCallback start, result={}", .{result});
             if (result) |_| {
+                if (self.client.response_content_length) |len| {
+                    self.response_content_length = len;
+                    if (self.client.resp_hdr_buf_content_fragment) |frag| {
+                        self.received_content = frag;
+                    }
+                }
+
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;
@@ -168,10 +175,6 @@ test "real / success / proxy two reqs" {
         ) void {
             std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
             if (result) |received| {
-                self.response_content_length = self.client.response_content_length;
-                self.received_content = self.client.response_content_fragment_buf.?[0..received];
-                std.log.debug("Context.recvResponseContentFragmentCallback resp_content_len={}, received={}", .{ self.client.response_content_length, received });
-
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;

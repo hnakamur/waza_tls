@@ -6,6 +6,7 @@ const long_header = @import("long_header.zig");
 const reuse_conn_slot = @import("reuse_conn_slot.zig");
 const simple_get = @import("simple_get.zig");
 
+const proxy_post = @import("proxy_post.zig");
 const proxy_simple_get = @import("proxy_simple_get.zig");
 const proxy_two_reqs = @import("proxy_two_reqs.zig");
 
