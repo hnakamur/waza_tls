@@ -97,7 +97,7 @@ pub fn Proxy(comptime Context: type) type {
                 if (result) |received| {
                     self.sendRequestContentFragment(received);
                 } else |err| {
-                    http_log.err("Proxy.Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
+                    http_log.warn("Proxy.Handler.recvRequestContentFragmentCallback err={s}", .{@errorName(err)});
                 }
             }
             fn sendRequestContentFragment(

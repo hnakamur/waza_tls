@@ -14,8 +14,8 @@ const StatusCode = @import("status_code.zig").StatusCode;
 const Version = @import("version.zig").Version;
 const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
-// const http_log = std.log.scoped(.http);
-const http_log = @import("nop_log.zig").scoped(.http);
+const http_log = std.log.scoped(.http);
+// const http_log = @import("nop_log.zig").scoped(.http);
 
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
@@ -105,10 +105,16 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             completion: *IO.Completion,
             result: IO.AcceptError!os.socket_t,
         ) void {
-            const accepted_sock = result catch @panic("accept error");
-            var conn = self.createConn(accepted_sock) catch @panic("conn create error");
-            conn.start();
-            self.io.accept(*Self, self, acceptCallback, completion, self.socket, 0);
+            if (result) |accepted_sock| {
+                if (self.done) {
+                    return;
+                }
+                var conn = self.createConn(accepted_sock) catch @panic("conn create error");
+                conn.start();
+                self.io.accept(*Self, self, acceptCallback, completion, self.socket, 0);
+            } else |err| {
+                http_log.warn("Server.acceptCallback err={s}, server=0x{x}", .{ @errorName(err), @ptrToInt(self) });
+            }
         }
 
         fn createConn(self: *Self, accepted_sock: os.socket_t) !*Conn {
@@ -132,7 +138,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
         }
 
         fn removeConnId(self: *Self, conn_id: usize) void {
-            http_log.info("Server.removeConnId conn_id={}", .{conn_id});
+            http_log.debug("Server.removeConnId conn_id={}", .{conn_id});
             self.connections.items[conn_id] = null;
             if (self.shutdown_requested) {
                 self.setDoneIfNoClient();
@@ -140,26 +146,35 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
         }
 
         pub fn requestShutdown(self: *Self) void {
+            http_log.debug("Server.requestShutdown start, server=0x{x}, conn count={}", .{ @ptrToInt(self), self.connections.items.len });
             self.shutdown_requested = true;
             for (self.connections.items) |conn, i| {
                 if (conn) |c| {
                     if (!c.processing) {
-                        http_log.info("Server.requestShutdown before calling close for i={}", .{i});
+                        http_log.debug("Server.requestShutdown before calling close for i={}, server=0x{x}", .{ i, @ptrToInt(self) });
                         c.closeSync();
-                        http_log.info("Server.requestShutdown after calling close for i={}", .{i});
+                        http_log.debug("Server.requestShutdown after calling close for i={}", .{i});
+                    } else {
+                        http_log.debug("Server.requestShutdown i={} processing, server=0x{x}", .{ i, @ptrToInt(self) });
                     }
+                } else {
+                    http_log.debug("Server.requestShutdown conn i={} null, server=0x{x}", .{ i, @ptrToInt(self) });
                 }
             }
             self.setDoneIfNoClient();
         }
 
         fn setDoneIfNoClient(self: *Self) void {
+            http_log.debug("Server.setDoneIfNoClient start, server=0x{x}, conn count={}", .{ @ptrToInt(self), self.connections.items.len });
             for (self.connections.items) |h| {
                 if (h) |_| {
                     return;
                 }
             }
 
+            // http_log.debug("Server.setDoneIfNoClient calling cancelAccept, server=0x{x}", .{@ptrToInt(self)});
+            // self.cancelAccept();
+            http_log.debug("Server.setDoneIfNoClient calling close, server=0x{x}", .{@ptrToInt(self)});
             self.done = true;
         }
 
@@ -203,6 +218,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
 
             fn init(server: *Self, conn_id: usize, socket: os.socket_t) !*Conn {
                 const request_header_buf = try server.allocator.alloc(u8, server.config.request_header_buf_len);
+                http_log.debug("Server.Conn.init, server=0x{x}, request_header_buf=0x{x}", .{ @ptrToInt(server), @ptrToInt(request_header_buf.ptr) });
                 const send_buf = try server.allocator.alloc(u8, server.config.response_buf_len);
                 var self = try server.allocator.create(Conn);
                 self.* = Conn{
@@ -226,7 +242,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             }
 
             pub fn deinit(self: *Conn) !void {
-                http_log.debug("Server.Conn.deinit self=0x{x}, server=0x{x}", .{@ptrToInt(self), @ptrToInt(self.server)});
+                http_log.debug("Server.Conn.deinit self=0x{x}, server=0x{x}", .{ @ptrToInt(self), @ptrToInt(self.server) });
                 self.server.removeConnId(self.conn_id);
                 http_log.debug("Conn.deinit after removeConnId self=0x{x}, server.done={}", .{ @ptrToInt(self), self.server.done });
                 if (@hasDecl(Handler, "deinit")) {
@@ -241,7 +257,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             }
 
             fn closeSync(self: *Conn) void {
-                http_log.debug("Server.Conn.closeSync start, conn_id={}, self=0x{x}", .{ self.conn_id, @ptrToInt(self) });
+                http_log.debug("Server.Conn.closeSync start, conn_id={}, server=0x{x}", .{ self.conn_id, @ptrToInt(self.server) });
                 os.closeSocket(self.socket);
                 http_log.debug("Server.Conn.closeSync before calling deinit", .{});
                 if (self.deinit()) |_| {} else |err| {
@@ -257,6 +273,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                     result: IO.CloseError!void,
                 ) void,
             ) void {
+                http_log.debug("Server.Conn.close self=0x{x}, server=0x{x}", .{ @ptrToInt(&self), @ptrToInt(self.server) });
                 self.completion = .{
                     .callback = struct {
                         fn wrapper(ctx: ?*c_void, res: *const c_void) void {
@@ -281,7 +298,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 completion: *IO.Completion,
                 result: IO.CloseError!void,
             ) void {
-                http_log.debug("Server.Conn.closeCallback result={}, self=0x{x}", .{ result, @ptrToInt(&self) });
+                http_log.debug("Server.Conn.closeCallback result={}, self=0x{x}, server=0x{x}", .{ result, @ptrToInt(&self), @ptrToInt(self.server) });
                 const linked_comp = @fieldParentPtr(IO.LinkedCompletion, "main_completion", completion);
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_comp);
                 comp.callback(&self.handler, &result);
@@ -335,7 +352,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
-                http_log.info("Conn.recvRequestHeaderCallback result={}", .{result});
+                http_log.debug("Conn.recvRequestHeaderCallback result={}", .{result});
                 http_log.debug("Conn.recvRequestHeaderCallback main_completion=0x{x}", .{@ptrToInt(&linked_completion.main_completion)});
                 http_log.debug("Conn.recvRequestHeaderCallback linked_completion=0x{x}", .{@ptrToInt(&linked_completion.linked_completion)});
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
@@ -346,6 +363,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                             comp.callback(&self.handler, &err_result);
                             self.sendError(.bad_request);
                         } else {
+                            http_log.debug("Server.Conn.recvRequestHeaderCallback calling closeSync server=0x{x}", .{@ptrToInt(self.server)});
                             self.closeSync();
                         }
                         return;
@@ -354,9 +372,9 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                     const old = comp.processed_len;
                     comp.processed_len += received;
                     const buf = self.request_header_buf;
-                    http_log.info("Server.Conn.recvRequestHeaderCallback self=0x{x}, buf.len={}, old={}, processed_len={}", .{ @ptrToInt(self), buf.len, old, comp.processed_len });
+                    http_log.debug("Server.Conn.recvRequestHeaderCallback self=0x{x}, buf.len={}, old={}, processed_len={}", .{ @ptrToInt(self), buf.len, old, comp.processed_len });
                     if (self.request_scanner.scan(buf[old..comp.processed_len])) |done| {
-                        http_log.info("Server.Conn.recvRequestHeaderCallback scan_done={}, processed_len={}, buf.len={}", .{
+                        http_log.debug("Server.Conn.recvRequestHeaderCallback scan_done={}, processed_len={}, buf.len={}", .{
                             done,
                             comp.processed_len,
                             buf.len,
@@ -364,7 +382,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                         if (done) {
                             const total = self.request_scanner.totalBytesRead();
                             if (RecvRequest.init(buf[0..total], &self.request_scanner)) |req| {
-                                http_log.info("Server.Conn.recvRequestHeaderCallback RecvRequest.init ok", .{});
+                                http_log.debug("Server.Conn.recvRequestHeaderCallback RecvRequest.init ok", .{});
                                 if (req.isKeepAlive()) |keep_alive| {
                                     self.keep_alive = keep_alive;
                                 } else |err| {
@@ -380,7 +398,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                                     self.sendError(.bad_request);
                                     return;
                                 };
-                                http_log.info("Server.Conn.recvRequestHeaderCallback request_content_length={}", .{
+                                http_log.debug("Server.Conn.recvRequestHeaderCallback request_content_length={}", .{
                                     self.request_content_length,
                                 });
                                 self.request = req;
@@ -392,7 +410,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                                 comp.callback(&self.handler, &result);
                                 if (has_content) self.request_content_fragment_buf = null;
                             } else |err| {
-                                http_log.info("Server.Conn.recvRequestHeaderCallback RecvRequest.init err={s}", .{@errorName(err)});
+                                http_log.debug("Server.Conn.recvRequestHeaderCallback RecvRequest.init err={s}", .{@errorName(err)});
                                 const err_result: RecvRequestHeaderError!usize = err;
                                 comp.callback(&self.handler, &err_result);
                                 self.sendError(.bad_request);
@@ -410,7 +428,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                                 };
                                 const max_len = self.server.config.large_request_header_buf_len *
                                     self.server.config.large_request_header_buf_max_count;
-                                http_log.info("Server.Conn.recvRequestHeaderCallback new_len={}, max_len={}", .{ new_len, max_len });
+                                http_log.debug("Server.Conn.recvRequestHeaderCallback new_len={}, max_len={}", .{ new_len, max_len });
                                 if (max_len < new_len) {
                                     const err_result: RecvRequestHeaderError!usize = error.HeaderTooLong;
                                     comp.callback(&self.handler, &err_result);
@@ -428,7 +446,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                                 };
                             }
 
-                            http_log.info("Server.Conn.recvRequestHeaderCallback calling recvWithTimeout processed_len={}, recv_len={}", .{
+                            http_log.debug("Server.Conn.recvRequestHeaderCallback calling recvWithTimeout processed_len={}, recv_len={}", .{
                                 comp.processed_len,
                                 self.request_header_buf.len - comp.processed_len,
                             });
@@ -444,7 +462,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                             );
                         }
                     } else |err| {
-                        http_log.info("Server.Conn.recvRequestHeaderCallback scan err={s}", .{@errorName(err)});
+                        http_log.debug("Server.Conn.recvRequestHeaderCallback scan err={s}", .{@errorName(err)});
                         const err_result: RecvRequestHeaderError!usize = err;
                         comp.callback(&self.handler, &err_result);
                         const status_code: StatusCode = switch (err) {
@@ -458,7 +476,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 } else |_| {
                     http_log.debug("Conn.recvRequestHeaderCallback before calling callback with result={}", .{result});
                     comp.callback(&self.handler, &result);
-                    http_log.debug("Conn.recvRequestHeaderCallback after calling callback with result={}", .{result});
+                    http_log.debug("Conn.recvRequestHeaderCallback after calling callback with result={}, server=0x{x}", .{ result, @ptrToInt(self.server) });
                     self.closeSync();
                 }
             }
@@ -519,12 +537,13 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 linked_completion: *IO.LinkedCompletion,
                 result: IO.RecvError!usize,
             ) void {
-                http_log.info("Server.Conn.recvRequestContentFragmentCallback result={}, content_len_read_so_far={}", .{ result, self.content_len_read_so_far });
+                http_log.debug("Server.Conn.recvRequestContentFragmentCallback result={}, content_len_read_so_far={}", .{ result, self.content_len_read_so_far });
                 const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
                 if (result) |received| {
                     if (received == 0) {
                         const err_result: RecvRequestContentFragmentError!usize = error.UnexpectedEof;
                         comp.callback(&self.handler, &err_result);
+                        http_log.debug("Server.Conn.recvRequestContentFragmentCallback calling closeSync#1 server=0x{x}", .{@ptrToInt(self.server)});
                         self.closeSync();
                         return;
                     }
@@ -533,6 +552,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                     comp.callback(&self.handler, &result);
                 } else |_| {
                     comp.callback(&self.handler, &result);
+                    http_log.debug("Server.Conn.recvRequestContentFragmentCallback calling closeSync#2 server=0x{x}", .{@ptrToInt(self.server)});
                     self.closeSync();
                 }
             }
@@ -572,7 +592,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 if (result) |_| {} else |err| {
                     http_log.debug("Conn.sendErrorCallback, err={s}", .{@errorName(err)});
                 }
-                http_log.debug("Conn.sendErrorCallback, calling close, conn_id={}", .{self.conn_id});
+                http_log.debug("Conn.sendErrorCallback, calling close, conn_id={}, server=0x{x}", .{ self.conn_id, @ptrToInt(self.server) });
                 self.closeSync();
             }
 
@@ -636,6 +656,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                     }
 
                     if (!self.keep_alive or self.server.shutdown_requested) {
+                        http_log.debug("Server.Conn.sendFullWithTimeoutCallback calling closeSync#1 server=0x{x}", .{@ptrToInt(self.server)});
                         self.closeSync();
                         return;
                     }
@@ -644,6 +665,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                     self.start();
                 } else |_| {
                     comp.callback(&self.handler, &result);
+                    http_log.debug("Server.Conn.sendFullWithTimeoutCallback calling closeSync#2 server=0x{x}", .{@ptrToInt(self.server)});
                     self.closeSync();
                 }
             }
