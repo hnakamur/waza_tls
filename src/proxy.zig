@@ -181,7 +181,8 @@ pub fn Proxy(comptime Context: type) type {
                 if (result) |received| {
                     self.sendResponseContentFragment(received);
                 } else |err| {
-                    http_log.err("Proxy.Handler.recvResponseContentFragmentCallback err={s}", .{@errorName(err)});
+                    http_log.warn("Proxy.Handler.recvResponseContentFragmentCallback err={s}", .{@errorName(err)});
+                    self.conn.close(closeConnCallback);
                 }
             }
             fn sendResponseContentFragment(
