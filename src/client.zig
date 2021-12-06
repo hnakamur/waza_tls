@@ -130,7 +130,7 @@ pub fn Client(comptime Context: type) type {
             linked_completion: *IO.LinkedCompletion,
             result: IO.ConnectError!void,
         ) void {
-            http_log.debug("Client.connectCallback result={}", .{result});
+            http_log.debug("Client.connectCallback result={}, client=0x{x}", .{result, @ptrToInt(self)});
             const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
             comp.callback(self.context, &result);
             if (result) |_| {} else |err| {
@@ -410,6 +410,7 @@ pub fn Client(comptime Context: type) type {
         }
 
         pub fn close(self: *Self) void {
+            http_log.debug("Client.close start. self=0x{x}", .{@ptrToInt(self)});
             os.closeSocket(self.socket);
             self.done = true;
             http_log.debug("Client.close exit.", .{});

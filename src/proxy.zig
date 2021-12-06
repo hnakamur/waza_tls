@@ -23,6 +23,7 @@ pub fn Proxy(comptime Context: type) type {
                 const io = self.conn.server.io;
                 const client_config = &self.conn.server.context.client_config;
                 self.client = try Client.init(allocator, io, self, client_config);
+                http_log.debug("Proxy.Handler.init. client=0x{x}", .{@ptrToInt(&self.client)});
             }
 
             pub fn deinit(self: *Handler) void {
@@ -137,7 +138,8 @@ pub fn Proxy(comptime Context: type) type {
                 if (result) |_| {
                     self.sendResponseHeader();
                 } else |err| {
-                    http_log.err("Proxy.Handler.recvResponseHeaderCallback err={s}", .{@errorName(err)});
+                    http_log.warn("Proxy.Handler.recvResponseHeaderCallback err={s}", .{@errorName(err)});
+                    self.conn.close(closeConnCallback);
                 }
             }
             fn sendResponseHeader(
@@ -179,7 +181,7 @@ pub fn Proxy(comptime Context: type) type {
                 if (result) |received| {
                     self.sendResponseContentFragment(received);
                 } else |err| {
-                    http_log.err("Proxy.HandlerrecvResponseContentFragmentCallback err={s}", .{@errorName(err)});
+                    http_log.err("Proxy.Handler.recvResponseContentFragmentCallback err={s}", .{@errorName(err)});
                 }
             }
             fn sendResponseContentFragment(
@@ -206,6 +208,15 @@ pub fn Proxy(comptime Context: type) type {
                     self.conn.finishSend();
                 } else |err| {
                     http_log.err("Proxy.Handler.sendResponseContentFragmentCallback err={s}", .{@errorName(err)});
+                }
+            }
+
+            fn closeConnCallback(
+                self: *Handler,
+                result: IO.CloseError!void,
+            ) void {
+                if (self.conn.deinit()) |_| {} else |err| {
+                    http_log.err("Proxy.Handler.closeConnCallback err={s}", .{@errorName(err)});
                 }
             }
         };
