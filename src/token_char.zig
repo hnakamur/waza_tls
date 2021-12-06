@@ -8,19 +8,19 @@ pub fn isTokenChar(c: u8) bool {
     return tokenCharBitset.isSet(c);
 }
 
-pub inline fn isVisibleChar(c: u8) bool {
+pub fn isVisibleChar(c: u8) bool {
     return '\x21' <= c and c <= '\x7e';
 }
 
-pub inline fn isObsTextChar(c: u8) bool {
+pub fn isObsTextChar(c: u8) bool {
     return '\x80' <= c;
 }
 
-pub inline fn isFieldVisibleChar(c: u8) bool {
+pub fn isFieldVisibleChar(c: u8) bool {
     return isVisibleChar(c) or isObsTextChar(c);
 }
 
-pub inline fn isWhiteSpaceChar(c: u8) bool {
+pub fn isWhiteSpaceChar(c: u8) bool {
     return c == ' ' or c == '\t';
 }
 
@@ -29,7 +29,7 @@ const tokenCharBitset = makeStaticCharBitSet(_isTokenChar);
 
 const char_bitset_size = 256;
 
-fn makeStaticCharBitSet(predicate: fn(u8) bool) std.StaticBitSet(char_bitset_size) {
+fn makeStaticCharBitSet(predicate: fn (u8) bool) std.StaticBitSet(char_bitset_size) {
     @setEvalBranchQuota(10000);
     var bitset = std.StaticBitSet(char_bitset_size).initEmpty();
     var c: u8 = 0;
@@ -56,6 +56,29 @@ fn _isVisibleChar(c: u8) bool {
 
 const testing = std.testing;
 
+test "makeStaticCharBitSet" {
+    const bs = makeStaticCharBitSet(_isTokenChar);
+    var c: u8 = 0;
+    while (true) : (c += 1) {
+        try testing.expectEqual(_isTokenChar(c), bs.isSet(c));
+        if (c == '\xff') break;
+    }
+}
+
+test "isVisibleChar" {
+    try testing.expect(!isVisibleChar('\x20'));
+    try testing.expect(isVisibleChar('\x21'));
+    try testing.expect(isVisibleChar('\x7e'));
+    try testing.expect(!isVisibleChar('\x7f'));
+}
+
+test "isObsTextChar" {
+    try testing.expect(!isObsTextChar('\x00'));
+    try testing.expect(!isObsTextChar('\x7f'));
+    try testing.expect(isObsTextChar('\x80'));
+    try testing.expect(isObsTextChar('\xff'));
+}
+
 test "isDelimChar" {
     var c: u8 = 0;
     while (true) : (c += 1) {
@@ -66,8 +89,22 @@ test "isDelimChar" {
 
 test "isTokenChar" {
     var c: u8 = 0;
+    var done: bool = false;
     while (true) : (c += 1) {
         try testing.expectEqual(_isTokenChar(c), isTokenChar(c));
         if (c == '\xff') break;
     }
+}
+
+test "isFieldVisibleChar" {
+    try testing.expect(isFieldVisibleChar('a'));
+    try testing.expect(isFieldVisibleChar('\xff'));
+    try testing.expect(!isFieldVisibleChar('\t'));
+}
+
+test "isWhiteSpaceChar" {
+    try testing.expect(isWhiteSpaceChar(' '));
+    try testing.expect(isWhiteSpaceChar('\t'));
+    try testing.expect(!isWhiteSpaceChar('\r'));
+    try testing.expect(!isWhiteSpaceChar('\n'));
 }
