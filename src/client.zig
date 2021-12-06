@@ -11,17 +11,7 @@ const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 
 // const http_log = std.log.scoped(.http);
-const http_log = struct {
-    pub fn debug(
-        comptime format: []const u8,
-        args: anytype,
-    ) void {}
-
-    pub fn info(
-        comptime format: []const u8,
-        args: anytype,
-    ) void {}
-};
+const http_log = @import("nop_log.zig").scoped(.http);
 
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;

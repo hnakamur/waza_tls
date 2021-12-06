@@ -15,22 +15,7 @@ const Version = @import("version.zig").Version;
 const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
 // const http_log = std.log.scoped(.http);
-const http_log = struct {
-    pub fn debug(
-        comptime format: []const u8,
-        args: anytype,
-    ) void {}
-
-    pub fn info(
-        comptime format: []const u8,
-        args: anytype,
-    ) void {}
-
-    pub fn warn(
-        comptime format: []const u8,
-        args: anytype,
-    ) void {}
-};
+const http_log = @import("nop_log.zig").scoped(.http);
 
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
@@ -231,7 +216,9 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 if (@hasDecl(Handler, "init")) {
                     try self.handler.init();
                 }
-                http_log.debug("Conn main_completion=0x{x}, linked_completion=0x{x}", .{
+                http_log.debug("Server.Conn self=0x{x}, server=0x{x}, main_completion=0x{x}, linked_completion=0x{x}", .{
+                    @ptrToInt(self),
+                    @ptrToInt(self.server),
                     @ptrToInt(&self.completion.linked_completion.main_completion),
                     @ptrToInt(&self.completion.linked_completion.linked_completion),
                 });
@@ -239,7 +226,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             }
 
             pub fn deinit(self: *Conn) !void {
-                http_log.debug("Server.Conn.deinit self=0x{x}", .{@ptrToInt(self)});
+                http_log.debug("Server.Conn.deinit self=0x{x}, server=0x{x}", .{@ptrToInt(self), @ptrToInt(self.server)});
                 self.server.removeConnId(self.conn_id);
                 http_log.debug("Conn.deinit after removeConnId self=0x{x}, server.done={}", .{ @ptrToInt(self), self.server.done });
                 if (@hasDecl(Handler, "deinit")) {

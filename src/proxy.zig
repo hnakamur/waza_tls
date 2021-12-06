@@ -46,7 +46,7 @@ pub fn Proxy(comptime Context: type) type {
                         }
                     }
                 } else |err| {
-                    http_log.err("Proxy.Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
+                    http_log.warn("Proxy.Handler.recvRequestHeaderCallback err={s}", .{@errorName(err)});
                 }
             }
             fn connectCallback(
