@@ -89,20 +89,20 @@ pub fn build(b: *std.build.Builder) void {
 
     // test step
     const test_step = b.step("test", "Run library tests");
-    var pre_check_step = TestPreCheckStep.create(b);
-    test_step.dependOn(&pre_check_step.step);
     test_step.dependOn(&unit_tests.step);
     test_step.dependOn(&mock_tests.step);
     test_step.dependOn(&real_tests.step);
-    const merge_step = b.addSystemCommand(&[_][]const u8{
-        "kcov",
-        "--merge",
-        "kcov-output",
-        "kcov-output-unit",
-        "kcov-output-mock",
-        "kcov-output-real",
-    });
-    test_step.dependOn(&merge_step.step);
+    if (coverage) {
+        const merge_step = b.addSystemCommand(&[_][]const u8{
+            "kcov",
+            "--merge",
+            "kcov-output",
+            "kcov-output-unit",
+            "kcov-output-mock",
+            "kcov-output-real",
+        });
+        test_step.dependOn(&merge_step.step);
+    }
 
     const example_step = b.step("examples", "Build examples");
     inline for (.{
