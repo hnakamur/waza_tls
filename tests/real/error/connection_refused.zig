@@ -4,44 +4,52 @@ const http = @import("http");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
-const iptables = @import("iptables.zig");
 
 test "real / error / connection refused" {
-    if (std.os.linux.getuid() != 0) return error.SkipZigTest;
+    // testing.log_level = .debug;
 
     try struct {
         const Context = @This();
         const Client = http.Client(Context);
+        const Server = http.Server(Context, Handler);
 
-        client: Client = undefined,
-        connect_result: IO.ConnectError!void = undefined,
+        const Handler = struct {
+            conn: *Server.Conn = undefined,
+
+            pub fn start(self: *Handler) void {}
+        };
 
         fn connectCallback(
             self: *Context,
             result: IO.ConnectError!void,
         ) void {
             self.connect_result = result;
+            self.client.done = true;
         }
 
+        client: Client = undefined,
+        server: Server = undefined,
+        connect_result: IO.ConnectError!void = undefined,
+
         fn runTest() !void {
-            const dest_addr = "127.0.0.1";
-            const dest_port = 3131;
-
-            const allocator = testing.allocator;
-            try iptables.appendRule(allocator, dest_addr, dest_port, .reject);
-            defer iptables.deleteRule(allocator, dest_addr, dest_port, .reject) catch @panic("delete iptables rule");
-
             var io = try IO.init(32, 0);
             defer io.deinit();
 
-            const address = try std.net.Address.parseIp4(dest_addr, dest_port);
+            const allocator = testing.allocator;
+
+            // Use a random port
+            const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
             var self: Context = .{};
+
+            self.server = try Server.init(allocator, &io, &self, address, .{});
+            const bound_address = self.server.bound_address;
+            self.server.deinit();
 
             self.client = try Client.init(allocator, &io, &self, &.{});
             defer self.client.deinit();
 
-            try self.client.connect(address, connectCallback);
+            try self.client.connect(bound_address, connectCallback);
 
             while (!self.client.done) {
                 try io.tick();

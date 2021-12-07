@@ -10,8 +10,8 @@ const RecvResponse = @import("recv_response.zig").RecvResponse;
 const Method = @import("method.zig").Method;
 const Version = @import("version.zig").Version;
 
-// const http_log = std.log.scoped(.http);
-const http_log = @import("nop_log.zig").scoped(.http);
+const http_log = std.log.scoped(.http);
+// const http_log = @import("nop_log.zig").scoped(.http);
 
 const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
 const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
@@ -126,7 +126,6 @@ pub fn Client(comptime Context: type) type {
             if (result) |_| {} else |err| {
                 http_log.debug("Client.connectCallback before calling close, err={s}", .{@errorName(err)});
                 self.close();
-                http_log.debug("Client.connectCallback after calling close", .{});
             }
         }
 
