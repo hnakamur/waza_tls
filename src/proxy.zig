@@ -58,7 +58,8 @@ pub fn Proxy(comptime Context: type) type {
                     self.client_connected = true;
                     self.sendRequestHeader();
                 } else |err| {
-                    http_log.err("Proxy.Handler.connectCallback err={s}", .{@errorName(err)});
+                    http_log.warn("Proxy.Handler.connectCallback err={s}", .{@errorName(err)});
+                    self.conn.close(closeConnCallback);
                 }
             }
             fn sendRequestHeader(

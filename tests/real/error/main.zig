@@ -29,9 +29,10 @@ const too_long_req_method = @import("too_long_req_method.zig");
 const too_long_req_uri = @import("too_long_req_uri.zig");
 const too_long_resp_hdr = @import("too_long_resp_hdr.zig");
 
-const proxy_connect_err = @import("proxy_connect_err.zig");
+const proxy_connect_origin_err = @import("proxy_connect_origin_err.zig");
 const proxy_recv_req_content_err = @import("proxy_recv_req_content_err.zig");
 const proxy_recv_req_hdr_err = @import("proxy_recv_req_hdr_err.zig");
+const proxy_recv_resp_hdr_err = @import("proxy_recv_resp_hdr_err.zig");
 const proxy_recv_resp_content_err = @import("proxy_recv_resp_content_err.zig");
 
 comptime {

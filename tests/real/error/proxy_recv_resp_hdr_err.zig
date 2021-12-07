@@ -8,7 +8,7 @@ const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
 
-test "real / error / proxy connect error" {
+test "real / error / proxy recv resp header error" {
     // testing.log_level = .debug;
     const content = "Hello from http.OriginServer\n";
 
