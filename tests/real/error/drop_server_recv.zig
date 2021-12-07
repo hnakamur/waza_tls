@@ -10,8 +10,9 @@ const testing = std.testing;
 const iptables = @import("iptables.zig");
 
 test "real / error / drop server recv" {
-    // testing.log_level = .debug;
+    if (std.os.linux.getuid() != 0) return error.SkipZigTest;
 
+    // testing.log_level = .debug;
     const dest_addr = "127.0.0.1";
     const dest_port = 3131;
     const content = "Hello from http.Server\n";

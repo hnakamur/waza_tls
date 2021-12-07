@@ -127,6 +127,8 @@ fn run(
 const testing = std.testing;
 
 test "real / error / addRule" {
+    if (std.os.linux.getuid() != 0) return error.SkipZigTest;
+
     const allocator = testing.allocator;
 
     try appendRule(allocator, "127.0.0.1", 3131, .reject);

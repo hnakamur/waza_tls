@@ -7,6 +7,8 @@ const testing = std.testing;
 const iptables = @import("iptables.zig");
 
 test "real / error / connection refused" {
+    if (std.os.linux.getuid() != 0) return error.SkipZigTest;
+
     try struct {
         const Context = @This();
         const Client = http.Client(Context);

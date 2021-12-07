@@ -122,30 +122,3 @@ pub fn build(b: *std.build.Builder) void {
         example_step.dependOn(&example.step);
     }
 }
-
-const Step = std.build.Step;
-
-pub const TestPreCheckStep = struct {
-    step: Step,
-    builder: *std.build.Builder,
-
-    pub fn create(builder: *std.build.Builder) *TestPreCheckStep {
-        const self = builder.allocator.create(TestPreCheckStep) catch unreachable;
-        self.* = TestPreCheckStep{
-            .builder = builder,
-            .step = Step.init(.Custom, "test pre-check", builder.allocator, make),
-        };
-        return self;
-    }
-
-    fn make(step: *Step) !void {
-        const self = @fieldParentPtr(TestPreCheckStep, "step", step);
-
-        const uid = std.os.linux.getuid();
-        const root_uid = 0;
-        if (uid != root_uid) {
-            std.debug.warn("zig build test must be executed with root user to invoke iptables in tests.\n", .{});
-            return error.MustBeExecutedWithRootUser;
-        }
-    }
-};
