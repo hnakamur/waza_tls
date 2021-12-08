@@ -1,5 +1,5 @@
 const std = @import("std");
-const isTokenChar = @import("token_char.zig").isTokenChar;
+const isTokenChar = @import("lex.zig").isTokenChar;
 
 pub const MethodType = enum(u4) {
     // https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-semantics-19#section-9

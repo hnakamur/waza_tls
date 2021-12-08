@@ -1,8 +1,8 @@
 const std = @import("std");
-const token_char = @import("token_char.zig");
-const isTokenChar = token_char.isTokenChar;
-const isFieldVisibleChar = token_char.isFieldVisibleChar;
-const isWhiteSpaceChar = token_char.isWhiteSpaceChar;
+const lex = @import("lex.zig");
+const isTokenChar = lex.isTokenChar;
+const isFieldVisibleChar = lex.isFieldVisibleChar;
+const isWhiteSpaceChar = lex.isWhiteSpaceChar;
 
 const http_log = std.log.scoped(.http);
 

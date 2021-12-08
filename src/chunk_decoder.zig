@@ -3,16 +3,14 @@ const fifo = std.fifo;
 const BytesBuf = @import("bytes.zig").BytesBuf;
 const BytesView = @import("bytes.zig").BytesView;
 
-pub fn ChunkedDecoder(
-    comptime output_buffer_type: fifo.LinearFifoBufferType,
-) type {
+pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
     return struct {
         const Self = @This();
 
         pub const Error = error{
             InvalidChunk,
             InvalidState,
-        };
+        } || (if (WriterOrVoidType == void) error{} else WriterOrVoidType.Error);
 
         const State = enum {
             chunk_size,
@@ -29,9 +27,9 @@ pub fn ChunkedDecoder(
         pub fn decode(
             self: *Self,
             input: *BytesView,
-            output: *BytesBuf(output_buffer_type),
+            output: WriterOrVoidType,
         ) Error!bool {
-            while (input.readByte()) |c| {
+            while (input.peekByte()) |c| {
                 switch (self.state) {
                     .chunk_size => {
                         if (std.fmt.charToDigit(c, 16)) |d| {
@@ -63,10 +61,9 @@ pub fn ChunkedDecoder(
                                 self.state = .chunk_data_cr;
                             } else return error.InvalidChunk;
                         } else {
-                            output.writeItem(c) catch |_| {
-                                input.unreadByte();
-                                return false;
-                            };
+                            if (WriterOrVoidType != void) {
+                                _ = try output.writeByte(c);
+                            }
                             self.chunk_size.? -= 1;
                         }
                     },
@@ -77,11 +74,13 @@ pub fn ChunkedDecoder(
                     },
                     .last_chunk_cr => {
                         if (c == '\n') {
+                            input.advance();
                             return true;
                         } else return error.InvalidChunk;
                     },
                     else => return error.InvalidState,
                 }
+                input.advance();
             }
             return false;
         }
@@ -90,16 +89,25 @@ pub fn ChunkedDecoder(
 
 const testing = std.testing;
 
+test "ChunkDecoder / void output" {
+    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n");
+    var decoder = ChunkedDecoder(void){};
+    testing.log_level = .debug;
+    try testing.expect(try decoder.decode(&input, {}));
+}
+
 test "ChunkDecoder / dynamic output buffer" {
     const allocator = testing.allocator;
 
     var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n");
-    var output = BytesBuf(.Dynamic).init(allocator);
+    const DynamicBuf = BytesBuf(.Dynamic);
+
+    var output = DynamicBuf.init(allocator);
     defer output.deinit();
 
-    var decoder = ChunkedDecoder(.Dynamic){};
+    var decoder = ChunkedDecoder(DynamicBuf.Writer){};
     testing.log_level = .debug;
-    try testing.expect(try decoder.decode(&input, &output));
+    try testing.expect(try decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("hello, chunked", output.readableSlice(0));
 }
 
@@ -107,21 +115,24 @@ test "ChunkDecoder / slice output buffer" {
     const allocator = testing.allocator;
 
     var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n");
+
+    const SliceBuf = BytesBuf(.Slice);
+
     var buf = [_]u8{0} ** 5;
-    var output = BytesBuf(.Slice).init(&buf);
+    var output = SliceBuf.init(&buf);
     defer output.deinit();
 
-    var decoder = ChunkedDecoder(.Slice){};
+    var decoder = ChunkedDecoder(SliceBuf.Writer){};
     testing.log_level = .debug;
 
-    try testing.expect(!try decoder.decode(&input, &output));
+    try testing.expectError(error.OutOfMemory, decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("hello", output.readableSlice(0));
 
     output.discard(buf.len);
-    try testing.expect(!try decoder.decode(&input, &output));
+    try testing.expectError(error.OutOfMemory, decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings(", chu", output.readableSlice(0));
 
     output.discard(buf.len);
-    try testing.expect(try decoder.decode(&input, &output));
+    try testing.expect(try decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("nked", output.readableSlice(0));
 }

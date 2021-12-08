@@ -15,17 +15,15 @@ pub const BytesView = struct {
         return .{ .bytes = bytes };
     }
 
-    pub fn readByte(self: *BytesView) ?u8 {
+    pub fn peekByte(self: *const BytesView) ?u8 {
         if (self.pos >= self.bytes.len) {
             return null;
         }
-        const b = self.bytes[self.pos];
-        self.pos += 1;
-        return b;
+        return self.bytes[self.pos];
     }
 
-    pub fn unreadByte(self: *BytesView) void {
-        self.pos -= 1;
+    pub fn advance(self: *BytesView) void {
+        self.pos += 1;
     }
 
     pub fn rest(self: *const BytesView) []const u8 {
@@ -38,10 +36,13 @@ const testing = std.testing;
 test "BytesView" {
     var vw = BytesView.init("zig");
 
-    try testing.expectEqual(@as(?u8, 'z'), vw.readByte());
+    try testing.expectEqual(@as(?u8, 'z'), vw.peekByte());
+    vw.advance();
     try testing.expectEqualStrings("ig", vw.rest());
-    try testing.expectEqual(@as(?u8, 'i'), vw.readByte());
-    try testing.expectEqual(@as(?u8, 'g'), vw.readByte());
+    try testing.expectEqual(@as(?u8, 'i'), vw.peekByte());
+    vw.advance();
+    try testing.expectEqual(@as(?u8, 'g'), vw.peekByte());
+    vw.advance();
     try testing.expectEqualStrings("", vw.rest());
-    try testing.expectEqual(@as(?u8, null), vw.readByte());
+    try testing.expectEqual(@as(?u8, null), vw.peekByte());
 }

@@ -8,6 +8,14 @@ pub fn isTokenChar(c: u8) bool {
     return tokenCharBitset.isSet(c);
 }
 
+pub fn isQdTextChar(c: u8) bool {
+    return qdTextCharBitset.isSet(c);
+}
+
+pub fn isQuotedPairChar(c: u8) bool {
+    return quotedPairCharBitset.isSet(c);
+}
+
 pub fn isVisibleChar(c: u8) bool {
     return '\x21' <= c and c <= '\x7e';
 }
@@ -26,6 +34,8 @@ pub fn isWhiteSpaceChar(c: u8) bool {
 
 const delimCharBitset = makeStaticCharBitSet(_isDelimChar);
 const tokenCharBitset = makeStaticCharBitSet(_isTokenChar);
+const qdTextCharBitset = makeStaticCharBitSet(_isQdTextChar);
+const quotedPairCharBitset = makeStaticCharBitSet(_isQuotedPairChar);
 
 const char_bitset_size = 256;
 
@@ -52,6 +62,20 @@ fn _isTokenChar(c: u8) bool {
 
 fn _isVisibleChar(c: u8) bool {
     return c > '\x20' and c < '\x7f';
+}
+
+fn _isQdTextChar(c: u8) bool {
+    return switch (c) {
+        '\t', ' ', '\x21', '\x23'...'\x5b', '\x5d'...'\x7e', '\x80'...'\xff' => true,
+        else => false,
+    };
+}
+
+fn _isQuotedPairChar(c: u8) bool {
+    return switch (c) {
+        '\t', ' ', '\x21'...'\x7e', '\x80'...'\xff' => true,
+        else => false,
+    };
 }
 
 const testing = std.testing;
@@ -89,9 +113,24 @@ test "isDelimChar" {
 
 test "isTokenChar" {
     var c: u8 = 0;
-    var done: bool = false;
     while (true) : (c += 1) {
         try testing.expectEqual(_isTokenChar(c), isTokenChar(c));
+        if (c == '\xff') break;
+    }
+}
+
+test "isQdTextChar" {
+    var c: u8 = 0;
+    while (true) : (c += 1) {
+        try testing.expectEqual(_isQdTextChar(c), isQdTextChar(c));
+        if (c == '\xff') break;
+    }
+}
+
+test "isQuotedPairChar" {
+    var c: u8 = 0;
+    while (true) : (c += 1) {
+        try testing.expectEqual(_isQuotedPairChar(c), isQuotedPairChar(c));
         if (c == '\xff') break;
     }
 }
