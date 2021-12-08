@@ -33,7 +33,6 @@ pub fn QuotedStringParser(
             output: WriterOrVoidType,
         ) Error!bool {
             while (input.peekByte()) |c| {
-                // std.log.debug("c=0x{02x}", .{c});
                 switch (self.state) {
                     .initial => {
                         if (c == '"') {
@@ -45,7 +44,6 @@ pub fn QuotedStringParser(
                             self.state = .post_backslash;
                         } else if (lex.isQdTextChar(c)) {
                             if (WriterOrVoidType != void) {
-                                std.log.debug("write#1 c={c}", .{c});
                                 _ = try output.writeByte(c);
                             }
                         } else if (c == '"') {
@@ -58,7 +56,6 @@ pub fn QuotedStringParser(
                         if (lex.isQuotedPairChar(c)) {
                             self.state = .qdtext_or_backslash;
                             if (WriterOrVoidType != void) {
-                                std.log.debug("write#2 c={c}", .{c});
                                 _ = try output.writeByte(c);
                             }
                         } else return error.InvalidCharacter;
