@@ -74,6 +74,7 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                     },
                     .last_chunk_cr => {
                         if (c == '\n') {
+                            self.state = .finished;
                             input.advance();
                             return true;
                         } else return error.InvalidChunk;
@@ -92,7 +93,6 @@ const testing = std.testing;
 test "ChunkDecoder / void output" {
     var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n");
     var decoder = ChunkedDecoder(void){};
-    testing.log_level = .debug;
     try testing.expect(try decoder.decode(&input, {}));
 }
 
@@ -106,15 +106,13 @@ test "ChunkDecoder / dynamic output buffer" {
     defer output.deinit();
 
     var decoder = ChunkedDecoder(DynamicBuf.Writer){};
-    testing.log_level = .debug;
     try testing.expect(try decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("hello, chunked", output.readableSlice(0));
 }
 
 test "ChunkDecoder / slice output buffer" {
-    const allocator = testing.allocator;
-
-    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n");
+    var data = "7\r\nhello, \r\n7\r\nchunked\r\n0\r\n";
+    var input = BytesView.init(data[0..7]);
 
     const SliceBuf = BytesBuf(.Slice);
 
@@ -123,16 +121,58 @@ test "ChunkDecoder / slice output buffer" {
     defer output.deinit();
 
     var decoder = ChunkedDecoder(SliceBuf.Writer){};
-    testing.log_level = .debug;
 
+    try testing.expect(!try decoder.decode(&input, output.writer()));
+    try testing.expectEqualStrings("hell", output.readableSlice(0));
+
+    input = BytesView.init(data[7..]);
     try testing.expectError(error.OutOfMemory, decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("hello", output.readableSlice(0));
 
-    output.discard(buf.len);
+    output.discard(output.count);
     try testing.expectError(error.OutOfMemory, decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings(", chu", output.readableSlice(0));
 
-    output.discard(buf.len);
+    output.discard(output.count);
     try testing.expect(try decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("nked", output.readableSlice(0));
+}
+
+test "ChunkDecoder / invalid chunk" {
+    var buf = [_]u8{0} ** 16;
+    const SliceBuf = BytesBuf(.Slice);
+    var output = SliceBuf.init(&buf);
+    defer output.deinit();
+
+    const data_list = [_][]const u8{
+        "7\n",
+        "\r",
+        "7\r\r",
+        "1\r\na\n",
+        "1\r\na\r\r",
+        "0\r\r",
+    };
+    for (data_list) |data| {
+        var input = BytesView.init(data);
+        var decoder = ChunkedDecoder(SliceBuf.Writer){};
+        output.discard(output.count);
+        try testing.expectError(error.InvalidChunk, decoder.decode(&input, output.writer()));
+    }
+}
+
+test "ChunkDecoder / invalid state" {
+    const allocator = testing.allocator;
+
+    var data = "7\r\nhello, \r\n7\r\nchunked\r\n0\r\n";
+    var input = BytesView.init(data);
+
+    const DynamicBuf = BytesBuf(.Dynamic);
+    var output = DynamicBuf.init(allocator);
+    defer output.deinit();
+
+    var decoder = ChunkedDecoder(DynamicBuf.Writer){};
+    try testing.expect(try decoder.decode(&input, output.writer()));
+
+    input = BytesView.init(data);
+    try testing.expectError(error.InvalidState, decoder.decode(&input, output.writer()));
 }

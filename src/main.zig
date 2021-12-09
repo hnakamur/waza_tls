@@ -20,6 +20,11 @@ pub const Proxy = @import("proxy.zig").Proxy;
 
 pub const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 
+const ChunkedDecoder = @import("chunk_decoder.zig").ChunkedDecoder;
+const QuotedStringParser = @import("quoted_string.zig").QuotedStringParser;
+const bytes = @import("bytes.zig");
+const lex = @import("lex.zig");
+
 pub const config = @import("config.zig");
 
 comptime {
