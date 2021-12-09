@@ -10,7 +10,6 @@ pub fn TokenParser(
         const Self = @This();
 
         pub const Error = error{
-            InvalidCharacter,
             InvalidState,
         } || (if (WriterOrVoidType == void) error{} else WriterOrVoidType.Error);
 
