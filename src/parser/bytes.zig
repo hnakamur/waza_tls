@@ -9,10 +9,11 @@ pub fn BytesBuf(
 
 pub const BytesView = struct {
     bytes: []const u8,
+    eof: bool,
     pos: usize = 0,
 
-    pub fn init(bytes: []const u8) BytesView {
-        return .{ .bytes = bytes };
+    pub fn init(bytes: []const u8, eof: bool) BytesView {
+        return .{ .bytes = bytes, .eof = eof };
     }
 
     pub fn peekByte(self: *const BytesView) ?u8 {
@@ -34,7 +35,7 @@ pub const BytesView = struct {
 const testing = std.testing;
 
 test "BytesView" {
-    var vw = BytesView.init("zig");
+    var vw = BytesView.init("zig", true);
 
     try testing.expectEqual(@as(?u8, 'z'), vw.peekByte());
     vw.advance();
