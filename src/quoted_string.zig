@@ -72,7 +72,6 @@ pub fn QuotedStringParser(
 const testing = std.testing;
 
 test "QuotedStringParser void output" {
-    testing.log_level = .debug;
     var vw = BytesView.init(
         \\"hello"
     );
@@ -82,15 +81,19 @@ test "QuotedStringParser void output" {
 }
 
 test "QuotedStringParser SliceBuf output" {
-    testing.log_level = .debug;
-    var vw = BytesView.init(
+    var data = 
         \\"hello"
-    );
+    ;
     const SliceBuf = fifo.LinearFifo(u8, .Slice);
     var buf = [_]u8{0} ** 4;
     var output = SliceBuf.init(&buf);
     var parser = QuotedStringParser(SliceBuf.Writer).init();
 
+    var vw = BytesView.init(data[0..3]);
+    try testing.expect(!try parser.parse(&vw, output.writer()));
+    try testing.expectEqualStrings("he", output.readableSlice(0));
+
+    vw = BytesView.init(data[3..]);
     try testing.expectError(error.OutOfMemory, parser.parse(&vw, output.writer()));
     try testing.expectEqualStrings("hell", &buf);
 
@@ -103,4 +106,45 @@ test "QuotedStringParser SliceBuf output" {
     );
     try testing.expect(try parser.parse(&vw, output.writer()));
     try testing.expectEqualStrings("o", output.readableSlice(0));
+}
+
+test "QuotedStringParser escape" {
+    const allocator = testing.allocator;
+
+    const DynamicBuf = fifo.LinearFifo(u8, .Dynamic);
+    var output = DynamicBuf.init(allocator);
+    defer output.deinit();
+
+    var data = "\"a\\\\b\\\tc\"";
+    var vw = BytesView.init(data);
+
+    var parser = QuotedStringParser(DynamicBuf.Writer).init();
+    try testing.expect(try parser.parse(&vw, output.writer()));
+    try testing.expectEqualStrings("a\\b\tc", output.readableSlice(0));
+}
+
+test "QuotedStringParser invalid character" {
+    const data_list = [_][]const u8{
+        "a",
+        "\"\x7f",
+        "\"\\\x7f",
+    };
+    for (data_list) |data| {
+        var parser = QuotedStringParser(void).init();
+        var vw = BytesView.init(data);
+        try testing.expectError(error.InvalidCharacter, parser.parse(&vw, {}));
+    }
+}
+
+test "QuotedStringParser invalid state" {
+    const data = 
+        \\"hello"
+    ;
+    var parser = QuotedStringParser(void).init();
+
+    var vw = BytesView.init(data);
+    try testing.expect(try parser.parse(&vw, {}));
+
+    vw = BytesView.init(data);
+    try testing.expectError(error.InvalidState, parser.parse(&vw, {}));
 }
