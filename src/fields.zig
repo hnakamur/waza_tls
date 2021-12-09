@@ -3,7 +3,7 @@ const fmt = std.fmt;
 const math = std.math;
 const assert = std.debug.assert;
 const FieldIterator = @import("field_iterator.zig").FieldIterator;
-const isWhiteSpaceChar = @import("lex.zig").isWhiteSpaceChar;
+const isWhiteSpaceChar = @import("parser.zig").lex.isWhiteSpaceChar;
 
 const http_log = std.log.scoped(.http);
 

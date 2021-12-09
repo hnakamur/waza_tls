@@ -1,5 +1,4 @@
 const std = @import("std");
-const fifo = std.fifo;
 const lex = @import("lex.zig");
 const BytesView = @import("bytes.zig").BytesView;
 
@@ -69,6 +68,7 @@ pub fn QuotedStringParser(
     };
 }
 
+const fifo = std.fifo;
 const testing = std.testing;
 
 test "QuotedStringParser void output" {

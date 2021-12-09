@@ -1,5 +1,5 @@
 const std = @import("std");
-const lex = @import("lex.zig");
+const lex = @import("parser.zig").lex;
 const isTokenChar = lex.isTokenChar;
 const isFieldVisibleChar = lex.isFieldVisibleChar;
 const isWhiteSpaceChar = lex.isWhiteSpaceChar;
