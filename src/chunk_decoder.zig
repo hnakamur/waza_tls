@@ -155,7 +155,7 @@ const ChunkExtSkipper = struct {
     pub const Error = error{
         InvalidCharacter,
         InvalidState,
-    };
+    } || TokenParser(void).Error;
 
     const State = enum {
         initial,

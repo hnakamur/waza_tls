@@ -10,11 +10,13 @@ pub fn TokenParser(
         const Self = @This();
 
         pub const Error = error{
+            EmptyToken,
             InvalidState,
         } || (if (WriterOrVoidType == void) error{} else WriterOrVoidType.Error);
 
         const State = enum {
             initial,
+            token,
             finished,
         };
 
@@ -31,19 +33,24 @@ pub fn TokenParser(
         ) Error!bool {
             while (input.peekByte()) |c| {
                 switch (self.state) {
-                    .initial => {
-                        if (isTokenChar(c)) {
-                            if (WriterOrVoidType != void) {
-                                _ = try output.writeByte(c);
-                            }
-                        } else {
-                            self.state = .finished;
-                            return true;
+                    .initial => if (isTokenChar(c)) {
+                        if (WriterOrVoidType != void) {
+                            _ = try output.writeByte(c);
                         }
+                        input.advance();
+                        self.state = .token;
+                    } else return error.EmptyToken,
+                    .token => if (isTokenChar(c)) {
+                        if (WriterOrVoidType != void) {
+                            _ = try output.writeByte(c);
+                        }
+                        input.advance();
+                    } else {
+                        self.state = .finished;
+                        return true;
                     },
                     else => return error.InvalidState,
                 }
-                input.advance();
             }
             return input.eof;
         }
@@ -84,4 +91,10 @@ test "TokenParser success with delimiter" {
 
     vw = BytesView.init("c", true);
     try testing.expectError(error.InvalidState, parser.parse(&vw, output.writer()));
+}
+
+test "TokenParser empty" {
+    var parser = TokenParser(void).init();
+    var vw = BytesView.init("\x7f", false);
+    try testing.expectError(error.EmptyToken, parser.parse(&vw, {}));
 }
