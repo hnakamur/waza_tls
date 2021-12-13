@@ -24,6 +24,8 @@ const parser = @import("parser.zig");
 const lex = parser.lex;
 const ChunkedDecoder = @import("chunk_decoder.zig").ChunkedDecoder;
 
+const dns = @import("dns.zig");
+
 pub const config = @import("config.zig");
 
 comptime {
