@@ -12,7 +12,8 @@ pub fn TokenParser(
         pub const Error = error{
             EmptyToken,
             InvalidState,
-        } || (if (WriterOrVoidType == void) error{} else WriterOrVoidType.Error);
+        } || WriteError;
+        const WriteError = if (WriterOrVoidType == void) error{} else WriterOrVoidType.Error;
 
         const State = enum {
             initial,
@@ -34,16 +35,12 @@ pub fn TokenParser(
             while (input.peekByte()) |c| {
                 switch (self.state) {
                     .initial => if (isTokenChar(c)) {
-                        if (WriterOrVoidType != void) {
-                            _ = try output.writeByte(c);
-                        }
+                        try writeByte(output, c);
                         input.advance();
                         self.state = .token;
                     } else return error.EmptyToken,
                     .token => if (isTokenChar(c)) {
-                        if (WriterOrVoidType != void) {
-                            _ = try output.writeByte(c);
-                        }
+                        try writeByte(output, c);
                         input.advance();
                     } else {
                         self.state = .finished;
@@ -53,6 +50,15 @@ pub fn TokenParser(
                 }
             }
             return input.eof;
+        }
+
+        fn writeByte(
+            output: WriterOrVoidType,
+            b: u8,
+        ) WriteError!void {
+            if (WriterOrVoidType != void) {
+                _ = try output.writeByte(b);
+            }
         }
     };
 }

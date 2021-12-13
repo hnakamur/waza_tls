@@ -146,7 +146,7 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                     else => return error.InvalidState,
                 }
             }
-            return input.eof;
+            return if (input.eof) error.UnexpectedEof else false;
         }
     };
 }
@@ -155,6 +155,7 @@ const ChunkExtSkipper = struct {
     pub const Error = error{
         InvalidCharacter,
         InvalidState,
+        UnexpectedEof,
     } || TokenParser(void).Error;
 
     const State = enum {
@@ -182,6 +183,7 @@ const ChunkExtSkipper = struct {
         input: *BytesView,
     ) Error!bool {
         while (input.peekByte()) |c| {
+            std.log.debug("ChunkExtSkipper.parse c={c} (0x{x}) state={}", .{ c, c, self.state });
             switch (self.state) {
                 .initial => switch (c) {
                     '\t', ' ' => if (!skipOptionalWhiteSpaces(input)) {
@@ -272,7 +274,8 @@ const ChunkExtSkipper = struct {
                 else => return error.InvalidState,
             }
         }
-        return input.eof;
+        std.log.debug("ChunkExtSkipper.parse return after loop input.eof={}", .{input.eof});
+        return if (input.eof) error.UnexpectedEof else false;
     }
 };
 
@@ -292,6 +295,12 @@ test "ChunkDecoder / void output" {
     var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n", true);
     var decoder = ChunkedDecoder(void).init();
     try testing.expect(try decoder.decode(&input, {}));
+}
+
+test "ChunkDecoder / incomplete input void output" {
+    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n", true);
+    var decoder = ChunkedDecoder(void).init();
+    try testing.expectError(error.UnexpectedEof, decoder.decode(&input, {}));
 }
 
 test "ChunkDecoder / dynamic output buffer" {
@@ -378,7 +387,7 @@ test "ChunkDecoder / invalid state" {
 test "ChunkDecoder / chunk ext" {
     const data = "1;aa=bb\r\na\r\n0;bb=cc\r";
     var decoder = ChunkedDecoder(void).init();
-    for (data) |c| {
+    for (data) |c, i| {
         var input = BytesView.init(&[_]u8{c}, false);
         try testing.expect(!try decoder.decode(&input, {}));
     }
@@ -397,6 +406,14 @@ test "ChunkDecoder / chunk ext" {
         input = BytesView.init(invalid_data, false);
         try testing.expectError(error.InvalidChunk, decoder.decode(&input, {}));
     }
+}
+
+test "ChunkDecoder / incomplete chunk ext" {
+    // testing.log_level = .debug;
+    const data = "1;aa=bb\r\na\r\n0;bb=cc\r";
+    var input = BytesView.init(data, true);
+    var decoder = ChunkedDecoder(void).init();
+    try testing.expectError(error.UnexpectedEof, decoder.decode(&input, {}));
 }
 
 test "skipOptionalWhiteSpaces" {
