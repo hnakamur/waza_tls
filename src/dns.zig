@@ -137,6 +137,7 @@ fn writeNetworkU16(dest: *align(1) u16, value: u16) void {
 }
 
 const name_max_len: usize = 63;
+const name_max_encoded_len: usize = name_max_len + 2;
 
 const NameError = error{
     InvalidInput,
@@ -241,6 +242,21 @@ test "dns.encodeName/decodeName" {
     try testing.expectEqual(hostname.len, try encodeName(@TypeOf(fbs.writer()), fbs.writer(), hostname));
     const encoded_name = fbs.getWritten();
     try testing.expectEqualSlices(u8, "\x07example\x03com\x00", encoded_name);
+
+    var decoded_buf = [_]u8{0} ** name_max_len;
+    var fbs2 = io.fixedBufferStream(&decoded_buf);
+    try testing.expectEqual(encoded_name.len, try decodeName(@TypeOf(fbs2.writer()), fbs2.writer(), encoded_name));
+    try testing.expectEqualSlices(u8, hostname, fbs2.getWritten());
+}
+
+test "dns.encodeName/decodeName longest" {
+    const hostname = "a." ** 31 ++ "a";
+
+    var encoded_buf = [_]u8{0} ** name_max_encoded_len;
+    var fbs = io.fixedBufferStream(&encoded_buf);
+    try testing.expectEqual(hostname.len, try encodeName(@TypeOf(fbs.writer()), fbs.writer(), hostname));
+    const encoded_name = fbs.getWritten();
+    try testing.expectEqualSlices(u8, "\x01a" ** 32 ++ "\x00", encoded_name);
 
     var decoded_buf = [_]u8{0} ** name_max_len;
     var fbs2 = io.fixedBufferStream(&decoded_buf);
