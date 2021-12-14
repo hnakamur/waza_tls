@@ -88,52 +88,52 @@ pub const MsgHdr = packed struct {
     _arcount: u16 = undefined,
 
     pub fn id(self: *const MsgHdr) u16 {
-        return readNetworkU16(self._id);
+        return fromNetworkU16(self._id);
     }
 
     pub fn setId(self: *MsgHdr, value: u16) void {
-        writeNetworkU16(&self._id, value);
+        self._id = toNetworkU16(value);
     }
 
     pub fn qdcount(self: *const MsgHdr) u16 {
-        return readNetworkU16(self._qdcount);
+        return fromNetworkU16(self._qdcount);
     }
 
     pub fn setQdcount(self: *MsgHdr, value: u16) void {
-        writeNetworkU16(&self._qdcount, value);
+        self._qdcount = toNetworkU16(value);
     }
 
     pub fn ancount(self: *const MsgHdr) u16 {
-        return readNetworkU16(self._ancount);
+        return fromNetworkU16(self._ancount);
     }
 
     pub fn setAncount(self: *MsgHdr, value: u16) void {
-        writeNetworkU16(&self._ancount, value);
+        self._ancount = toNetworkU16(value);
     }
 
     pub fn nscount(self: *const MsgHdr) u16 {
-        return readNetworkU16(self._nscount);
+        return fromNetworkU16(self._nscount);
     }
 
     pub fn setNscount(self: *MsgHdr, value: u16) void {
-        writeNetworkU16(&self._nscount, value);
+        self._nscount = toNetworkU16(value);
     }
 
     pub fn arcount(self: *const MsgHdr) u16 {
-        return readNetworkU16(self._arcount);
+        return fromNetworkU16(self._arcount);
     }
 
     pub fn setArcount(self: *MsgHdr, value: u16) void {
-        writeNetworkU16(&self._arcount, value);
+        self._arcount = toNetworkU16(value);
     }
 };
 
-fn readNetworkU16(value: u16) u16 {
+fn fromNetworkU16(value: u16) u16 {
     return if (native_endian == network_byte_order) value else @byteSwap(u16, value);
 }
 
-fn writeNetworkU16(dest: *align(1) u16, value: u16) void {
-    dest.* = if (native_endian == network_byte_order) value else @byteSwap(u16, value);
+fn toNetworkU16(value: u16) u16 {
+    return if (native_endian == network_byte_order) value else @byteSwap(u16, value);
 }
 
 const name_max_len: usize = 63;
