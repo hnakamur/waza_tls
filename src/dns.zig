@@ -171,7 +171,7 @@ const QClass = enum(u16) {
 
 const Qr = enum(u1) {
     query = 0,
-    response,
+    response = 1,
 };
 
 const Opcode = enum(u4) {
@@ -276,7 +276,6 @@ pub const Question = struct {
     name: []const u8 = undefined,
     qtype: QType = undefined,
     qclass: QClass = QClass.IN,
-    allocator: *mem.Allocator,
 
     pub fn encode(self: *const Question, dest: []u8) NameError!usize {
         var pos = try encodeName(self.name, dest);
@@ -291,22 +290,47 @@ pub const Question = struct {
     }
 };
 
+pub const DecodeMessageError = error{
+    InvalidAnswer,
+    OutOfMemory,
+} || NameError;
+
+pub const Message = struct {
+    header: Header,
+    question: Question,
+    answer: Answer,
+
+    pub fn decode(allocator: *mem.Allocator, data: []const u8) DecodeMessageError!Message {
+        return Message{};
+    }
+
+    pub fn deinit(self: *Message, allocator: *mem.Allocator) void {
+        allocator.free(self.q.name);
+        for (self.records) |record| {
+            switch (record.rdata) {
+                .CNAME, .TXT => |str| allocator.free(str),
+                else => {},
+            }
+        }
+        self.records.deinit(allocator);
+    }
+};
+
 pub const Answer = struct {
-    q: Question,
     records: std.ArrayListUnmanaged(Record),
 };
 
 pub const Record = struct {
-    @"type": Type = undefined,
     class: Class = undefined,
     ttl: u32 = undefined,
     rdata: Rdata = undefined,
 };
 
-pub const Rdata = union(enum) {
-    string: []u8,
-    v4_addr: net.Ipv4Address,
-    v6_addr: net.Ipv6Address,
+pub const Rdata = union(Type) {
+    A: net.Ipv4Address,
+    CNAME: []const u8,
+    TXT: []const u8,
+    AAAA: net.Ipv6Address,
 };
 
 fn calcNameEncodedLen(name: []const u8) usize {
@@ -330,6 +354,7 @@ const offset_mask = 0xC0;
 
 fn calcLabelsDecodedLen(answer: []const u8, start_pos: usize) NameError!usize {
     var i: usize = start_pos;
+    var min_pos: usize = start_pos;
     var label_len: usize = 0;
     var dest_pos: usize = 0;
     while (i < answer.len) {
@@ -341,6 +366,10 @@ fn calcLabelsDecodedLen(answer: []const u8, start_pos: usize) NameError!usize {
         if (label_len & offset_mask == offset_mask) {
             std.log.debug("found pointer, answer[i]&0x3F={}, answer[i+1]=0x{x}", .{ label_len & 0x3F, answer[i + 1] });
             i = (label_len & @bitReverse(u8, offset_mask)) << 8 | answer[i + 1];
+            if (i >= min_pos) {
+                return error.InvalidName;
+            }
+            min_pos = i;
             std.log.debug("pointer offset={}", .{i});
         } else {
             if (dest_pos > 0) {
@@ -356,7 +385,7 @@ fn calcLabelsDecodedLen(answer: []const u8, start_pos: usize) NameError!usize {
 }
 
 test "dns.calcLabelsDecodedLen" {
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
 
     const answer = "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
         "\x03\x77\x77\x77\x06\x73\x61\x6b\x75\x72\x61\x02\x61\x64\x02\x6a\x70\x00" ++
@@ -378,19 +407,33 @@ test "dns.calcLabelsDecodedLen" {
     try testing.expectEqual(@as(NameError!usize, 36), calcLabelsDecodedLen(answer, start_pos));
 }
 
-fn decodeLabels(answer: []const u8, start_pos: usize, dest: []u8) usize {
+test "dns.calcLabelsDecodedLen loop" {
+    // testing.log_level = .debug;
+
+    const answer = "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
+        "\x03\x77\x77\x77\x06\x73\x61\x6b\x75\x72\x61\x02\x61\x64\x02\x6a\x70\xc0\x0c";
+    const start_pos = 12;
+    try testing.expectError(error.InvalidName, calcLabelsDecodedLen(answer, start_pos));
+}
+
+fn decodeLabels(answer: []const u8, start_pos: usize, dest: []u8) NameError!usize {
     var i: usize = start_pos;
+    var min_pos: usize = start_pos;
     var label_len: usize = 0;
     var dest_pos: usize = 0;
     while (i < answer.len) {
         label_len = answer[i];
         std.log.debug("i={}, answer[i]=0x{x}", .{ i, label_len });
         if (label_len == 0) {
-            break;
+            return dest_pos;
         }
         if (label_len & offset_mask == offset_mask) {
             std.log.debug("found pointer, answer[i]&0x3F={}, answer[i+1]=0x{x}", .{ label_len & 0x3F, answer[i + 1] });
             i = (label_len & @bitReverse(u8, offset_mask)) << 8 | answer[i + 1];
+            if (i >= min_pos) {
+                return error.InvalidName;
+            }
+            min_pos = i;
             std.log.debug("pointer offset={}", .{i});
         } else {
             if (dest_pos > 0) {
@@ -405,11 +448,11 @@ fn decodeLabels(answer: []const u8, start_pos: usize, dest: []u8) usize {
             i += label_len;
         }
     }
-    return dest_pos;
+    return error.InvalidName;
 }
 
 test "dns.decodeLabels" {
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
 
     const answer = "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
         "\x03\x77\x77\x77\x06\x73\x61\x6b\x75\x72\x61\x02\x61\x64\x02\x6a\x70\x00" ++
@@ -429,8 +472,32 @@ test "dns.decodeLabels" {
         "\xa3\x2b\x18\x46";
     const start_pos = 12 + 18 + 2 * 5 + 4 + 2;
     var decoded_buf = [_]u8{0} ** 36;
-    try testing.expectEqual(@as(usize, 36), decodeLabels(answer, start_pos, &decoded_buf));
+    try testing.expectEqual(@as(usize, 36), try decodeLabels(answer, start_pos, &decoded_buf));
     try testing.expectEqualStrings("site-112800350116.gslb3.sakura.ne.jp", &decoded_buf);
+}
+
+test "dns.decodeLabelsLoop" {
+    // testing.log_level = .debug;
+
+    const answer = "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
+        "\x03\x77\x77\x77\x06\x73\x61\x6b\x75\x72\x61\x02\x61\x64\x02\x6a\x70\xc0\x0c" ++
+        "\x00\x01" ++
+        "\x00\x01" ++
+        "\xc0\x0c" ++
+        "\x00\x05" ++
+        "\x00\x01" ++
+        "\x00\x00\x0c\x50" ++
+        "\x00\x24" ++
+        "\x11\x73\x69\x74\x65\x2d\x31\x31\x32\x38\x30\x30\x33\x35\x30\x31\x31\x36\x05\x67\x73\x6c\x62\x33\x06\x73\x61\x6b\x75\x72\x61\x02\x6e\x65\xc0\x1a" ++
+        "\xc0\x2e" ++
+        "\x00\x01" ++
+        "\x00\x01" ++
+        "\x00\x00\x00\x0a" ++
+        "\x00\x04" ++
+        "\xa3\x2b\x18\x46";
+    const start_pos = 12 + 18 + 2 * 5 + 4 + 2;
+    var decoded_buf = [_]u8{0} ** 36;
+    try testing.expectError(error.InvalidName, decodeLabels(answer, start_pos, &decoded_buf));
 }
 
 fn encodeName(name: []const u8, dest: []u8) NameError!usize {
