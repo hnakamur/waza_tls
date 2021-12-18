@@ -2,78 +2,80 @@ const std = @import("std");
 const io = std.io;
 const math = std.math;
 const mem = std.mem;
+const net = std.net;
+const Endian = std.builtin.Endian;
 
 const Type = enum(u16) {
     A = 1,
     NS = 2,
-    MD = 3,
-    MF = 4,
+    // MD = 3,
+    // MF = 4,
     CNAME = 5,
-    SOA = 6,
-    MB = 7,
-    MG = 8,
-    MR = 9,
-    NULL = 10,
-    PTR = 12,
-    HINFO = 13,
-    MINFO = 14,
-    MX = 15,
+    // SOA = 6,
+    // MB = 7,
+    // MG = 8,
+    // MR = 9,
+    // NULL = 10,
+    // PTR = 12,
+    // HINFO = 13,
+    // MINFO = 14,
+    // MX = 15,
     TXT = 16,
-    RP = 17,
-    AFSDB = 18,
-    X25 = 19,
-    ISDN = 20,
-    RT = 21,
-    NSAPPTR = 23,
-    SIG = 24,
-    KEY = 25,
-    PX = 26,
-    GPOS = 27,
+    // RP = 17,
+    // AFSDB = 18,
+    // X25 = 19,
+    // ISDN = 20,
+    // RT = 21,
+    // NSAPPTR = 23,
+    // SIG = 24,
+    // KEY = 25,
+    // PX = 26,
+    // GPOS = 27,
     AAAA = 28,
-    LOC = 29,
-    NXT = 30,
-    EID = 31,
-    NIMLOC = 32,
-    SRV = 33,
-    ATMA = 34,
-    NAPTR = 35,
-    KX = 36,
-    CERT = 37,
-    DNAME = 39,
-    OPT = 41, // EDNS
-    APL = 42,
-    DS = 43,
-    SSHFP = 44,
-    RRSIG = 46,
-    NSEC = 47,
-    DNSKEY = 48,
-    DHCID = 49,
-    NSEC3 = 50,
-    NSEC3PARAM = 51,
-    TLSA = 52,
-    SMIMEA = 53,
-    HIP = 55,
-    NINFO = 56,
-    RKEY = 57,
-    TALINK = 58,
-    CDS = 59,
-    CDNSKEY = 60,
-    OPENPGPKEY = 61,
-    CSYNC = 62,
-    ZONEMD = 63,
-    SVCB = 64,
-    HTTPS = 65,
-    SPF = 99,
-    UINFO = 100,
-    UID = 101,
-    GID = 102,
-    UNSPEC = 103,
-    NID = 104,
-    L32 = 105,
-    L64 = 106,
-    LP = 107,
-    EUI48 = 108,
-    EUI64 = 109,
+    // LOC = 29,
+    // NXT = 30,
+    // EID = 31,
+    // NIMLOC = 32,
+    // SRV = 33,
+    // ATMA = 34,
+    // NAPTR = 35,
+    // KX = 36,
+    // CERT = 37,
+    // DNAME = 39,
+    // OPT = 41, // EDNS
+    // APL = 42,
+    // DS = 43,
+    // SSHFP = 44,
+    // RRSIG = 46,
+    // NSEC = 47,
+    // DNSKEY = 48,
+    // DHCID = 49,
+    // NSEC3 = 50,
+    // NSEC3PARAM = 51,
+    // TLSA = 52,
+    // SMIMEA = 53,
+    // HIP = 55,
+    // NINFO = 56,
+    // RKEY = 57,
+    // TALINK = 58,
+    // CDS = 59,
+    // CDNSKEY = 60,
+    // OPENPGPKEY = 61,
+    // CSYNC = 62,
+    // ZONEMD = 63,
+    // SVCB = 64,
+    // HTTPS = 65,
+    // SPF = 99,
+    // UINFO = 100,
+    // UID = 101,
+    // GID = 102,
+    // UNSPEC = 103,
+    // NID = 104,
+    // L32 = 105,
+    // L64 = 106,
+    // LP = 107,
+    // EUI48 = 108,
+    // EUI64 = 109,
 };
 
 const QType = enum(u16) {
@@ -196,7 +198,7 @@ const Rcode = enum(u4) {
 pub const header_len: usize = 12;
 
 pub const Header = packed struct {
-    id: u16 = 0,
+    id: u16,
 
     qr: Qr = .query,
     opcode: Opcode = .query,
@@ -205,7 +207,7 @@ pub const Header = packed struct {
     // truncated
     tc: u1 = 0,
     // recursion desired
-    rd: u1 = 0,
+    rd: u1 = 1,
     // recursion available
     ra: u1 = 0,
     // zero (reserved for future use)
@@ -213,12 +215,12 @@ pub const Header = packed struct {
 
     rcode: Rcode = .no_error,
 
-    qdcount: u16 = 0,
+    qdcount: u16 = 1,
     ancount: u16 = 0,
     nscount: u16 = 0,
     arcount: u16 = 0,
 
-    pub fn fromBytes(bytes: [header_len]u8) Header {
+    pub fn decode(bytes: *const [header_len]u8) Header {
         return .{
             .id = @as(u16, bytes[0]) << 8 | @as(u16, bytes[1]),
             .qr = @intToEnum(Qr, @truncate(u1, bytes[2] >> 7)),
@@ -236,7 +238,7 @@ pub const Header = packed struct {
         };
     }
 
-    pub fn encode(self: *const Header, dest: []u8) usize {
+    pub fn encode(self: *const Header, dest: *[header_len]u8) void {
         dest[0] = @truncate(u8, self.id >> 8);
         dest[1] = @truncate(u8, self.id);
 
@@ -260,8 +262,6 @@ pub const Header = packed struct {
 
         dest[10] = @truncate(u8, self.arcount >> 8);
         dest[11] = @truncate(u8, self.arcount);
-
-        return header_len;
     }
 };
 
@@ -272,10 +272,32 @@ pub const NameError = error{
     InvalidName,
 };
 
+pub const DecodeQuestionError = error{
+    OutOfMemory,
+} || NameError;
+
 pub const Question = struct {
     name: []const u8 = undefined,
     qtype: QType = undefined,
     qclass: QClass = QClass.IN,
+
+    pub fn decode(allocator: *mem.Allocator, data: []const u8) DecodeQuestionError!Question {
+        const len = try calcLabelsDecodedLen(data, 0);
+        var name = try allocator.alloc(u8, len);
+        _ = try decodeLabels(data, 0, name);
+        const pos = try getLabelsEndPos(data, 0);
+        const qtype = @intToEnum(QType, mem.readInt(u16, @ptrCast(*const [2]u8, data[pos .. pos + 2]), Endian.Big));
+        const qclass = @intToEnum(QClass, mem.readInt(u16, @ptrCast(*const [2]u8, data[pos + 2 .. pos + 4]), Endian.Big));
+        return Question{
+            .name = name,
+            .qtype = qtype,
+            .qclass = qclass,
+        };
+    }
+
+    pub fn deinit(self: *const Question, allocator: *mem.Allocator) void {
+        allocator.free(self.name);
+    }
 
     pub fn encode(self: *const Question, dest: []u8) NameError!usize {
         var pos = try encodeName(self.name, dest);
@@ -290,50 +312,206 @@ pub const Question = struct {
     }
 };
 
-pub const DecodeMessageError = error{
+test "dns.Question" {
+    const allocator = testing.allocator;
+
+    const data = "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
+        "\x03\x77\x77\x77\x06\x73\x61\x6b\x75\x72\x61\x02\x61\x64\x02\x6a\x70\x00" ++
+        "\x00\x01" ++
+        "\x00\x01";
+
+    const question = try Question.decode(allocator, data[header_len..]);
+    defer question.deinit(allocator);
+
+    try testing.expectEqualStrings("www.sakura.ad.jp", question.name);
+    try testing.expectEqual(QType.A, question.qtype);
+    try testing.expectEqual(QClass.IN, question.qclass);
+}
+
+pub const QueryMessageError = error{
+    InvalidHeader,
+    InvalidQuestion,
+    OutOfMemory,
+} || NameError;
+
+const qtype_len = @sizeOf(u16);
+const qclass_len = @sizeOf(u16);
+
+pub const QueryMessage = struct {
+    header: Header,
+    question: Question,
+
+    pub fn getEndPos(data: []const u8) QueryMessageError!usize {
+        if (data.len < header_len) return error.InvalidHeader;
+        const label_len = try getLabelsEndPos(data[header_len..], 0);
+        if (data[header_len + label_len ..].len < qtype_len + qclass_len) return error.InvalidQuestion;
+        return header_len + label_len + qtype_len + qclass_len;
+    }
+
+    pub fn decode(allocator: *mem.Allocator, data: []const u8) QueryMessageError!QueryMessage {
+        const header = Header.decode(data[0..header_len]);
+        const question = try Question.decode(allocator, data[header_len..]);
+        return QueryMessage{
+            .header = header,
+            .question = question,
+        };
+    }
+
+    pub fn deinit(self: *const QueryMessage, allocator: *mem.Allocator) void {
+        self.question.deinit(allocator);
+    }
+
+    pub fn calcEncodedLen(self: *const QueryMessage) NameError!usize {
+        return header_len + try calcNameEncodedLen(self.question.name) + qtype_len + qclass_len;
+    }
+
+    pub fn encode(self: *const QueryMessage, dest: []u8) NameError!usize {
+        self.header.encode(dest[0..header_len]);
+        const name_len = try encodeName(self.question.name, dest[header_len..]);
+        const qtype_pos = header_len + name_len;
+        const qclass_pos = qtype_pos + qtype_len;
+        const qclass_end_pos = qclass_pos + qclass_len;
+        mem.writeIntBig(u16, dest[qtype_pos..][0..2], @enumToInt(self.question.qtype));
+        mem.writeIntBig(u16, dest[qclass_pos..][0..2], @enumToInt(self.question.qclass));
+        return qclass_end_pos;
+    }
+};
+
+test "dns.Header" {
+    const header = Header{ .id = 0xABCD };
+    var header_buf: [header_len]u8 = undefined;
+    header.encode(&header_buf);
+
+    for (&header_buf) |b| {
+        std.debug.print("\\x{x:0>2}", .{b});
+    }
+    std.debug.print("\n", .{});
+}
+
+test "dns.QueryMessage" {
+    const allocator = testing.allocator;
+
+    const encoded_data = "\xab\xcd\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" ++
+        "\x0a\x63\x6c\x6f\x75\x64\x66\x6c\x61\x72\x65\x03\x63\x6f\x6d\x00" ++
+        "\x00\x01\x00\x01";
+    const query = try QueryMessage.decode(allocator, encoded_data);
+    defer query.deinit(allocator);
+
+    std.debug.print("query={}\n", .{query});
+    const encoded_len = try query.calcEncodedLen();
+    var encoded_buf = try allocator.alloc(u8, encoded_len);
+    defer allocator.free(encoded_buf);
+    const pos = try query.encode(encoded_buf);
+    try testing.expectEqual(encoded_len, pos);
+    try testing.expectEqualSlices(u8, encoded_data, encoded_buf);
+}
+
+pub const ResponseMessageError = error{
+    InvalidHeader,
+    InvalidQuestion,
     InvalidAnswer,
     OutOfMemory,
 } || NameError;
 
-pub const Message = struct {
+pub const ResponseMessage = struct {
     header: Header,
     question: Question,
     answer: Answer,
 
-    pub fn decode(allocator: *mem.Allocator, data: []const u8) DecodeMessageError!Message {
-        return Message{};
+    pub fn decode(allocator: *mem.Allocator, data: []const u8) ResponseMessageError!ResponseMessage {
+        const header = Header.decode(data[0..header_len]);
+        const question = try Question.decode(allocator, data[header_len..]);
+        const answer_pos = header_len + try Question.getEndPos(data[header_len..]);
+        const answer = try Answer.decode(allocator, data, answer_pos);
+        return ResponseMessage{
+            .header = header,
+            .question = question,
+            .answer = answer,
+        };
     }
 
-    pub fn deinit(self: *Message, allocator: *mem.Allocator) void {
-        allocator.free(self.q.name);
-        for (self.records) |record| {
-            switch (record.rdata) {
-                .CNAME, .TXT => |str| allocator.free(str),
-                else => {},
-            }
+    pub fn deinit(self: *const ResponseMessage, allocator: *mem.Allocator) void {
+        self.question.deinit(allocator);
+        self.answer.deinit(allocator);
+    }
+};
+
+const AnswerError = error{
+    InvalidAnswer,
+    OutOfMemory,
+} || NameError;
+
+pub const Answer = struct {
+    records: std.ArrayListUnmanaged(Rr),
+
+    pub fn decode(
+        allocator: *mem.Allocator,
+        data: []const u8,
+        start_pos: usize,
+        count: usize,
+    ) !Answer {
+        var i: usize = 0;
+        var pos: usize = start_pos;
+    }
+
+    pub fn deinit(self: *const Answer, allocator: *mem.Allocator) void {
+        for (self.records) |*record| {
+            record.deinit(allocator);
         }
         self.records.deinit(allocator);
     }
 };
 
-pub const Answer = struct {
-    records: std.ArrayListUnmanaged(Record),
-};
+pub const Rr = struct {
+    name: []const u8,
+    @"type": Type,
+    class: Class,
+    ttl: u32,
+    rd_length: u16,
+    rdata: Rdata,
 
-pub const Record = struct {
-    class: Class = undefined,
-    ttl: u32 = undefined,
-    rdata: Rdata = undefined,
+    pub fn getEndPos(
+        data: []const u8,
+        start_pos: usize,
+    ) !usize {}
+
+    // pub fn decode(
+    //     allocator: *mem.Allocator,
+    //     data: []const u8,
+    //     start_pos: usize,
+    // ) !Rr {}
+
+    pub fn deinit(self: *const Rr, allocator: *mem.Allocator) void {
+        self.rdata.deinit(allocator);
+    }
 };
 
 pub const Rdata = union(Type) {
-    A: net.Ipv4Address,
+    A: net.Ip4Address,
+    NS: []const u8,
     CNAME: []const u8,
     TXT: []const u8,
-    AAAA: net.Ipv6Address,
+    AAAA: net.Ip6Address,
+
+    pub fn deinit(self: *const Rdata, allocator: *mem.Allocator) void {
+        switch (self.*) {
+            Type.CNAME, Type.NS, Type.TXT => |str| allocator.free(str),
+            else => {},
+        }
+    }
 };
 
-fn calcNameEncodedLen(name: []const u8) usize {
+test "dns.Rdata" {
+    const allocator = testing.allocator;
+
+    const rdata = Rdata{ .NS = try allocator.dupe(u8, "example.com") };
+    defer rdata.deinit(allocator);
+}
+
+fn calcNameEncodedLen(name: []const u8) NameError!usize {
+    if (name.len > name_max_len) {
+        return error.InvalidName;
+    }
     var dest_pos: usize = 0;
     var start: usize = 0;
     while (true) {
@@ -345,6 +523,30 @@ fn calcNameEncodedLen(name: []const u8) usize {
         if (pos) |p| {
             start = p + 1;
         } else {
+            return dest_pos + 1;
+        }
+    }
+}
+
+fn encodeName(name: []const u8, dest: []u8) NameError!usize {
+    if (name.len > name_max_len) {
+        return error.InvalidName;
+    }
+    var dest_pos: usize = 0;
+    var start: usize = 0;
+    while (true) {
+        const pos = mem.indexOfScalarPos(u8, name, start, '.');
+        const end = pos orelse name.len;
+        var label_len: usize = end - start;
+
+        dest[dest_pos] = @truncate(u8, label_len);
+        mem.copy(u8, dest[dest_pos + 1 ..], name[start..end]);
+        dest_pos += 1 + label_len;
+
+        if (pos) |p| {
+            start = p + 1;
+        } else {
+            dest[dest_pos] = '\x00';
             return dest_pos + 1;
         }
     }
@@ -451,6 +653,22 @@ fn decodeLabels(answer: []const u8, start_pos: usize, dest: []u8) NameError!usiz
     return error.InvalidName;
 }
 
+fn getLabelsEndPos(data: []const u8, start_pos: usize) NameError!usize {
+    var i: usize = start_pos;
+    var label_len: usize = 0;
+    while (i < data.len) {
+        label_len = data[i];
+        if (label_len == 0) {
+            return i + 1;
+        }
+        if (label_len & offset_mask == offset_mask) {
+            return i + 2;
+        }
+        i += 1 + label_len;
+    }
+    return error.InvalidName;
+}
+
 test "dns.decodeLabels" {
     // testing.log_level = .debug;
 
@@ -500,53 +718,6 @@ test "dns.decodeLabelsLoop" {
     try testing.expectError(error.InvalidName, decodeLabels(answer, start_pos, &decoded_buf));
 }
 
-fn encodeName(name: []const u8, dest: []u8) NameError!usize {
-    if (name.len > name_max_len) {
-        return error.InvalidName;
-    }
-    var dest_pos: usize = 0;
-    var start: usize = 0;
-    while (true) {
-        const pos = mem.indexOfScalarPos(u8, name, start, '.');
-        const end = pos orelse name.len;
-        var label_len: usize = end - start;
-
-        dest[dest_pos] = @truncate(u8, label_len);
-        mem.copy(u8, dest[dest_pos + 1 ..], name[start..end]);
-        dest_pos += 1 + label_len;
-
-        if (pos) |p| {
-            start = p + 1;
-        } else {
-            dest[dest_pos] = '\x00';
-            return dest_pos + 1;
-        }
-    }
-}
-
-fn decodeName(labels: []const u8, dest: []u8) NameError!usize {
-    var i: usize = 0;
-    var len: usize = 0;
-    var dest_pos: usize = 0;
-    while (i < labels.len) : (i += 1) {
-        if (len > 0) {
-            dest[dest_pos] = labels[i];
-            dest_pos += 1;
-            len -= 1;
-        } else {
-            len = labels[i];
-            if (len == 0) {
-                return dest_pos;
-            }
-            if (i > 0) {
-                dest[dest_pos] = '.';
-                dest_pos += 1;
-            }
-        }
-    }
-    return error.InvalidName;
-}
-
 const testing = std.testing;
 
 test "dns.encodeQuestion" {
@@ -563,64 +734,21 @@ test "dns.encodeQuestion" {
     };
 
     var encoded_buf = [_]u8{0} ** (@sizeOf(Header) + name_max_encoded_len + @sizeOf(u16) * 2);
-    const hdr_len = hdr.encode(encoded_buf[0..]);
+    hdr.encode(encoded_buf[0..header_len]);
     const expected_header = "\xAB\xCD" ++ // ID
         "\x01\x00" ++ // Recursion
         "\x00\x01" ++ // QDCOUNT
         "\x00\x00" ++ // ANCOUNT
         "\x00\x00" ++ // NSCOUNT
         "\x00\x00"; // ARCOUNT
-    try testing.expectEqualSlices(u8, expected_header, encoded_buf[0..hdr_len]);
+    try testing.expectEqualSlices(u8, expected_header, encoded_buf[0..header_len]);
 
     const expected_question =
         "\x07example\x03com\x00" ++ // NAME
         "\x00\x01" ++ // QTYPE = A
         "\x00\x01"; // QCLASS =IN
-    const q_len = try question.encode(encoded_buf[hdr_len..]);
-    try testing.expectEqualSlices(u8, expected_question, encoded_buf[hdr_len .. hdr_len + q_len]);
-}
-
-test "dns.encodeName/decodeName" {
-    const hostname = "example.com";
-
-    var encoded_buf = [_]u8{0} ** (2 * name_max_len);
-    const encoded_len = try encodeName(hostname, &encoded_buf);
-    try testing.expectEqual(@as(usize, 13), encoded_len);
-    const encoded_name = encoded_buf[0..encoded_len];
-    try testing.expectEqualSlices(u8, "\x07example\x03com\x00", encoded_name);
-
-    var decoded_buf = [_]u8{0} ** name_max_len;
-    const decoded_len = try decodeName(encoded_name, &decoded_buf);
-    try testing.expectEqual(hostname.len, decoded_len);
-    try testing.expectEqualSlices(u8, hostname, decoded_buf[0..decoded_len]);
-}
-
-test "dns.encodeName/decodeName longest" {
-    const hostname = "a." ** 31 ++ "a";
-
-    var encoded_buf = [_]u8{0} ** (2 * name_max_len);
-    const encoded_len = try encodeName(hostname, &encoded_buf);
-    try testing.expectEqual(@as(usize, 65), encoded_len);
-    const encoded_name = encoded_buf[0..encoded_len];
-    try testing.expectEqualSlices(u8, "\x01a" ** 32 ++ "\x00", encoded_name);
-
-    var decoded_buf = [_]u8{0} ** name_max_len;
-    const decoded_len = try decodeName(encoded_name, &decoded_buf);
-    try testing.expectEqual(hostname.len, decoded_len);
-    try testing.expectEqualSlices(u8, hostname, decoded_buf[0..decoded_len]);
-}
-
-test "dns.decodeName/incomplete input" {
-    const encoded_buf = "\x07example";
-    var decoded_buf = [_]u8{0} ** name_max_len;
-    try testing.expectError(error.InvalidName, decodeName(encoded_buf, &decoded_buf));
-}
-
-test "dns.encodeName/too long name" {
-    const too_long_name = [_]u8{'a'} ** (name_max_len + 1);
-    var encoded_buf = [_]u8{0} ** (2 * name_max_len);
-    var fbs = io.fixedBufferStream(&encoded_buf);
-    try testing.expectError(error.InvalidName, encodeName(&too_long_name, &encoded_buf));
+    const q_len = try question.encode(encoded_buf[header_len..]);
+    try testing.expectEqualSlices(u8, expected_question, encoded_buf[header_len .. header_len + q_len]);
 }
 
 test "dns.parseAnswer" {
@@ -633,7 +761,7 @@ test "dns.parseAnswer" {
         "\x00\x00\x48\x19" ++
         "\x00\x04" ++
         "\x5d\xb8\xd8\x22";
-    const hdr = Header.fromBytes(answer[0..header_len].*);
+    const hdr = Header.decode(answer[0..header_len]);
     std.debug.print("hdr={}\n", .{hdr});
 
     // "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
@@ -699,12 +827,24 @@ test "dns.parseAnswer" {
     // "\x00\x21" ++
     // "\x20\x79\x78\x76\x79\x39\x6d\x34\x62\x6c\x72\x73\x77\x67\x72\x73\x7a\x38\x6e\x64\x6a\x68\x34\x36\x37\x6e\x32\x79\x37\x6d\x67\x6c\x32";
 
+    // NS response
+    // "\xab\xcd\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00" ++
+    // "\x07\x65\x78\x61\x6d\x70\x6c\x65\x03\x63\x6f\x6d\x00" ++
+    // "\x00\x02" ++
+    // "\x00\x01" ++
+    // "\xc0\x0c" ++
+    // "\x00\x02\x00\x01" ++
+    // "\x00\x00\x4e\x83" ++
+    // "\x00\x14" ++
+    // "\x01\x61\x0c\x69\x61\x6e\x61\x2d\x73\x65\x72\x76\x65\x72\x73\x03\x6e\x65\x74\x00" ++
+    // "\xc0\x0c\x00\x02\x00\x01\x00\x00\x4e\x83" +
+    // "\x00\x04\x01\x62\xc0\x2b";
+
     // var name_buf = [_]u8{0} ** name_max_len;
     // try decodeName(answer[header_len..], &name_buf);
 }
 
 test "dns.send/recv" {
-    const net = std.net;
     const os = std.os;
     const linux = os.linux;
     const IO_Uring = linux.IO_Uring;
@@ -733,14 +873,14 @@ test "dns.send/recv" {
         // .name = "www.sakura.ad.jp",
         // .name = "cloudflare.com",
         .name = "example.com",
-        .qtype = .TXT,
+        .qtype = .NS,
         .qclass = .IN,
     };
 
     var buffer_send = [_]u8{0} ** (@sizeOf(Header) + name_max_encoded_len + @sizeOf(u16) * 2);
-    const hdr_len = hdr.encode(buffer_send[0..]);
-    const q_len = try question.encode(buffer_send[hdr_len..]);
-    const send = try ring.send(0xeeeeeeee, client, buffer_send[0 .. hdr_len + q_len], 0);
+    hdr.encode(buffer_send[0..header_len]);
+    const q_len = try question.encode(buffer_send[header_len..]);
+    const send = try ring.send(0xeeeeeeee, client, buffer_send[0 .. header_len + q_len], 0);
     send.flags |= linux.IOSQE_IO_LINK;
 
     var buffer_recv = [_]u8{0} ** 1024;
