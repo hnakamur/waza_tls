@@ -46,7 +46,7 @@ pub fn QuotedStringParser(
                                 _ = try output.writeByte(c);
                             }
                         } else if (c == '"') {
-                            input.advance();
+                            input.advance(1);
                             self.state = .finished;
                             return true;
                         } else return error.InvalidCharacter;
@@ -61,7 +61,7 @@ pub fn QuotedStringParser(
                     },
                     else => return error.InvalidState,
                 }
-                input.advance();
+                input.advance(1);
             }
             return input.eof;
         }

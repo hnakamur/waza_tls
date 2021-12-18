@@ -36,12 +36,12 @@ pub fn TokenParser(
                 switch (self.state) {
                     .initial => if (isTokenChar(c)) {
                         try writeByte(output, c);
-                        input.advance();
+                        input.advance(1);
                         self.state = .token;
                     } else return error.EmptyToken,
                     .token => if (isTokenChar(c)) {
                         try writeByte(output, c);
-                        input.advance();
+                        input.advance(1);
                     } else {
                         self.state = .finished;
                         return true;

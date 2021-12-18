@@ -51,7 +51,7 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                             'A'...'F' => digit = c - 'A' + 10,
                             'a'...'f' => digit = c - 'a' + 10,
                             '\r' => if (self.chunk_size) |size| {
-                                input.advance();
+                                input.advance(1);
                                 if (size == 0) {
                                     self.state = .last_chunk_cr;
                                 } else {
@@ -77,7 +77,7 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                             else => return error.InvalidChunk,
                         }
                         if (digit) |d| {
-                            input.advance();
+                            input.advance(1);
                             if (self.chunk_size) |size| {
                                 self.chunk_size = 16 * size + d;
                             } else {
@@ -93,20 +93,20 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                     },
                     .post_chunk_data_ext => {
                         if (c == '\r') {
-                            input.advance();
+                            input.advance(1);
                             self.state = .chunk_size_cr;
                         } else return error.InvalidChunk;
                     },
                     .chunk_size_cr => {
                         if (c == '\n') {
-                            input.advance();
+                            input.advance(1);
                             self.state = .chunk_data;
                         } else return error.InvalidChunk;
                     },
                     .chunk_data => {
                         if (self.chunk_size.? == 0) {
                             if (c == '\r') {
-                                input.advance();
+                                input.advance(1);
                                 self.chunk_size = null;
                                 self.state = .chunk_data_cr;
                             } else return error.InvalidChunk;
@@ -114,13 +114,13 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                             if (WriterOrVoidType != void) {
                                 _ = try output.writeByte(c);
                             }
-                            input.advance();
+                            input.advance(1);
                             self.chunk_size.? -= 1;
                         }
                     },
                     .chunk_data_cr => {
                         if (c == '\n') {
-                            input.advance();
+                            input.advance(1);
                             self.state = .chunk_size;
                         } else return error.InvalidChunk;
                     },
@@ -132,13 +132,13 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                     },
                     .post_last_chunk_ext => {
                         if (c == '\r') {
-                            input.advance();
+                            input.advance(1);
                             self.state = .last_chunk_cr;
                         } else return error.InvalidChunk;
                     },
                     .last_chunk_cr => {
                         if (c == '\n') {
-                            input.advance();
+                            input.advance(1);
                             self.state = .finished;
                             return true;
                         } else return error.InvalidChunk;
@@ -190,7 +190,7 @@ const ChunkExtSkipper = struct {
                         return false;
                     },
                     ';' => {
-                        input.advance();
+                        input.advance(1);
                         self.state = .semi;
                     },
                     else => return error.InvalidCharacter,
@@ -219,11 +219,11 @@ const ChunkExtSkipper = struct {
                         return false;
                     },
                     '=' => {
-                        input.advance();
+                        input.advance(1);
                         self.state = .eq;
                     },
                     ';' => {
-                        input.advance();
+                        input.advance(1);
                         self.state = .semi;
                     },
                     else => {
@@ -282,7 +282,7 @@ const ChunkExtSkipper = struct {
 fn skipOptionalWhiteSpaces(input: *BytesView) bool {
     while (input.peekByte()) |c| {
         switch (c) {
-            '\t', ' ' => input.advance(),
+            '\t', ' ' => input.advance(1),
             else => return true,
         }
     }

@@ -23,12 +23,26 @@ pub const BytesView = struct {
         return self.bytes[self.pos];
     }
 
-    pub fn advance(self: *BytesView) void {
-        self.pos += 1;
+    pub fn advance(self: *BytesView, len: usize) void {
+        self.pos += len;
     }
 
     pub fn rest(self: *const BytesView) []const u8 {
         return self.bytes[self.pos..];
+    }
+
+    pub fn ensureLen(self: *const BytesView, len: usize) !void {
+        if (self.pos + len > self.bytes.len) {
+            return if (self.eof) error.UnexpecedEof else error.ShortInput;
+        }
+    }
+
+    pub fn getBytes(self: *const BytesView, len: usize) []const u8 {
+        return self.bytes[self.pos .. self.pos + len];
+    }
+
+    pub fn getBytesPos(self: *const BytesView, pos: usize, len: usize) []const u8 {
+        return self.bytes[self.pos + pos .. self.pos + pos + len];
     }
 };
 
@@ -38,12 +52,12 @@ test "BytesView" {
     var vw = BytesView.init("zig", true);
 
     try testing.expectEqual(@as(?u8, 'z'), vw.peekByte());
-    vw.advance();
+    vw.advance(1);
     try testing.expectEqualStrings("ig", vw.rest());
     try testing.expectEqual(@as(?u8, 'i'), vw.peekByte());
-    vw.advance();
+    vw.advance(1);
     try testing.expectEqual(@as(?u8, 'g'), vw.peekByte());
-    vw.advance();
+    vw.advance(1);
     try testing.expectEqualStrings("", vw.rest());
     try testing.expectEqual(@as(?u8, null), vw.peekByte());
 }
