@@ -1,9 +1,277 @@
 const std = @import("std");
-const io = std.io;
+const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
+const os = std.os;
+const time = std.time;
 const native_endian = std.Target.current.cpu.arch.endian();
 const BytesView = @import("parser/bytes.zig").BytesView;
+const IO = @import("tigerbeetle-io").IO;
+
+const http_log = std.log.scoped(.http);
+// const http_log = @import("nop_log.zig").scoped(.http);
+
+const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+
+pub fn Client(comptime Context: type) type {
+    return struct {
+        const Self = @This();
+
+        pub const Config = struct {
+            connect_timeout_ns: u63 = 5 * time.ns_per_s,
+            send_timeout_ns: u63 = 5 * time.ns_per_s,
+            recv_timeout_ns: u63 = 5 * time.ns_per_s,
+            response_buf_len: usize = 1024,
+
+            fn validate(self: Config) !void {
+                assert(self.connect_timeout_ns > 0);
+                assert(self.send_timeout_ns > 0);
+                assert(self.recv_timeout_ns > 0);
+                assert(self.response_buf_len > 0);
+            }
+        };
+
+        const Completion = struct {
+            linked_completion: IO.LinkedCompletion = undefined,
+            buffer: []u8 = undefined,
+            callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
+        };
+
+        allocator: *mem.Allocator,
+        io: *IO,
+        context: *Context,
+        config: *const Config,
+        socket: os.socket_t = undefined,
+        response_buf: []u8 = undefined,
+        done: bool = false,
+
+        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
+            try config.validate();
+            const response_buf = try allocator.alloc(u8, config.response_buf_len);
+            return Self{
+                .allocator = allocator,
+                .io = io,
+                .context = context,
+                .config = config,
+                .response_buf = response_buf,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.allocator.free(self.response_buf);
+        }
+
+        pub fn connect(
+            self: *Self,
+            addr: std.net.Address,
+            comptime callback: fn (
+                context: *Context,
+                completion: *Completion,
+                result: IO.ConnectError!void,
+            ) void,
+            completion: *Completion,
+        ) !void {
+            self.socket = try os.socket(addr.any.family, os.SOCK_DGRAM, 0);
+            http_log.debug("dns.Client.connect socket={}", .{self.socket});
+
+            completion.* = .{
+                .callback = struct {
+                    fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                        callback(
+                            @intToPtr(*Context, @ptrToInt(ctx)),
+                            comp,
+                            @intToPtr(*const IO.ConnectError!void, @ptrToInt(res)).*,
+                        );
+                    }
+                }.wrapper,
+            };
+            http_log.debug("dns.Client.connect main_completion=0x{x}, linked_completion=0x{x}", .{
+                @ptrToInt(&completion.linked_completion.main_completion),
+                @ptrToInt(&completion.linked_completion.linked_completion),
+            });
+            self.io.connectWithTimeout(
+                *Self,
+                self,
+                connectCallback,
+                &completion.linked_completion,
+                self.socket,
+                addr,
+                self.config.connect_timeout_ns,
+            );
+        }
+        fn connectCallback(
+            self: *Self,
+            linked_completion: *IO.LinkedCompletion,
+            result: IO.ConnectError!void,
+        ) void {
+            http_log.debug("dns.Client.connectCallback result={}, client=0x{x}", .{ result, @ptrToInt(self) });
+            const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+            comp.callback(self.context, comp, &result);
+            if (result) |_| {} else |err| {
+                http_log.debug("Client.connectCallback before calling close, err={s}", .{@errorName(err)});
+                self.close();
+            }
+        }
+
+        pub fn sendQuery(
+            self: *Self,
+            query: *const QueryMessage,
+            comptime callback: fn (
+                context: *Context,
+                completion: *Completion,
+                result: anyerror!usize,
+            ) void,
+            completion: *Completion,
+        ) void {
+            const query_len = query.calcEncodedLen() catch |err| {
+                const err_result: anyerror!usize = err;
+                callback(self.context, completion, err_result);
+                return;
+            };
+            var buffer = self.allocator.alloc(u8, query_len) catch |err| {
+                const err_result: anyerror!usize = err;
+                callback(self.context, completion, err_result);
+                return;
+            };
+            if (query.encode(buffer)) |_| {} else |err| {
+                const err_result: anyerror!usize = err;
+                callback(self.context, completion, err_result);
+                return;
+            }
+            completion.* = .{
+                .callback = struct {
+                    fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                        callback(
+                            @intToPtr(*Context, @ptrToInt(ctx)),
+                            comp,
+                            @intToPtr(*anyerror!usize, @ptrToInt(res)).*,
+                        );
+                    }
+                }.wrapper,
+                .buffer = buffer,
+            };
+            self.io.sendWithTimeout(
+                *Self,
+                self,
+                sendQueryCallback,
+                &completion.linked_completion,
+                self.socket,
+                buffer,
+                send_flags,
+                self.config.send_timeout_ns,
+            );
+        }
+        fn sendQueryCallback(
+            self: *Self,
+            linked_completion: *IO.LinkedCompletion,
+            result: IO.SendError!usize,
+        ) void {
+            const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+            if (result) |sent| {
+                const buf = comp.buffer;
+                if (sent < buf.len) {
+                    http_log.info("dns.Client.sendQueryCallback, sent={} < buf.len={}, timeout_result={}", .{
+                        sent,
+                        buf.len,
+                        linked_completion.linked_result,
+                    });
+                    self.allocator.free(comp.buffer);
+                    const err_result: anyerror!usize = error.ShortSend;
+                    comp.callback(self.context, comp, &result);
+                    return;
+                }
+
+                self.allocator.free(comp.buffer);
+                const ok_result: anyerror!usize = sent;
+                comp.callback(self.context, comp, &ok_result);
+            } else |err| {
+                self.allocator.free(comp.buffer);
+                const err_result: anyerror!usize = err;
+                comp.callback(self.context, comp, &err_result);
+                self.close();
+            }
+        }
+
+        pub fn recvResponse(
+            self: *Self,
+            comptime callback: fn (
+                context: *Context,
+                completion: *Completion,
+                result: anyerror!usize,
+            ) void,
+            completion: *Completion,
+        ) void {
+            completion.* = .{
+                .callback = struct {
+                    fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                        callback(
+                            @intToPtr(*Context, @ptrToInt(ctx)),
+                            comp,
+                            @intToPtr(*const anyerror!usize, @ptrToInt(res)).*,
+                        );
+                    }
+                }.wrapper,
+            };
+
+            http_log.debug(
+                "dns.Client.recvResponse socket={}, self.response_buf.len={}",
+                .{ self.socket, self.response_buf.len },
+            );
+            self.io.recvWithTimeout(
+                *Self,
+                self,
+                recvResponseWithTimeoutCallback,
+                &completion.linked_completion,
+                self.socket,
+                self.response_buf,
+                recv_flags,
+                self.config.recv_timeout_ns,
+            );
+            http_log.debug("dns.Client.recvResponse exit", .{});
+        }
+        fn recvResponseCallback(
+            self: *Self,
+            main_completion: *IO.Completion,
+            result: IO.RecvError!usize,
+        ) void {
+            http_log.debug("dns.Client.recvResponseCallback result={}", .{result});
+            const linked_completion = @fieldParentPtr(IO.LinkedCompletion, "main_completion", main_completion);
+            const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+            if (result) |received| {
+                const ok_result: anyerror!usize = received;
+                comp.callback(self.context, comp, &ok_result);
+            } else |err| {
+                const err_result: anyerror!usize = err;
+                comp.callback(self.context, comp, &err_result);
+                self.close();
+            }
+        }
+        fn recvResponseWithTimeoutCallback(
+            self: *Self,
+            linked_completion: *IO.LinkedCompletion,
+            result: IO.RecvError!usize,
+        ) void {
+            http_log.debug("dns.Client.recvResponseCallback result={}", .{result});
+            const comp = @fieldParentPtr(Completion, "linked_completion", linked_completion);
+            if (result) |received| {
+                const ok_result: anyerror!usize = received;
+                comp.callback(self.context, comp, &ok_result);
+            } else |err| {
+                const err_result: anyerror!usize = err;
+                comp.callback(self.context, comp, &err_result);
+                self.close();
+            }
+        }
+
+        pub fn close(self: *Self) void {
+            http_log.debug("dns.Client.close start. self=0x{x}", .{@ptrToInt(self)});
+            os.closeSocket(self.socket);
+            self.done = true;
+            http_log.debug("dns.Client.close exit.", .{});
+        }
+    };
+}
 
 const qtype_len = @sizeOf(u16);
 const qclass_len = @sizeOf(u16);
@@ -819,7 +1087,6 @@ test "dns.encodeQuestion" {
 
 test "dns.send/recv" {
     const net = std.net;
-    const os = std.os;
     const linux = os.linux;
     const IO_Uring = linux.IO_Uring;
 
@@ -851,7 +1118,7 @@ test "dns.send/recv" {
     defer allocator.free(query_buf);
     _ = try query.encode(query_buf);
     const send = try ring.send(0xeeeeeeee, client, query_buf, 0);
-    send.flags |= linux.IOSQE_IO_LINK;
+    // send.flags |= linux.IOSQE_IO_LINK;
 
     var buffer_recv = [_]u8{0} ** 1024;
     const recv = try ring.recv(0xffffffff, client, buffer_recv[0..], 0);
@@ -874,4 +1141,104 @@ test "dns.send/recv" {
             std.debug.print("response={}\n", .{resp});
         }
     }
+}
+
+test "dns.Client" {
+    testing.log_level = .debug;
+
+    try struct {
+        const Context = @This();
+        const MyClient = Client(Context);
+
+        allocator: *mem.Allocator,
+        client: MyClient = undefined,
+        connect_completion: MyClient.Completion = undefined,
+        send_completion: MyClient.Completion = undefined,
+        recv_completion: MyClient.Completion = undefined,
+        query: ?QueryMessage = null,
+        response: ?ResponseMessage = null,
+
+        fn deinit(self: *Context) void {
+            self.client.deinit();
+            if (self.response) |*r| r.deinit(self.allocator);
+        }
+
+        fn connectCallback(
+            self: *Context,
+            completion: *MyClient.Completion,
+            result: IO.ConnectError!void,
+        ) void {
+            std.log.debug("Context.connectCallback start, result={}", .{result});
+            if (result) |_| {
+                self.query = QueryMessage{
+                    .header = Header{ .id = 0xABCD },
+                    .question = Question{
+                        .name = "www.sakura.ad.jp",
+                        .qtype = .A,
+                    },
+                };
+                self.client.sendQuery(&self.query.?, sendQueryCallback, &self.send_completion);
+            } else |err| {
+                std.log.err("Context.connectCallback err={s}", .{@errorName(err)});
+            }
+        }
+
+        fn sendQueryCallback(
+            self: *Context,
+            completion: *MyClient.Completion,
+            result: anyerror!usize,
+        ) void {
+            if (result) |sent| {
+                std.log.debug("Context.sendQueryCallback sent={}", .{sent});
+                self.client.recvResponse(recvResponseCallback, &self.recv_completion);
+            } else |err| {
+                std.log.err("Context.sendQueryCallback err={s}", .{@errorName(err)});
+            }
+        }
+
+        fn recvResponseCallback(
+            self: *Context,
+            completion: *MyClient.Completion,
+            result: anyerror!usize,
+        ) void {
+            if (result) |received| {
+                std.log.debug("Context.recvResponseCallback received={}", .{received});
+
+                var input = BytesView.init(self.client.response_buf[0..received], true);
+                if (ResponseMessage.decode(self.allocator, &input)) |resp| {
+                    self.response = resp;
+                } else |err| {
+                    std.log.err("Context.recvResponseCallback decode err={s}", .{@errorName(err)});
+                }
+                self.client.close();
+            } else |err| {
+                std.log.err("Context.recvResponseCallback err={s}", .{@errorName(err)});
+            }
+        }
+
+        fn runTest() !void {
+            var io = try IO.init(32, 0);
+            defer io.deinit();
+
+            // Use a random port
+            const address = try std.net.Address.parseIp4("8.8.8.8", 53);
+
+            const allocator = testing.allocator;
+
+            var self: Context = .{
+                .allocator = allocator,
+            };
+            defer self.deinit();
+
+            self.client = try MyClient.init(allocator, &io, &self, &.{});
+
+            try self.client.connect(address, connectCallback, &self.connect_completion);
+
+            while (!self.client.done) {
+                try io.tick();
+            }
+
+            std.debug.print("response={}\n", .{self.response});
+        }
+    }.runTest();
 }
