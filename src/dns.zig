@@ -2,7 +2,6 @@ const std = @import("std");
 const io = std.io;
 const math = std.math;
 const mem = std.mem;
-const Endian = std.builtin.Endian;
 const native_endian = std.Target.current.cpu.arch.endian();
 const BytesView = @import("parser/bytes.zig").BytesView;
 
@@ -124,15 +123,31 @@ pub const Header = packed struct {
     }
 };
 
-const Type = enum(u16) { A = 1, NS = 2, CNAME = 5, TXT = 16, AAAA = 28, _ };
+const Type = enum(u16) {
+    A = 1,
+    NS = 2,
+    CNAME = 5,
+    TXT = 16,
+    AAAA = 28,
+    _,
+};
 
-const QType = enum(u16) { A = 1, NS = 2, CNAME = 5, TXT = 16, AAAA = 28, @"*" = 255, _ };
+const QType = enum(u16) {
+    A = 1,
+    NS = 2,
+    CNAME = 5,
+    TXT = 16,
+    AAAA = 28,
+    @"*" = 255,
+    _,
+};
 
 const Class = enum(u16) {
     IN = 1,
     CS = 2,
     CH = 3,
     HS = 4,
+    _,
 };
 
 const QClass = enum(u16) {
@@ -141,6 +156,7 @@ const QClass = enum(u16) {
     CH = 3,
     HS = 4,
     @"*" = 255,
+    _,
 };
 
 const Qr = enum(u1) {
