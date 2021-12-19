@@ -11,7 +11,7 @@ const ClientHandler = struct {
     sock: os.socket_t,
     recv_buf: []u8,
     send_buf: []u8,
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     completion: IO.Completion = undefined,
     frame: anyframe = undefined,
     send_result: IO.SendError!usize = undefined,
@@ -21,7 +21,7 @@ const ClientHandler = struct {
     request_scanner: *http.RecvRequestScanner,
     request: ?*http.RecvRequest = null,
 
-    fn init(allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
+    fn init(allocator: mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
         req_scanner.* = http.RecvRequestScanner{};
         const recv_buf = try allocator.alloc(u8, 8192);
@@ -188,12 +188,12 @@ const ClientHandler = struct {
 const Server = struct {
     io: IO,
     server: os.socket_t,
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     completion: IO.Completion = undefined,
     frame: anyframe = undefined,
     accept_result: IO.AcceptError!os.socket_t = undefined,
 
-    fn init(allocator: *mem.Allocator, address: std.net.Address) !Server {
+    fn init(allocator: mem.Allocator, address: std.net.Address) !Server {
         const kernel_backlog = 513;
         const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
 

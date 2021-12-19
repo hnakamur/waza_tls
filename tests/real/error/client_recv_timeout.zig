@@ -63,7 +63,7 @@ test "real / error / client recv timeout" {
             }
             fn timeoutCallback(
                 self: *Handler,
-                completion: *IO.Completion,
+                _: *IO.Completion,
                 result: IO.TimeoutError!void,
             ) void {
                 if (result) |_| {
@@ -96,14 +96,14 @@ test "real / error / client recv timeout" {
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
                 std.fmt.format(w, "{s}", .{content}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseFullCallback);
             }
 
-            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
+            fn sendResponseFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseFullCallback err={s}", .{@errorName(err)});
                 }
             }
         };

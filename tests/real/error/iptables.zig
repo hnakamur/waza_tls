@@ -26,7 +26,7 @@ pub const RunError = error{
 } || std.ChildProcess.SpawnError;
 
 pub fn appendRule(
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     dest_addr: []const u8,
     dest_port: u16,
     target: Target,
@@ -35,7 +35,7 @@ pub fn appendRule(
 }
 
 pub fn deleteRule(
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     dest_addr: []const u8,
     dest_port: u16,
     target: Target,
@@ -49,14 +49,14 @@ const Operation = enum {
 };
 
 fn run(
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     operation: Operation,
     dest_addr: []const u8,
     dest_port: u16,
     target: Target,
 ) RunError!void {
     var port_buf = [_]u8{0} ** 5;
-    const port_len = fmt.formatIntBuf(&port_buf, dest_port, 10, false, .{});
+    const port_len = fmt.formatIntBuf(&port_buf, dest_port, 10, .lower, .{});
 
     const operation_str = switch (operation) {
         .append => "-A",

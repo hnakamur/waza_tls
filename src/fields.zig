@@ -2,7 +2,6 @@ const std = @import("std");
 const fmt = std.fmt;
 const math = std.math;
 const assert = std.debug.assert;
-const FieldIterator = @import("field_iterator.zig").FieldIterator;
 const isWhiteSpaceChar = @import("parser.zig").lex.isWhiteSpaceChar;
 
 const http_log = std.log.scoped(.http);
@@ -26,7 +25,7 @@ pub const Fields = struct {
             while (v_it.next()) |v| {
                 const val = try parseDecimalDigits(v);
                 if (result) |res| {
-                    if (val != result) {
+                    if (val != res) {
                         return error.Inconsistent;
                     }
                 } else {
@@ -388,7 +387,7 @@ test "parseDecimalDigits" {
     try testing.expectEqual(@as(u64, 123), try parseDecimalDigits("000000123"));
 
     var buf = [_]u8{0} ** 21;
-    const len = fmt.formatIntBuf(&buf, @as(u128, math.maxInt(u64)) + 1, 10, false, .{});
+    const len = fmt.formatIntBuf(&buf, @as(u128, math.maxInt(u64)) + 1, 10, .lower, .{});
     const digits = buf[0..len];
     try testing.expectEqualStrings("18446744073709551616", digits);
     try testing.expectError(error.Overflow, parseDecimalDigits(digits));

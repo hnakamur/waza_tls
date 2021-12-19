@@ -80,15 +80,15 @@ test "real / error / server alloc fail case2" {
                     else => {},
                 }
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };
@@ -98,7 +98,7 @@ test "real / error / server alloc fail case2" {
 
         server: Server = undefined,
         client: Client = undefined,
-        allocator: *mem.Allocator = undefined,
+        allocator: mem.Allocator = undefined,
         send_buf: []u8 = undefined,
         send_content_count: usize = 0,
         send_content_result: ?IO.SendError!usize = null,
@@ -220,7 +220,7 @@ test "real / error / server alloc fail case2" {
             // Use a random port
             const address = try std.net.Address.parseIp4("127.0.0.1", 0);
 
-            const failing_allocator = &testing.FailingAllocator.init(allocator, 4).allocator;
+            const failing_allocator = testing.FailingAllocator.init(allocator, 4).allocator();
 
             var self: Context = .{
                 .allocator = allocator,

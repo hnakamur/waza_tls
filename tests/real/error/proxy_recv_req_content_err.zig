@@ -147,7 +147,7 @@ test "real / error / recv req content error" {
             }
         };
 
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         server: OriginServer = undefined,
         proxy: *Proxy = undefined,
         client: Client = undefined,
@@ -298,12 +298,12 @@ test "real / error / recv req content error" {
             self.proxy.server.requestShutdown();
         }
 
-        fn generateRandomText(allocator: *mem.Allocator) ![]const u8 {
+        fn generateRandomText(allocator: mem.Allocator) ![]const u8 {
             var bin_buf: [2048]u8 = undefined;
             var encoded_buf: [4096]u8 = undefined;
 
-            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp()));
-            rand.Random.bytes(&r.random, &bin_buf);
+            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp())).random();
+            r.bytes(&bin_buf);
 
             const encoder = std.base64.url_safe_no_pad.Encoder;
             const encoded = encoder.encode(&encoded_buf, &bin_buf);

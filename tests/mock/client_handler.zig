@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
@@ -19,7 +20,7 @@ test "mock / io" {
 
             var completion: IO.LinkedCompletion = undefined;
             const socket: os.socket_t = 0;
-            const recv_flags: u32 = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+            const recv_flags: u32 = if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0;
             const timeout_ns: u63 = time.ns_per_ms;
 
             self.io.recvWithTimeout(
@@ -40,7 +41,7 @@ test "mock / io" {
 
         fn recvWithTimeoutCallback(
             self: *Context,
-            completion: *IO.LinkedCompletion,
+            _: *IO.LinkedCompletion,
             result: IO.RecvError!usize,
         ) void {
             self.received = result catch @panic("recv error");
@@ -52,7 +53,7 @@ test "mock / io" {
         ) void {
             switch (completion.operation) {
                 .recv => completion.result = self.buffer.len,
-                .link_timeout => completion.result = -os.ECANCELED,
+                .link_timeout => completion.result = -@as(i32, @enumToInt(os.E.CANCELED)),
                 else => {},
             }
         }

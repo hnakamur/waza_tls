@@ -387,7 +387,7 @@ test "ChunkDecoder / invalid state" {
 test "ChunkDecoder / chunk ext" {
     const data = "1;aa=bb\r\na\r\n0;bb=cc\r";
     var decoder = ChunkedDecoder(void).init();
-    for (data) |c, i| {
+    for (data) |c| {
         var input = BytesView.init(&[_]u8{c}, false);
         try testing.expect(!try decoder.decode(&input, {}));
     }

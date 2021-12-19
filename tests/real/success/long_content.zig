@@ -27,7 +27,6 @@ test "real / success / long content" {
             }
 
             pub fn deinit(self: *Handler) void {
-                const allocator = self.conn.server.allocator;
                 self.recv_content_buf.deinit();
             }
 
@@ -265,8 +264,8 @@ test "real / success / long content" {
             });
             defer self.server.deinit();
 
-            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp()));
-            rand.Random.bytes(&r.random, self.send_content_buf);
+            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp())).random();
+            r.bytes(self.send_content_buf);
 
             self.client = try Client.init(allocator, &io, &self, &.{
                 .response_content_fragment_buf_len = 4096,

@@ -100,11 +100,11 @@ test "real / success / long header" {
                 std.fmt.format(w, "{s}", .{
                     self.long_header_value.?[0..self.long_header_send_len],
                 }) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.long_header_sent_len += self.long_header_send_len;
                     self.crlf_crlf_sent_len += self.crlf_crlf_send_len;
@@ -126,14 +126,14 @@ test "real / success / long header" {
                             fbs.pos + crlf_crlf.len - self.crlf_crlf_sent_len,
                             self.conn.send_buf.len,
                         ) - fbs.pos;
-                        std.log.info("Handler.sendHeaderCallback self.crlf_crlf_send_len={}", .{self.crlf_crlf_send_len});
+                        std.log.info("Handler.sendResponseCallback self.crlf_crlf_send_len={}", .{self.crlf_crlf_send_len});
                         const start_pos = self.crlf_crlf_sent_len;
                         const end = start_pos + self.crlf_crlf_send_len;
                         std.fmt.format(w, "{s}", .{crlf_crlf[start_pos..end]}) catch unreachable;
                     }
-                    std.log.info("Handler.sendHeaderCallback fbs.pos={}", .{fbs.pos});
+                    std.log.info("Handler.sendResponseCallback fbs.pos={}", .{fbs.pos});
                     if (fbs.pos > 0) {
-                        self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+                        self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
                         return;
                     }
 
@@ -141,19 +141,19 @@ test "real / success / long header" {
                         const allocator = self.conn.server.allocator;
                         allocator.free(value);
                         self.long_header_value = null;
-                        std.log.info("Handler.sendHeaderCallback freed long_header_value", .{});
+                        std.log.info("Handler.sendResponseCallback freed long_header_value", .{});
                     }
 
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };
 
         server: Server = undefined,
         client: Client = undefined,
-        allocator: *mem.Allocator = undefined,
+        allocator: mem.Allocator = undefined,
         long_header_value: []const u8 = undefined,
         send_header_buf: []u8 = undefined,
         long_header_send_len: usize = 0,
@@ -285,12 +285,12 @@ test "real / success / long header" {
             self.server.requestShutdown();
         }
 
-        fn generateRandomHeader(allocator: *mem.Allocator) ![]const u8 {
+        fn generateRandomHeader(allocator: mem.Allocator) ![]const u8 {
             var bin_buf: [16384]u8 = undefined;
             var encoded_buf: [32768]u8 = undefined;
 
-            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp()));
-            rand.Random.bytes(&r.random, &bin_buf);
+            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp())).random();
+            r.bytes(&bin_buf);
 
             const encoder = std.base64.url_safe_no_pad.Encoder;
             const encoded = encoder.encode(&encoded_buf, &bin_buf);
