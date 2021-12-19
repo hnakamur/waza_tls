@@ -78,22 +78,22 @@ test "real / error / req content timeout" {
                     else => {},
                 }
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseHeaderCallback);
             }
 
-            fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+            fn sendResponseHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseHeaderCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseHeaderCallback err={s}", .{@errorName(err)});
                 }
             }
         };
 
         server: Server = undefined,
         client: Client = undefined,
-        allocator: *mem.Allocator = undefined,
+        allocator: mem.Allocator = undefined,
         send_header_buf: []u8 = undefined,
 
         fn connectCallback(
@@ -140,7 +140,7 @@ test "real / error / req content timeout" {
 
         fn timeoutCallback(
             self: *Context,
-            completion: *IO.Completion,
+            _: *IO.Completion,
             result: IO.TimeoutError!void,
         ) void {
             if (result) |_| {

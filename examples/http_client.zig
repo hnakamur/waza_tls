@@ -13,7 +13,7 @@ const Client = struct {
     };
 
     io: *IO,
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     config: *const Config,
     linked_completion: IO.LinkedCompletion = undefined,
     socket: os.socket_t = undefined,
@@ -43,7 +43,7 @@ const Client = struct {
     const Self = @This();
 
     pub fn init(
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         io: *IO,
         config: *const Config,
     ) !Self {

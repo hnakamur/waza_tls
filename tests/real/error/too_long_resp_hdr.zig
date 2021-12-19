@@ -81,22 +81,22 @@ test "real / error / too long resp header" {
                 }
                 std.fmt.format(w, "{s}: ", .{long_header_name}) catch unreachable;
                 std.mem.set(u8, self.conn.send_buf[fbs.pos..], 'a');
-                self.conn.sendFull(self.conn.send_buf, sendHeaderCallback);
+                self.conn.sendFull(self.conn.send_buf, sendResponseCallback);
             }
 
-            fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };
 
         server: Server = undefined,
         client: Client = undefined,
-        allocator: *mem.Allocator = undefined,
+        allocator: mem.Allocator = undefined,
         send_header_buf: []u8 = undefined,
         recv_header_result: Client.RecvResponseHeaderError!usize = undefined,
 
@@ -179,12 +179,12 @@ test "real / error / too long resp header" {
             self.server.requestShutdown();
         }
 
-        fn generateRandomHeader(allocator: *mem.Allocator) ![]const u8 {
+        fn generateRandomHeader(allocator: mem.Allocator) ![]const u8 {
             var bin_buf: [16384]u8 = undefined;
             var encoded_buf: [32768]u8 = undefined;
 
-            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp()));
-            rand.Random.bytes(&r.random, &bin_buf);
+            var r = rand.DefaultPrng.init(@intCast(u64, time.nanoTimestamp())).random();
+            r.bytes(&bin_buf);
 
             const encoder = std.base64.url_safe_no_pad.Encoder;
             const encoded = encoder.encode(&encoded_buf, &bin_buf);

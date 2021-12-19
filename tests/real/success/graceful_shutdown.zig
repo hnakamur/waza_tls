@@ -77,15 +77,15 @@ test "real / success / graceful shutdown" {
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
                 std.fmt.format(w, "{s}", .{content}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };

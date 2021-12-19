@@ -11,12 +11,12 @@ const config = http.config;
 const Server = struct {
     io: IO,
     server: os.socket_t,
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     client_handlers: std.ArrayList(?*ClientHandler),
     shutdown_requested: bool = false,
     done: bool = false,
 
-    fn init(allocator: *mem.Allocator, address: std.net.Address) !Server {
+    fn init(allocator: mem.Allocator, address: std.net.Address) !Server {
         const kernel_backlog = 513;
         const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
 
@@ -135,7 +135,7 @@ const ClientHandler = struct {
     sock: os.socket_t,
     recv_buf: []u8,
     send_buf: []u8,
-    allocator: *mem.Allocator,
+    allocator: mem.Allocator,
     recv_timeout_ns: u63 = 5 * time.ns_per_s,
     send_timeout_ns: u63 = 5 * time.ns_per_s,
     request_scanner: *http.RecvRequestScanner,
@@ -157,7 +157,7 @@ const ClientHandler = struct {
         SendingContent,
     } = .ReceivingHeaders,
 
-    fn init(server: *Server, handler_id: usize, allocator: *mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
+    fn init(server: *Server, handler_id: usize, allocator: mem.Allocator, io: *IO, sock: os.socket_t) !*ClientHandler {
         const req_scanner = try allocator.create(http.RecvRequestScanner);
         req_scanner.* = http.RecvRequestScanner{};
         const recv_buf = try allocator.alloc(u8, config.recv_buf_ini_len);

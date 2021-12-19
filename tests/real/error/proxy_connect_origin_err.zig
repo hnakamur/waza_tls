@@ -18,7 +18,7 @@ test "real / error / proxy connect origin error" {
         const Handler = struct {
             conn: *OriginServer.Conn = undefined,
 
-            pub fn start(self: *Handler) void {}
+            pub fn start(_: *Handler) void {}
         };
 
         server: OriginServer = undefined,

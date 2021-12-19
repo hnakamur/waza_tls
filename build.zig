@@ -3,7 +3,7 @@ const std = @import("std");
 const pkgs = struct {
     const http = std.build.Pkg{
         .name = "http",
-        .path = "./src/main.zig",
+        .path = .{ .path = "./src/main.zig" },
         .dependencies = &[_]std.build.Pkg{
             @"tigerbeetle-io",
             datetime,
@@ -12,12 +12,12 @@ const pkgs = struct {
 
     const @"tigerbeetle-io" = std.build.Pkg{
         .name = "tigerbeetle-io",
-        .path = "./lib/tigerbeetle-io/src/main.zig",
+        .path = .{ .path = "./lib/tigerbeetle-io/src/main.zig" },
     };
 
     const datetime = std.build.Pkg{
         .name = "datetime",
-        .path = "./lib/zig-datetime/src/main.zig",
+        .path = .{ .path = "./lib/zig-datetime/src/main.zig" },
     };
 };
 
@@ -57,7 +57,7 @@ pub fn build(b: *std.build.Builder) void {
     var mock_tests = b.addTest("tests/mock/main.zig");
     mock_tests.addPackage(std.build.Pkg{
         .name = "tigerbeetle-io",
-        .path = "tests/mock/mock-io.zig",
+        .path = .{ .path = "tests/mock/mock-io.zig" },
     });
     mock_tests.addPackage(pkgs.datetime);
     mock_tests.setBuildMode(mode);

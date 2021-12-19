@@ -78,22 +78,22 @@ test "real / error / req content eof" {
                     else => {},
                 }
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendHeaderCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendHeaderCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendHeaderCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendHeaderCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };
 
         server: Server = undefined,
         client: Client = undefined,
-        allocator: *mem.Allocator = undefined,
+        allocator: mem.Allocator = undefined,
         send_header_buf: []u8 = undefined,
 
         fn connectCallback(

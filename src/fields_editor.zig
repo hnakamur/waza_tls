@@ -1,6 +1,5 @@
 const std = @import("std");
 const mem = std.mem;
-const Allocator = mem.Allocator;
 const FieldLine = @import("fields.zig").FieldLine;
 const FieldLineIterator = @import("fields.zig").FieldLineIterator;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
@@ -14,12 +13,12 @@ pub const FieldsEditor = struct {
     buf: []u8,
     len: usize,
     line_count: usize,
-    allocator: *Allocator,
+    allocator: mem.Allocator,
 
     /// FieldsEditor takes ownership of the passed in slice. The slice must have been
     /// allocated with `allocator`.
     /// Deinitialize with `deinit` or use `toOwnedSlice`.
-    pub fn newFromOwnedSlice(allocator: *Allocator, buf: []u8) !FieldsEditor {
+    pub fn newFromOwnedSlice(allocator: mem.Allocator, buf: []u8) !FieldsEditor {
         var editor = FieldsEditor{
             .buf = buf,
             .len = 0,
@@ -35,7 +34,7 @@ pub const FieldsEditor = struct {
     /// FieldsEditor takes ownership of the passed in slice. The slice must have been
     /// allocated with `allocator`.
     /// Deinitialize with `deinit` or use `toOwnedSlice`.
-    pub fn parseOwnedSlice(allocator: *Allocator, buf: []u8) !FieldsEditor {
+    pub fn parseOwnedSlice(allocator: mem.Allocator, buf: []u8) !FieldsEditor {
         var line_count: usize = 0;
         var scanner = FieldsScanner{};
         if (!try scanner.scan(buf)) {

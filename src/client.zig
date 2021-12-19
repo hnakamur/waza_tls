@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const mem = std.mem;
 const os = std.os;
@@ -13,8 +14,8 @@ const Version = @import("version.zig").Version;
 const http_log = std.log.scoped(.http);
 // const http_log = @import("nop_log.zig").scoped(.http);
 
-const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
-const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+const recv_flags = if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0;
+const send_flags = if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0;
 
 pub fn Client(comptime Context: type) type {
     return struct {
@@ -47,7 +48,7 @@ pub fn Client(comptime Context: type) type {
             callback: fn (ctx: ?*c_void, result: *const c_void) void = undefined,
         };
 
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         io: *IO,
         context: *Context,
         config: *const Config,
@@ -62,7 +63,7 @@ pub fn Client(comptime Context: type) type {
         content_len_read_so_far: u64 = undefined,
         done: bool = false,
 
-        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
+        pub fn init(allocator: mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
             try config.validate();
 
             return Self{
@@ -89,7 +90,7 @@ pub fn Client(comptime Context: type) type {
                 result: IO.ConnectError!void,
             ) void,
         ) !void {
-            self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+            self.socket = try os.socket(addr.any.family, os.SOCK.STREAM | os.SOCK.CLOEXEC, 0);
 
             self.completion = .{
                 .callback = struct {
@@ -291,7 +292,7 @@ pub fn Client(comptime Context: type) type {
                                 self.close();
                                 return;
                             }
-                            self.response_header_buf = self.allocator.realloc(self.response_header_buf, new_len) catch |err| {
+                            self.response_header_buf = self.allocator.realloc(self.response_header_buf, new_len) catch {
                                 comp.callback(self.context, &result);
                                 http_log.debug("Client.recvResponseHeaderCallback before calling close#5", .{});
                                 self.close();

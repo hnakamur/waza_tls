@@ -33,7 +33,7 @@ pub const RecvRequest = struct {
         const method = Method.fromBytes(buf[0..method_len]) catch unreachable;
         const uri = buf[result.uri_start_pos .. result.uri_start_pos + result.uri_len];
         const ver_buf = buf[result.version_start_pos .. result.version_start_pos + result.version_len];
-        const version = Version.fromBytes(ver_buf) catch |_| return error.BadRequest;
+        const version = Version.fromBytes(ver_buf) catch return error.BadRequest;
         const headers = Fields.init(buf[request_line_len .. request_line_len + headers_len]);
 
         return RecvRequest{

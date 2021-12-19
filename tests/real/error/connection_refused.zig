@@ -16,7 +16,7 @@ test "real / error / connection refused" {
         const Handler = struct {
             conn: *Server.Conn = undefined,
 
-            pub fn start(self: *Handler) void {}
+            pub fn start(_: *Handler) void {}
         };
 
         fn connectCallback(

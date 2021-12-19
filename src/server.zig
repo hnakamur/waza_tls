@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const mem = std.mem;
 const net = std.net;
@@ -17,8 +18,8 @@ const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 const http_log = std.log.scoped(.http);
 // const http_log = @import("nop_log.zig").scoped(.http);
 
-const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
-const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+const recv_flags = if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0;
+const send_flags = if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0;
 
 pub fn Server(comptime Context: type, comptime Handler: type) type {
     return struct {
@@ -51,7 +52,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
         context: *Context,
         io: *IO,
         socket: os.socket_t,
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         config: Config,
         bound_address: std.net.Address = undefined,
         connections: std.ArrayList(?*Conn),
@@ -59,15 +60,15 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
         shutdown_requested: bool = false,
         done: bool = false,
 
-        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, address: std.net.Address, config: Config) !Self {
+        pub fn init(allocator: mem.Allocator, io: *IO, context: *Context, address: std.net.Address, config: Config) !Self {
             try config.validate();
             const kernel_backlog = 513;
-            const socket = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+            const socket = try os.socket(address.any.family, os.SOCK.STREAM | os.SOCK.CLOEXEC, 0);
 
             try os.setsockopt(
                 socket,
-                os.SOL_SOCKET,
-                os.SO_REUSEADDR,
+                os.SOL.SOCKET,
+                os.SO.REUSEADDR,
                 &std.mem.toBytes(@as(c_int, 1)),
             );
             try os.bind(socket, &address.any, address.getOsSockLen());
@@ -588,6 +589,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 completion: *IO.LinkedCompletion,
                 result: IO.SendError!usize,
             ) void {
+                _ = completion;
                 http_log.debug("Conn.sendErrorCallback, result={}, conn_id={}", .{ result, self.conn_id });
                 if (result) |_| {} else |err| {
                     http_log.debug("Conn.sendErrorCallback, err={s}", .{@errorName(err)});

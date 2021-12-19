@@ -217,13 +217,16 @@ pub fn Proxy(comptime Context: type) type {
                 self: *Handler,
                 result: IO.CloseError!void,
             ) void {
+                if (result) |_| {} else |err| {
+                    http_log.warn("Proxy.Handler.closeConnCallback err={s}", .{@errorName(err)});
+                }
                 if (self.conn.deinit()) |_| {} else |err| {
                     http_log.err("Proxy.Handler.closeConnCallback err={s}", .{@errorName(err)});
                 }
             }
         };
 
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         io: *IO,
         context: *Context,
         listen_address: net.Address,
@@ -232,7 +235,7 @@ pub fn Proxy(comptime Context: type) type {
         server: Server = undefined,
 
         pub fn init(
-            allocator: *mem.Allocator,
+            allocator: mem.Allocator,
             io: *IO,
             context: *Context,
             listen_address: net.Address,

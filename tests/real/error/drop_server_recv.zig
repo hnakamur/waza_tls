@@ -39,7 +39,10 @@ test "real / error / drop server recv" {
 
             pub fn recvRequestHeaderCallback(self: *Handler, result: Server.RecvRequestHeaderError!usize) void {
                 testing.expectError(error.Canceled, result) catch |err| {
-                    std.log.err("Handler.recvRequestHeaderCallback result should be error.Canceled, but got {}", .{result});
+                    std.log.err(
+                        "Handler.recvRequestHeaderCallback result should be error.Canceled, but got {s}",
+                        .{@errorName(err)},
+                    );
                 };
                 if (result) |received| {
                     std.log.debug("Handler.recvRequestHeaderCallback received={}", .{received});
@@ -98,17 +101,17 @@ test "real / error / drop server recv" {
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
                 std.fmt.format(w, "{s}", .{content}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
-                defer std.log.debug("Handler.sendFullCallback exit", .{});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
+                defer std.log.debug("Handler.sendResponseCallback exit", .{});
 
                 if (last_result) |_| {
                     self.conn.finishSend();
                 } else |err| {
-                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };

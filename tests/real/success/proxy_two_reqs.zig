@@ -82,16 +82,16 @@ test "real / success / proxy two reqs" {
                 std.fmt.format(w, "Content-Length: {d}\r\n", .{content_length}) catch unreachable;
                 std.fmt.format(w, "\r\n", .{}) catch unreachable;
                 std.fmt.format(w, "{s}", .{content}) catch unreachable;
-                self.conn.sendFull(fbs.getWritten(), sendFullCallback);
+                self.conn.sendFull(fbs.getWritten(), sendResponseCallback);
             }
 
-            fn sendFullCallback(self: *Handler, last_result: IO.SendError!usize) void {
-                std.log.debug("Handler.sendFullCallback start, last_result={}", .{last_result});
+            fn sendResponseCallback(self: *Handler, last_result: IO.SendError!usize) void {
+                std.log.debug("Handler.sendResponseCallback start, last_result={}", .{last_result});
                 if (last_result) |_| {
                     self.conn.finishSend();
                     self.conn.server.context.handler_finished = true;
                 } else |err| {
-                    std.log.err("Handler.sendFullCallback err={s}", .{@errorName(err)});
+                    std.log.err("Handler.sendResponseCallback err={s}", .{@errorName(err)});
                 }
             }
         };
@@ -181,7 +181,7 @@ test "real / success / proxy two reqs" {
             result: Client.RecvResponseContentFragmentError!usize,
         ) void {
             std.log.debug("Context.recvResponseContentFragmentCallback start, result={}", .{result});
-            if (result) |received| {
+            if (result) |_| {
                 if (!self.client.fullyReadResponseContent()) {
                     self.client.recvResponseContentFragment(recvResponseContentFragmentCallback);
                     return;

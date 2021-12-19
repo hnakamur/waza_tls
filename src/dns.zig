@@ -1,18 +1,19 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 const math = std.math;
 const mem = std.mem;
 const os = std.os;
 const time = std.time;
-const native_endian = std.Target.current.cpu.arch.endian();
+const native_endian = builtin.cpu.arch.endian();
 const BytesView = @import("parser/bytes.zig").BytesView;
 const IO = @import("tigerbeetle-io").IO;
 
 const http_log = std.log.scoped(.http);
 // const http_log = @import("nop_log.zig").scoped(.http);
 
-const recv_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
-const send_flags = if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0;
+const recv_flags = if (builtin.os.tag == .linux) os.MSG.NOSIGNAL else 0;
+const send_flags = if (builtin.os.tag == .linux) os.MSG.NOSIGNAL else 0;
 
 pub fn Client(comptime Context: type) type {
     return struct {
@@ -38,7 +39,7 @@ pub fn Client(comptime Context: type) type {
             callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
         };
 
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         io: *IO,
         context: *Context,
         config: *const Config,
@@ -46,7 +47,7 @@ pub fn Client(comptime Context: type) type {
         response_buf: []u8 = undefined,
         done: bool = false,
 
-        pub fn init(allocator: *mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
+        pub fn init(allocator: mem.Allocator, io: *IO, context: *Context, config: *const Config) !Self {
             try config.validate();
             const response_buf = try allocator.alloc(u8, config.response_buf_len);
             return Self{
@@ -72,7 +73,7 @@ pub fn Client(comptime Context: type) type {
             ) void,
             completion: *Completion,
         ) !void {
-            self.socket = try os.socket(addr.any.family, os.SOCK_DGRAM, 0);
+            self.socket = try os.socket(addr.any.family, os.SOCK.DGRAM, 0);
             http_log.debug("dns.Client.connect socket={}", .{self.socket});
 
             completion.* = .{
@@ -178,7 +179,7 @@ pub fn Client(comptime Context: type) type {
                     });
                     self.allocator.free(comp.buffer);
                     const err_result: anyerror!usize = error.ShortSend;
-                    comp.callback(self.context, comp, &result);
+                    comp.callback(self.context, comp, &err_result);
                     return;
                 }
 
@@ -301,7 +302,7 @@ pub const ResponseMessage = struct {
     question: Question,
     answer: Answer,
 
-    pub fn decode(allocator: *mem.Allocator, input: *BytesView) !ResponseMessage {
+    pub fn decode(allocator: mem.Allocator, input: *BytesView) !ResponseMessage {
         try input.ensureLen(header_len);
         const header = Header.decode(input.getBytes(header_len)[0..header_len]);
         input.advance(header_len);
@@ -315,7 +316,7 @@ pub const ResponseMessage = struct {
         };
     }
 
-    pub fn deinit(self: *ResponseMessage, allocator: *mem.Allocator) void {
+    pub fn deinit(self: *ResponseMessage, allocator: mem.Allocator) void {
         self.question.deinit(allocator);
         self.answer.deinit(allocator);
     }
@@ -456,7 +457,7 @@ pub const Question = struct {
     qtype: QType,
     qclass: QClass = QClass.IN,
 
-    pub fn decode(allocator: *mem.Allocator, input: *BytesView) !Question {
+    pub fn decode(allocator: mem.Allocator, input: *BytesView) !Question {
         const name = try decodeDomainName(allocator, input);
         try input.ensureLen(qtype_len + qclass_len);
         const qtype = @intToEnum(
@@ -475,7 +476,7 @@ pub const Question = struct {
         };
     }
 
-    pub fn deinit(self: *const Question, allocator: *mem.Allocator) void {
+    pub fn deinit(self: *const Question, allocator: mem.Allocator) void {
         allocator.free(self.name);
     }
 
@@ -497,6 +498,8 @@ pub const Question = struct {
         options: std.fmt.FormatOptions,
         out_stream: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try out_stream.print(
             "Question{{ .name = \"{s}\", .qtype = {}, .qclass = {} }}",
             .{ self.name, self.qtype, self.qclass },
@@ -507,7 +510,7 @@ pub const Question = struct {
 pub const Answer = struct {
     records: std.ArrayListUnmanaged(Rr),
 
-    pub fn decode(allocator: *mem.Allocator, input: *BytesView, rr_count: usize) !Answer {
+    pub fn decode(allocator: mem.Allocator, input: *BytesView, rr_count: usize) !Answer {
         var records = try std.ArrayListUnmanaged(Rr).initCapacity(allocator, rr_count);
         var i: usize = 0;
         while (i < rr_count) : (i += 1) {
@@ -517,7 +520,7 @@ pub const Answer = struct {
         return Answer{ .records = records };
     }
 
-    pub fn deinit(self: *Answer, allocator: *mem.Allocator) void {
+    pub fn deinit(self: *Answer, allocator: mem.Allocator) void {
         for (self.records.items) |*record| {
             record.deinit(allocator);
         }
@@ -530,6 +533,8 @@ pub const Answer = struct {
         options: std.fmt.FormatOptions,
         out_stream: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try out_stream.writeAll("[");
         for (self.records.items) |*record, i| {
             if (i > 0) {
@@ -549,7 +554,7 @@ pub const Rr = struct {
     rd_length: u16,
     rdata: Rdata,
 
-    pub fn decode(allocator: *mem.Allocator, input: *BytesView) !Rr {
+    pub fn decode(allocator: mem.Allocator, input: *BytesView) !Rr {
         const name = try decodeDomainName(allocator, input);
         const type_len = @sizeOf(Type);
         const class_len = @sizeOf(Class);
@@ -583,7 +588,7 @@ pub const Rr = struct {
         };
     }
 
-    pub fn deinit(self: *const Rr, allocator: *mem.Allocator) void {
+    pub fn deinit(self: *const Rr, allocator: mem.Allocator) void {
         allocator.free(self.name);
         self.rdata.deinit(allocator);
     }
@@ -594,6 +599,8 @@ pub const Rr = struct {
         options: std.fmt.FormatOptions,
         out_stream: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try out_stream.print(
             "Rr{{ .name = \"{s}\", .rr_type = {}, .class = {}, .ttl = {}, .rd_length = {}, .rdata = {} }}",
             .{ self.name, self.rr_type, self.class, self.ttl, self.rd_length, self.rdata },
@@ -613,6 +620,8 @@ const Ip4Addr = struct {
         options: std.fmt.FormatOptions,
         out_stream: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         const bytes: []const u8 = &self.bytes;
         try std.fmt.format(out_stream, "{}.{}.{}.{}", .{
             bytes[0],
@@ -635,6 +644,8 @@ const Ip6Addr = struct {
         options: std.fmt.FormatOptions,
         out_stream: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         if (mem.eql(u8, &self.bytes, &[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff })) {
             try std.fmt.format(out_stream, "::ffff:{}.{}.{}.{}", .{
                 self.bytes[12],
@@ -680,7 +691,7 @@ pub const Rdata = union(Type) {
     TXT: []const u8,
     AAAA: Ip6Addr,
 
-    pub fn decode(allocator: *mem.Allocator, input: *BytesView, rr_type: Type, rd_length: u16) !Rdata {
+    pub fn decode(allocator: mem.Allocator, input: *BytesView, rr_type: Type, rd_length: u16) !Rdata {
         try input.ensureLen(rd_length);
         switch (rr_type) {
             .A => {
@@ -715,7 +726,7 @@ pub const Rdata = union(Type) {
         }
     }
 
-    pub fn deinit(self: *const Rdata, allocator: *mem.Allocator) void {
+    pub fn deinit(self: *const Rdata, allocator: mem.Allocator) void {
         switch (self.*) {
             Type.CNAME, Type.NS, Type.TXT => |str| allocator.free(str),
             else => {},
@@ -728,6 +739,8 @@ pub const Rdata = union(Type) {
         options: std.fmt.FormatOptions,
         out_stream: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try out_stream.writeAll("Rdata{ ");
         switch (self.*) {
             Type.A => |*a| try out_stream.print(".A = {}", .{a}),
@@ -742,7 +755,7 @@ pub const Rdata = union(Type) {
 };
 
 // returned slice must be freed after use.
-fn decodeDomainName(allocator: *mem.Allocator, input: *BytesView) ![]u8 {
+fn decodeDomainName(allocator: mem.Allocator, input: *BytesView) ![]u8 {
     const decoded_len = try calcLabelsDecodedLen(input.bytes, input.pos);
     var dest = try allocator.alloc(u8, decoded_len);
     _ = try decodeLabels(input.bytes, input.pos, dest);
@@ -1098,7 +1111,7 @@ test "dns.send/recv" {
     defer ring.deinit();
 
     const address = try net.Address.parseIp4("8.8.8.8", 53);
-    const client = try os.socket(address.any.family, os.SOCK_DGRAM, 0);
+    const client = try os.socket(address.any.family, os.SOCK.DGRAM, 0);
     defer os.close(client);
 
     const connect = try ring.connect(0xcccccccc, client, &address.any, address.getOsSockLen());
@@ -1117,11 +1130,11 @@ test "dns.send/recv" {
     var query_buf = try allocator.alloc(u8, query_len);
     defer allocator.free(query_buf);
     _ = try query.encode(query_buf);
-    const send = try ring.send(0xeeeeeeee, client, query_buf, 0);
+    _ = try ring.send(0xeeeeeeee, client, query_buf, 0);
     // send.flags |= linux.IOSQE_IO_LINK;
 
     var buffer_recv = [_]u8{0} ** 1024;
-    const recv = try ring.recv(0xffffffff, client, buffer_recv[0..], 0);
+    _ = try ring.recv(0xffffffff, client, buffer_recv[0..], 0);
     const nr_wait = try ring.submit();
 
     var i: usize = 0;
@@ -1150,7 +1163,7 @@ test "dns.Client" {
         const Context = @This();
         const MyClient = Client(Context);
 
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
         client: MyClient = undefined,
         connect_completion: MyClient.Completion = undefined,
         send_completion: MyClient.Completion = undefined,
@@ -1168,6 +1181,7 @@ test "dns.Client" {
             completion: *MyClient.Completion,
             result: IO.ConnectError!void,
         ) void {
+            _ = completion;
             std.log.debug("Context.connectCallback start, result={}", .{result});
             if (result) |_| {
                 self.query = QueryMessage{
@@ -1188,6 +1202,7 @@ test "dns.Client" {
             completion: *MyClient.Completion,
             result: anyerror!usize,
         ) void {
+            _ = completion;
             if (result) |sent| {
                 std.log.debug("Context.sendQueryCallback sent={}", .{sent});
                 self.client.recvResponse(recvResponseCallback, &self.recv_completion);
@@ -1201,6 +1216,7 @@ test "dns.Client" {
             completion: *MyClient.Completion,
             result: anyerror!usize,
         ) void {
+            _ = completion;
             if (result) |received| {
                 std.log.debug("Context.recvResponseCallback received={}", .{received});
 
@@ -1220,7 +1236,6 @@ test "dns.Client" {
             var io = try IO.init(32, 0);
             defer io.deinit();
 
-            // Use a random port
             const address = try std.net.Address.parseIp4("8.8.8.8", 53);
 
             const allocator = testing.allocator;
