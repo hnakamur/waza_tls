@@ -3,7 +3,7 @@ const mem = std.mem;
 const net = std.net;
 const os = std.os;
 const IO = @import("tigerbeetle-io").IO;
-const http = @import("http");
+const http = @import("hutaback");
 
 fn getEnvUint(comptime T: type, name: []const u8, default: T, max: T) T {
     if (os.getenv(name)) |s| {

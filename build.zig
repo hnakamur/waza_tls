@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const pkgs = struct {
-    const http = std.build.Pkg{
-        .name = "http",
+    const hutaback = std.build.Pkg{
+        .name = "hutaback",
         .path = .{ .path = "./src/main.zig" },
         .dependencies = &[_]std.build.Pkg{
             @"tigerbeetle-io",
@@ -27,7 +27,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
     const target = b.standardTargetOptions(.{});
 
-    const lib = b.addStaticLibrary("http", "src/main.zig");
+    const lib = b.addStaticLibrary("hutaback", "src/main.zig");
     lib.addPackage(pkgs.@"tigerbeetle-io");
     lib.addPackage(pkgs.datetime);
     lib.setBuildMode(mode);
@@ -73,7 +73,7 @@ pub fn build(b: *std.build.Builder) void {
 
     // tests with real IO
     var real_tests = b.addTest("tests/real/main.zig");
-    real_tests.addPackage(pkgs.http);
+    real_tests.addPackage(pkgs.hutaback);
     real_tests.addPackage(pkgs.@"tigerbeetle-io");
     real_tests.addPackage(pkgs.datetime);
     real_tests.setBuildMode(mode);
@@ -113,7 +113,7 @@ pub fn build(b: *std.build.Builder) void {
         "http_server",
     }) |example_name| {
         const example = b.addExecutable(example_name, "examples/" ++ example_name ++ ".zig");
-        example.addPackage(pkgs.http);
+        example.addPackage(pkgs.hutaback);
         example.addPackage(pkgs.@"tigerbeetle-io");
         example.addPackage(pkgs.datetime);
         example.setBuildMode(mode);

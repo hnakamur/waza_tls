@@ -3,7 +3,7 @@ const mem = std.mem;
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
-const http = @import("http");
+const http = @import("hutaback");
 
 const Client = struct {
     pub const Config = struct {

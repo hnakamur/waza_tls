@@ -4,7 +4,7 @@ const net = std.net;
 const os = std.os;
 const time = std.time;
 const IO = @import("tigerbeetle-io").IO;
-const http = @import("http");
+const http = @import("hutaback");
 const datetime = @import("datetime");
 const config = http.config;
 

@@ -1,7 +1,7 @@
 const std = @import("std");
 const time = std.time;
 
-const http = @import("http");
+const http = @import("hutaback");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;

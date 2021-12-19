@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const http = @import("http");
+const http = @import("hutaback");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;

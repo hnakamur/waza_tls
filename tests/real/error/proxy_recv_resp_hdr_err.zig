@@ -3,7 +3,7 @@ const os = std.os;
 const time = std.time;
 
 const datetime = @import("datetime");
-const http = @import("http");
+const http = @import("hutaback");
 const IO = @import("tigerbeetle-io").IO;
 
 const testing = std.testing;
