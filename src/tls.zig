@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.io;
 
 const SecurityParameters = struct {
     entity: ConnectionEnd,
@@ -51,7 +52,17 @@ const MacAlgorithm = enum {
 
 const CompressionMethod = enum(u8) {
     @"null" = 0,
+
+    fn encode(self: CompressionMethod, writer: anytype) !void {
+        try writer.writeByte(@enumToInt(self));
+    }
 };
+fn encodeCompressionMethodList(methods: []const CompressionMethod, writer: anytype) !void {
+    try writer.writeByte(@truncate(u8, methods.len * @sizeOf(CompressionMethod)));
+    for (methods) |method| {
+        try method.encode(writer);
+    }
+}
 
 const HashAlgorithm = enum(u8) {
     none = 0,
@@ -78,6 +89,11 @@ const SignatureAndHashAlgorithm = struct {
 const ProtocolVersion = struct {
     major: u8,
     minor: u8,
+
+    fn encode(self: *const ProtocolVersion, writer: anytype) !void {
+        try writer.writeByte(self.major);
+        try writer.writeByte(self.minor);
+    }
 };
 const v1_2 = ProtocolVersion{ .major = 3, .minor = 3 };
 const v1_0 = ProtocolVersion{ .major = 3, .minor = 1 };
@@ -149,6 +165,10 @@ const HandshakeType = enum(u8) {
     certificate_verify = 15,
     client_key_exchange = 16,
     finished = 20,
+
+    fn encode(self: HandshakeType, writer: anytype) !void {
+        try writer.writeByte(@enumToInt(self));
+    }
 };
 
 const Handshake = struct {
@@ -163,11 +183,30 @@ const Handshake = struct {
         certificate_verify: CertificateVerify,
         client_key_exchange: ClientKeyExchange,
         finished: Finished,
+
+        fn encode(self: *const Body, writer: anytype) !void {
+            switch (self.*) {
+                .client_hello => |*ch| try ch.encode(writer),
+                else => {},
+            }
+        }
     };
 
     msg_type: HandshakeType,
     length: u24,
     body: Body,
+
+    fn updateLength(self: *Handshake) !void {
+        var writer = io.countingWriter(io.null_writer);
+        try self.body.encode(writer.writer());
+        self.length = @truncate(u24, writer.bytes_written);
+    }
+
+    fn encode(self: *const Handshake, writer: anytype) !void {
+        try self.msg_type.encode(writer);
+        try writer.writeIntBig(u24, self.length);
+        try self.body.encode(writer);
+    }
 };
 
 const ClientHello = struct {
@@ -175,8 +214,17 @@ const ClientHello = struct {
     random: Random,
     session_id: SessionId,
     cipher_suites: []CipherSuite,
-    compression_methods: []CompressionMethod,
-    extensions: []Extension,
+    compression_methods: []const CompressionMethod,
+    extensions: []const Extension,
+
+    fn encode(self: *const ClientHello, writer: anytype) !void {
+        try self.client_version.encode(writer);
+        try writer.writeAll(&self.random);
+        try encodeSessionId(self.session_id, writer);
+        try encodeCipherSuiteList(self.cipher_suites, writer);
+        try encodeCompressionMethodList(self.compression_methods, writer);
+        try encodeExtensions(self.extensions, writer);
+    }
 };
 
 const ServerHello = struct {
@@ -188,30 +236,72 @@ const ServerHello = struct {
     extensions: []Extension,
 };
 
-const Random = struct {
-    gmt_unix_time: u32,
-    random_bytes: [28]u8,
-};
+const Random = [32]u8;
 
-const SessionId = u8;
-const session_id_max = 32;
+const SessionId = []const u8;
+const session_id_max_len = 32;
+
+fn encodeSessionId(self: SessionId, writer: anytype) !void {
+    try writer.writeByte(@truncate(u8, self.len));
+    try writer.writeAll(self);
+}
 
 const CipherSuite = [2]u8;
 
+fn encodeCipherSuiteList(cipher_suites: []const CipherSuite, writer: anytype) !void {
+    try writer.writeIntBig(u16, @truncate(u16, cipher_suites.len) * @sizeOf(CipherSuite));
+    for (cipher_suites) |*suite| {
+        try writer.writeAll(suite);
+    }
+}
+
+fn encodeExtensions(extensions: []const Extension, writer: anytype) !void {
+    const len = try calcExtensionsContentsEncodedLen(extensions);
+    try writer.writeIntBig(u16, @truncate(u16, len));
+    try encodeExtensionsContents(extensions, writer);
+}
+
+fn calcExtensionsContentsEncodedLen(extensions: []const Extension) !u64 {
+    var writer = io.countingWriter(io.null_writer);
+    try encodeExtensionsContents(extensions, writer.writer());
+    return writer.bytes_written;
+}
+
+fn encodeExtensionsContents(extensions: []const Extension, writer: anytype) !void {
+    for (extensions) |*ext| {
+        try ext.encode(writer);
+    }
+}
+
 const Extension = struct {
     extension_type: ExtensionType,
-    extension_data: []u8,
+    extension_data: ExtensionData,
+
+    fn encode(self: *const Extension, writer: anytype) !void {
+        try writer.writeIntBig(u16, @enumToInt(self.extension_type));
+        try self.extension_data.encode(writer);
+    }
 };
 
 // https://datatracker.ietf.org/doc/html/rfc6066#section-1.1
 const ExtensionType = enum(u16) {
     server_name = 0,
-    max_fragment_length = 1,
-    client_certificate_url = 2,
-    trusted_ca_keys = 3,
-    truncated_hmac = 4,
-    status_request = 5,
-    signature_algorithms = 13,
+    // max_fragment_length = 1,
+    // client_certificate_url = 2,
+    // trusted_ca_keys = 3,
+    // truncated_hmac = 4,
+    // status_request = 5,
+    // signature_algorithms = 13,
+};
+
+const ExtensionData = union(ExtensionType) {
+    server_name: ServerNameList,
+
+    fn encode(self: *const ExtensionData, writer: anytype) !void {
+        switch (self.*) {
+            .server_name => |sn| try sn.encode(writer),
+        }
+    }
 };
 
 const asn1_cert_len = 1 << (24 - 1) - 1;
@@ -324,18 +414,49 @@ const Finished = struct {
 };
 
 const ServerNameList = struct {
-    server_name_list: []ServerName,
+    server_name_list: []const ServerName,
+
+    fn encode(self: *const ServerNameList, writer: anytype) !void {
+        const len = try calcServerNameListContentsEncodedLen(self.server_name_list);
+        try writer.writeIntBig(u16, @truncate(u16, len));
+        try encodeServerNameListContents(self.server_name_list, writer);
+    }
 };
+
+fn calcServerNameListContentsEncodedLen(server_name_list: []const ServerName) !u64 {
+    var writer = io.countingWriter(io.null_writer);
+    try encodeServerNameListContents(server_name_list, writer.writer());
+    return writer.bytes_written;
+}
+
+fn encodeServerNameListContents(server_name_list: []const ServerName, writer: anytype) !void {
+    for (server_name_list) |server_name| {
+        try server_name.encode(writer);
+    }
+}
 
 const ServerName = union(NameType) {
     host_name: HostName,
+
+    fn encode(self: *const ServerName, writer: anytype) !void {
+        try writer.writeByte(@enumToInt(@as(NameType, self.*)));
+        switch (self.*) {
+            .host_name => |n| try encodeHostName(n, writer),
+        }
+    }
 };
 
 const NameType = enum(u8) {
     host_name = 0,
 };
 
-const HostName = []u8;
+const HostName = []const u8;
+fn encodeHostName(hostname: []const u8, writer: anytype) !void {
+    try writer.writeIntBig(u16, @truncate(u16, hostname.len));
+    try writer.writeAll(hostname);
+}
+
+const testing = std.testing;
 
 test "ServerKeyExchange" {
     const xchg = ServerKeyExchange{ .rsa = {} };
@@ -351,4 +472,61 @@ test "ClientHello" {
     };
 
     std.debug.print("client_hello = {}\n", .{client_hello});
+}
+
+test "write_u24" {
+    var buf = [_]u8{0} ** 3;
+    var fbs = io.fixedBufferStream(&buf);
+
+    const length: u24 = 0x123456;
+    try fbs.writer().writeIntBig(u24, length);
+    try testing.expectEqualSlices(u8, &[_]u8{ '\x12', '\x34', '\x56' }, &buf);
+}
+
+test "Handshake.encode" {
+    var hs = Handshake{
+        .msg_type = .client_hello,
+        .length = 0,
+        .body = .{
+            .client_hello = ClientHello{
+                .client_version = v1_2,
+                .random = [_]u8{0} ** 32,
+                .session_id = &[_]u8{0},
+                .cipher_suites = &[_]CipherSuite{},
+                .compression_methods = &[_]CompressionMethod{.@"null"},
+                .extensions = &[_]Extension{
+                    .{
+                        .extension_type = .server_name,
+                        .extension_data = .{
+                            .server_name = ServerNameList{
+                                .server_name_list = &[_]ServerName{
+                                    .{
+                                        .host_name = "example.com",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    const allocator = testing.allocator;
+    const DynamicBytesBuf = std.fifo.LinearFifo(u8, .Dynamic);
+    var buf = DynamicBytesBuf.init(allocator);
+    defer buf.deinit();
+    var writer = buf.writer();
+    try hs.updateLength();
+    try testing.expectEqual(@as(u24, 49 + "example.com".len), hs.length);
+    try hs.encode(writer);
+    const want = "\x01\x00\x00\x3c" ++ "\x03\x03" ++ "\x00" ** 32 ++ "\x01\x00" ++
+        "\x00\x00" ++ "\x01\x00" ++
+        "\x00\x12" ++
+        "\x00\x00" ++
+        "\x00\x0e" ++
+        "\x00" ++
+        "\x00\x0b" ++
+        "example.com";
+    try testing.expectEqualSlices(u8, want, buf.readableSlice(0));
 }
