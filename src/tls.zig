@@ -413,7 +413,7 @@ const ExtensionType = enum(u16) {
     application_layer_protocol_negotiation = 0x0010,
 
     // https://datatracker.ietf.org/doc/html/rfc4492#section-5.1.2
-    supported_elliptic_curves = 0x000b,
+    supported_points = 0x000b,
 
     // signature_algorithms = 13,
 
@@ -427,8 +427,8 @@ const ExtensionType = enum(u16) {
 
 const ExtensionData = union(ExtensionType) {
     server_name: ServerNameList,
-    application_layer_protocol_negotiation: void,
-    supported_elliptic_curves: void,
+    application_layer_protocol_negotiation: ProtocolNameList,
+    supported_points: EcPointFormatList,
     renegotiation_info: RenegotiationInfo,
 
     fn write(self: *const ExtensionData, writer: anytype) !void {
@@ -443,11 +443,73 @@ const ExtensionData = union(ExtensionType) {
             .server_name => return ExtensionData{
                 .server_name = try ServerNameList.unmarshal(allocator, input),
             },
+            .application_layer_protocol_negotiation => return ExtensionData{
+                .application_layer_protocol_negotiation = try ProtocolNameList.unmarshal(allocator, input),
+            },
+            .supported_points => return ExtensionData{
+                .supported_points = try EcPointFormatList.unmarshal(allocator, input),
+            },
             .renegotiation_info => return ExtensionData{
                 .renegotiation_info = try RenegotiationInfo.unmarshal(input),
             },
-            else => @panic("not implemented yet"),
         }
+    }
+};
+
+const ProtocolNameList = struct {
+    protocol_name_list: []const ProtocolName,
+
+    fn deinit(self: *ProtocolNameList, allocator: mem.Allocator) void {
+        allocator.free(self.protocol_name_list);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !ProtocolNameList {
+        const len = try input.readIntBig(u16);
+        const end_pos = input.pos + len;
+        var protocol_names = std.ArrayListUnmanaged(ProtocolName){};
+        while (input.pos < end_pos) {
+            const protocol_name = try unmarshalProtocolName(input);
+            try protocol_names.append(allocator, protocol_name);
+        }
+        return ProtocolNameList{
+            .protocol_name_list = protocol_names.toOwnedSlice(allocator),
+        };
+    }
+};
+const ProtocolName = []const u8;
+fn unmarshalProtocolName(input: *BytesView) !ProtocolName {
+    return try unmarshalLenAndBytes(u8, input);
+}
+
+const EcPointFormatList = struct {
+    ec_point_format_list: []const EcPointFormat,
+
+    fn deinit(self: *EcPointFormatList, allocator: mem.Allocator) void {
+        allocator.free(self.ec_point_format_list);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !EcPointFormatList {
+        const len = try input.readIntBig(u16);
+        const end_pos = input.pos + len;
+        var ec_point_formats = std.ArrayListUnmanaged(EcPointFormat){};
+        while (input.pos < end_pos) {
+            const ec_point_format = try EcPointFormat.unmarshal(input);
+            try ec_point_formats.append(allocator, ec_point_format);
+        }
+        return EcPointFormatList{
+            .ec_point_format_list = ec_point_formats.toOwnedSlice(allocator),
+        };
+    }
+};
+
+const EcPointFormat = enum(u8) {
+    uncompressed = 0,
+    ansiX962_compressed_prime = 1,
+    ansiX962_compressed_char2 = 2,
+    // reserved (248..255),
+
+    fn unmarshal(input: *BytesView) !EcPointFormat {
+        return @intToEnum(EcPointFormat, try input.readByte());
     }
 };
 
