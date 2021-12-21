@@ -36,7 +36,7 @@ pub fn Client(comptime Context: type) type {
         const Completion = struct {
             linked_completion: IO.LinkedCompletion = undefined,
             buffer: []u8 = undefined,
-            callback: fn (ctx: ?*c_void, comp: *Completion, result: *const c_void) void = undefined,
+            callback: fn (ctx: ?*anyopaque, comp: *Completion, result: *const anyopaque) void = undefined,
         };
 
         allocator: mem.Allocator,
@@ -78,7 +78,7 @@ pub fn Client(comptime Context: type) type {
 
             completion.* = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             comp,
@@ -142,7 +142,7 @@ pub fn Client(comptime Context: type) type {
             }
             completion.* = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             comp,
@@ -205,7 +205,7 @@ pub fn Client(comptime Context: type) type {
         ) void {
             completion.* = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             comp,

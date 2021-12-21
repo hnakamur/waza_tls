@@ -1,6 +1,7 @@
 const std = @import("std");
 const io = std.io;
 const mem = std.mem;
+const BytesView = @import("parser/bytes.zig").BytesView;
 
 const SecurityParameters = struct {
     entity: ConnectionEnd,
@@ -326,6 +327,21 @@ test "readSessionId" {
     var fbs = io.fixedBufferStream(data);
     const id = try readSessionId(allocator, fbs.reader());
     defer allocator.free(id);
+    try testing.expectEqualSlices(u8, "\x01\x02\x03", id);
+}
+
+fn unmarshalSessionId(input: *BytesView) !SessionId {
+    return try unmarshalLenAndBytes(u8, input);
+}
+fn unmarshalLenAndBytes(comptime LengthType: type, input: *BytesView) ![]const u8 {
+    const len = try input.readIntBig(LengthType);
+    return try input.sliceBytesNoEof(len);
+}
+
+test "unmarshalSessionId" {
+    const data = "\x03\x01\x02\x03";
+    var input = BytesView.init(data, true);
+    const id = try unmarshalSessionId(&input);
     try testing.expectEqualSlices(u8, "\x01\x02\x03", id);
 }
 

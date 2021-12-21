@@ -77,10 +77,10 @@ pub const IO = struct {
         next: ?*Completion = null,
         operation: Operation,
         linked: bool = false,
-        // This is one of the usecases for c_void outside of C code and as such c_void will
+        // This is one of the usecases for anyopaque outside of C code and as such anyopaque will
         // be replaced with anyopaque eventually: https://github.com/ziglang/zig/issues/323
-        context: ?*c_void,
-        callback: fn (context: ?*c_void, completion: *Completion, result: *const c_void) void,
+        context: ?*anyopaque,
+        callback: fn (context: ?*anyopaque, completion: *Completion, result: *const anyopaque) void,
 
         pub fn err(self: *const Completion) os.E {
             if (self.result > -4096 and self.result < 0) {
@@ -469,7 +469,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -507,7 +507,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -546,7 +546,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -587,7 +587,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -638,7 +638,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -674,7 +674,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     const linked_comp = @fieldParentPtr(LinkedCompletion, "main_completion", comp);
                     linked_comp.main_result = .{
                         .connect = @intToPtr(*const ConnectError!void, @ptrToInt(res)).*,
@@ -700,7 +700,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     const linked_comp = @fieldParentPtr(LinkedCompletion, "linked_completion", comp);
                     linked_comp.linked_result = @intToPtr(*const TimeoutError!void, @ptrToInt(res)).*;
                     if (linked_comp.main_result) |main_result| {
@@ -753,7 +753,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -812,7 +812,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -862,7 +862,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -909,7 +909,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -947,7 +947,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     const linked_comp = @fieldParentPtr(LinkedCompletion, "main_completion", comp);
                     linked_comp.main_result = .{
                         .recv = @intToPtr(*const RecvError!usize, @ptrToInt(res)).*,
@@ -974,7 +974,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     const linked_comp = @fieldParentPtr(LinkedCompletion, "linked_completion", comp);
                     linked_comp.linked_result = @intToPtr(*const TimeoutError!void, @ptrToInt(res)).*;
                     if (linked_comp.main_result) |main_result| {
@@ -1034,7 +1034,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -1072,7 +1072,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     const linked_comp = @fieldParentPtr(LinkedCompletion, "main_completion", comp);
                     linked_comp.main_result = .{
                         .send = @intToPtr(*const SendError!usize, @ptrToInt(res)).*,
@@ -1099,7 +1099,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     const linked_comp = @fieldParentPtr(LinkedCompletion, "linked_completion", comp);
                     linked_comp.linked_result = @intToPtr(*const TimeoutError!void, @ptrToInt(res)).*;
                     if (linked_comp.main_result) |main_result| {
@@ -1143,7 +1143,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,
@@ -1193,7 +1193,7 @@ pub const IO = struct {
             .io = self,
             .context = context,
             .callback = struct {
-                fn wrapper(ctx: ?*c_void, comp: *Completion, res: *const c_void) void {
+                fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                     callback(
                         @intToPtr(Context, @ptrToInt(ctx)),
                         comp,

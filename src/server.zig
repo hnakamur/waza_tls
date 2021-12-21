@@ -183,7 +183,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             linked_completion: IO.LinkedCompletion = undefined,
             buffer: []const u8 = undefined,
             processed_len: usize = undefined,
-            callback: fn (ctx: ?*c_void, result: *const c_void) void = undefined,
+            callback: fn (ctx: ?*anyopaque, result: *const anyopaque) void = undefined,
         };
 
         pub const RecvRequestHeaderError = error{
@@ -277,7 +277,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
                 http_log.debug("Server.Conn.close self=0x{x}, server=0x{x}", .{ @ptrToInt(&self), @ptrToInt(self.server) });
                 self.completion = .{
                     .callback = struct {
-                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                        fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                             callback(
                                 @intToPtr(*Handler, @ptrToInt(ctx)),
                                 @intToPtr(*const IO.CloseError!void, @ptrToInt(res)).*,
@@ -318,7 +318,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             ) void {
                 self.completion = .{
                     .callback = struct {
-                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                        fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                             callback(
                                 @intToPtr(*Handler, @ptrToInt(ctx)),
                                 @intToPtr(*const RecvRequestHeaderError!usize, @ptrToInt(res)).*,
@@ -498,7 +498,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             ) void {
                 self.completion = .{
                     .callback = struct {
-                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                        fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                             callback(
                                 @intToPtr(*Handler, @ptrToInt(ctx)),
                                 @intToPtr(*const RecvRequestContentFragmentError!usize, @ptrToInt(res)).*,
@@ -608,7 +608,7 @@ pub fn Server(comptime Context: type, comptime Handler: type) type {
             ) void {
                 self.completion = .{
                     .callback = struct {
-                        fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                        fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                             callback(
                                 @intToPtr(*Handler, @ptrToInt(ctx)),
                                 @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,

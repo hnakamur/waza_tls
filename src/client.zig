@@ -45,7 +45,7 @@ pub fn Client(comptime Context: type) type {
             send_buffer: []const u8 = undefined,
             processed_len: usize = undefined,
             response: RecvResponse = undefined,
-            callback: fn (ctx: ?*c_void, result: *const c_void) void = undefined,
+            callback: fn (ctx: ?*anyopaque, result: *const anyopaque) void = undefined,
         };
 
         allocator: mem.Allocator,
@@ -94,7 +94,7 @@ pub fn Client(comptime Context: type) type {
 
             self.completion = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             @intToPtr(*const IO.ConnectError!void, @ptrToInt(res)).*,
@@ -140,7 +140,7 @@ pub fn Client(comptime Context: type) type {
         ) void {
             self.completion = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             @intToPtr(*const IO.SendError!usize, @ptrToInt(res)).*,
@@ -212,7 +212,7 @@ pub fn Client(comptime Context: type) type {
         ) void {
             self.completion = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             @intToPtr(*const RecvResponseHeaderError!usize, @ptrToInt(res)).*,
@@ -345,7 +345,7 @@ pub fn Client(comptime Context: type) type {
         ) void {
             self.completion = .{
                 .callback = struct {
-                    fn wrapper(ctx: ?*c_void, res: *const c_void) void {
+                    fn wrapper(ctx: ?*anyopaque, res: *const anyopaque) void {
                         callback(
                             @intToPtr(*Context, @ptrToInt(ctx)),
                             @intToPtr(*const IO.RecvError!usize, @ptrToInt(res)).*,
