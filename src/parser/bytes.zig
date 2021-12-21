@@ -46,6 +46,13 @@ pub const BytesView = struct {
         return self.bytes[self.pos + pos .. self.pos + pos + len];
     }
 
+    pub fn readByte(self: *BytesView) !u8 {
+        try self.ensureLen(1);
+        const b = self.bytes[self.pos];
+        self.advance(1);
+        return b;
+    }
+
     pub fn readBytesNoEof(self: *BytesView, comptime num_bytes: usize) ![num_bytes]u8 {
         try self.ensureLen(num_bytes);
         var bytes: [num_bytes]u8 = undefined;

@@ -58,6 +58,10 @@ const CompressionMethod = enum(u8) {
     fn write(self: CompressionMethod, writer: anytype) !void {
         try writer.writeByte(@enumToInt(self));
     }
+
+    fn unmarshal(input: *BytesView) !CompressionMethod {
+        return @intToEnum(CompressionMethod, try input.readByte());
+    }
 };
 fn writeCompressionMethodList(methods: []const CompressionMethod, writer: anytype) !void {
     try writer.writeByte(@truncate(u8, methods.len * @sizeOf(CompressionMethod)));
@@ -97,9 +101,9 @@ const ProtocolVersion = struct {
         try writer.writeByte(self.minor);
     }
 
-    fn read(reader: anytype) !ProtocolVersion {
-        const major = try reader.readByte();
-        const minor = try reader.readByte();
+    fn unmarshal(input: *BytesView) !ProtocolVersion {
+        const major = try input.readByte();
+        const minor = try input.readByte();
         const ver = ProtocolVersion{ .major = major, .minor = minor };
         if (!(ver.eql(v1_2) or ver.eql(v1_0))) return error.UnsupportedProtocolVersion;
         return ver;
@@ -184,9 +188,8 @@ const HandshakeType = enum(u8) {
         try writer.writeByte(@enumToInt(self));
     }
 
-    fn read(reader: anytype) !HandshakeType {
-        const b = try reader.readByte();
-        return @intToEnum(HandshakeType, b);
+    fn unmarshal(input: *BytesView) !HandshakeType {
+        return @intToEnum(HandshakeType, try input.readByte());
     }
 };
 
@@ -210,13 +213,13 @@ const Handshake = struct {
             }
         }
 
-        fn read(allocator: mem.Allocator, msg_type: HandshakeType, reader: anytype) !Body {
+        fn unmarshal(allocator: mem.Allocator, input: *BytesView, msg_type: HandshakeType) !Body {
             switch (msg_type) {
                 .server_hello => return Body{
-                    .server_hello = try ServerHello.read(allocator, reader),
+                    .server_hello = try ServerHello.unmarshal(allocator, input),
                 },
                 .server_hello_done => return Body{
-                    .server_hello_done = try ServerHelloDone.read(allocator, reader),
+                    .server_hello_done = try ServerHelloDone.unmarshal(input),
                 },
                 else => @panic("not implemented yet"),
             }
@@ -239,12 +242,13 @@ const Handshake = struct {
         try self.body.write(writer);
     }
 
-    fn read(allocator: mem.Allocator, reader: anytype) !Handshake {
-        const hs_type = try HandshakeType.read(reader);
-        const len = try reader.readIntBig(u24);
-        var cr = io.countingReader(reader);
-        const body = try Body.read(allocator, hs_type, cr.reader());
-        if (cr.bytes_read != len) return error.MismatchedLength;
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !Handshake {
+        const hs_type = try HandshakeType.unmarshal(input);
+        const len = try input.readIntBig(u24);
+        const old_pos = input.pos;
+        const body = try Body.unmarshal(allocator, input, hs_type);
+        const bytes_read = input.pos - old_pos;
+        if (bytes_read != len) return error.MismatchedLength;
         return Handshake{ .msg_type = hs_type, .length = len, .body = body };
     }
 };
@@ -272,34 +276,41 @@ const ServerHello = struct {
     random: Random,
     session_id: SessionId,
     cipher_suite: CipherSuite,
-    compression_method: []const CompressionMethod,
+    compression_method: CompressionMethod,
     extensions: []const Extension,
 
     fn deinit(self: *ServerHello, allocator: mem.Allocator) void {
-        allocator.free(self.session_id);
+        allocator.free(self.extensions);
     }
 
-    fn read(allocator: mem.Allocator, reader: anytype) !ServerHello {
-        const ver = try ProtocolVersion.read(reader);
-        const rnd = try readRandom(reader);
-        const ses_id = try readSessionId(allocator, reader);
-        _ = ver;
-        _ = rnd;
-        _ = ses_id;
-        @panic("not implemented yet");
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !ServerHello {
+        const ver = try ProtocolVersion.unmarshal(input);
+        const rnd = try unmarshalRandom(input);
+        const ses_id = try unmarshalSessionId(input);
+        const suite = try CipherSuite.unmarshal(input);
+        const comp = try CompressionMethod.unmarshal(input);
+        const exts = try unmarshalExtensions(allocator, input);
+        return ServerHello{
+            .server_version = ver,
+            .random = rnd,
+            .session_id = ses_id,
+            .cipher_suite = suite,
+            .compression_method = comp,
+            .extensions = exts,
+        };
     }
 };
 
 const random_len = 32;
 const Random = [random_len]u8;
-fn readRandom(reader: anytype) !Random {
-    return try reader.readBytesNoEof(random_len);
+fn unmarshalRandom(input: *BytesView) !Random {
+    return try input.readBytesNoEof(random_len);
 }
 
-test "readRandom" {
+test "unmarshalRandom" {
     const data = [_]u8{0} ** 32;
-    var fbs = io.fixedBufferStream(&data);
-    const rnd = try readRandom(fbs.reader());
+    var input = BytesView.init(data, true);
+    const rnd = try unmarshalRandom(&input);
     try testing.expectEqual(Random, @TypeOf(rnd));
 }
 
@@ -309,25 +320,6 @@ const session_id_max_len = 32;
 fn writeSessionId(self: SessionId, writer: anytype) !void {
     try writer.writeByte(@truncate(u8, self.len));
     try writer.writeAll(self);
-}
-fn readSessionId(allocator: mem.Allocator, reader: anytype) !SessionId {
-    return try readLenAndBytes(u8, allocator, reader);
-}
-
-fn readLenAndBytes(comptime LengthType: type, allocator: mem.Allocator, reader: anytype) ![]u8 {
-    const len = try reader.readIntBig(LengthType);
-    var buf = try allocator.alloc(u8, len);
-    try reader.readNoEof(buf);
-    return buf;
-}
-
-test "readSessionId" {
-    const allocator = testing.allocator;
-    const data = "\x03\x01\x02\x03";
-    var fbs = io.fixedBufferStream(data);
-    const id = try readSessionId(allocator, fbs.reader());
-    defer allocator.free(id);
-    try testing.expectEqualSlices(u8, "\x01\x02\x03", id);
 }
 
 fn unmarshalSessionId(input: *BytesView) !SessionId {
@@ -345,7 +337,14 @@ test "unmarshalSessionId" {
     try testing.expectEqualSlices(u8, "\x01\x02\x03", id);
 }
 
-const CipherSuite = [2]u8;
+const CipherSuite = enum(u16) {
+    ECDHE_RSA_AES128_GCM_SHA256 = 0xC02F,
+    ECDHE_RSA_Chacha20_Poly1305 = 0xCCA,
+
+    fn unmarshal(input: *BytesView) !CipherSuite {
+        return @intToEnum(CipherSuite, try input.readIntBig(u16));
+    }
+};
 
 fn writeCipherSuiteList(cipher_suites: []const CipherSuite, writer: anytype) !void {
     try writer.writeIntBig(u16, @truncate(u16, cipher_suites.len) * @sizeOf(CipherSuite));
@@ -380,7 +379,26 @@ const Extension = struct {
         try writer.writeIntBig(u16, @enumToInt(self.extension_type));
         try self.extension_data.write(writer);
     }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !Extension {
+        const ext_type = try ExtensionType.unmarshal(input);
+        const ext_data = try ExtensionData.unmarshal(allocator, input, ext_type);
+        return Extension{
+            .extension_type = ext_type,
+            .extension_data = ext_data,
+        };
+    }
 };
+fn unmarshalExtensions(allocator: mem.Allocator, input: *BytesView) ![]const Extension {
+    const len = try input.readIntBig(u16);
+    const end_pos = input.pos + len;
+    var extensions = std.ArrayListUnmanaged(Extension){};
+    while (input.pos < end_pos) {
+        const ext = try Extension.unmarshal(allocator, input);
+        try extensions.append(allocator, ext);
+    }
+    return extensions.toOwnedSlice(allocator);
+}
 
 // https://datatracker.ietf.org/doc/html/rfc6066#section-1.1
 const ExtensionType = enum(u16) {
@@ -390,16 +408,56 @@ const ExtensionType = enum(u16) {
     // trusted_ca_keys = 3,
     // truncated_hmac = 4,
     // status_request = 5,
+
+    // https://datatracker.ietf.org/doc/html/rfc7301#section-3.1
+    application_layer_protocol_negotiation = 0x0010,
+
+    // https://datatracker.ietf.org/doc/html/rfc4492#section-5.1.2
+    supported_elliptic_curves = 0x000b,
+
     // signature_algorithms = 13,
+
+    // https://datatracker.ietf.org/doc/html/rfc5746
+    renegotiation_info = 0xff01,
+
+    fn unmarshal(input: *BytesView) !ExtensionType {
+        return @intToEnum(ExtensionType, try input.readIntBig(u16));
+    }
 };
 
 const ExtensionData = union(ExtensionType) {
     server_name: ServerNameList,
+    application_layer_protocol_negotiation: void,
+    supported_elliptic_curves: void,
+    renegotiation_info: RenegotiationInfo,
 
     fn write(self: *const ExtensionData, writer: anytype) !void {
         switch (self.*) {
             .server_name => |sn| try sn.write(writer),
+            else => @panic("not implemented yet"),
         }
+    }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView, ext_type: ExtensionType) !ExtensionData {
+        switch (ext_type) {
+            .server_name => return ExtensionData{
+                .server_name = try ServerNameList.unmarshal(allocator, input),
+            },
+            .renegotiation_info => return ExtensionData{
+                .renegotiation_info = try RenegotiationInfo.unmarshal(input),
+            },
+            else => @panic("not implemented yet"),
+        }
+    }
+};
+
+const RenegotiationInfo = struct {
+    renegotiated_connection: []const u8,
+
+    fn unmarshal(input: *BytesView) !RenegotiationInfo {
+        return RenegotiationInfo{
+            .renegotiated_connection = try unmarshalLenAndBytes(u8, input),
+        };
     }
 };
 
@@ -468,7 +526,7 @@ const CertificateRequest = struct {
 };
 
 const ServerHelloDone = struct {
-    fn read(_: mem.Allocator, _: anytype) !ServerHelloDone {
+    fn unmarshal(_: *BytesView) !ServerHelloDone {
         return ServerHelloDone{};
     }
 };
@@ -519,14 +577,31 @@ const Finished = struct {
 const ServerNameList = struct {
     server_name_list: []const ServerName,
 
+    fn deinit(self: *ServerNameList, allocator: mem.Allocator) void {
+        allocator.free(self.server_name_list);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !ServerNameList {
+        const len = try input.readIntBig(u16);
+        const end_pos = input.pos + len;
+        var server_names = std.ArrayListUnmanaged(ServerName){};
+        while (input.pos < end_pos) {
+            const server_name = try ServerName.unmarshal(input);
+            try server_names.append(allocator, server_name);
+        }
+        return ServerNameList{
+            .server_name_list = server_names.toOwnedSlice(allocator),
+        };
+    }
+
     fn write(self: *const ServerNameList, writer: anytype) !void {
-        const len = try calcServerNameListContentswritedLen(self.server_name_list);
+        const len = try calcServerNameListContentsLen(self.server_name_list);
         try writer.writeIntBig(u16, @truncate(u16, len));
         try writeServerNameListContents(self.server_name_list, writer);
     }
 };
 
-fn calcServerNameListContentswritedLen(server_name_list: []const ServerName) !u64 {
+fn calcServerNameListContentsLen(server_name_list: []const ServerName) !u64 {
     var writer = io.countingWriter(io.null_writer);
     try writeServerNameListContents(server_name_list, writer.writer());
     return writer.bytes_written;
@@ -547,6 +622,15 @@ const ServerName = union(NameType) {
             .host_name => |n| try writeHostName(n, writer),
         }
     }
+
+    fn unmarshal(input: *BytesView) !ServerName {
+        const name_type = @intToEnum(NameType, try input.readByte());
+        switch (name_type) {
+            .host_name => return ServerName{
+                .host_name = try unmarshalHostname(input),
+            },
+        }
+    }
 };
 
 const NameType = enum(u8) {
@@ -557,6 +641,9 @@ const HostName = []const u8;
 fn writeHostName(hostname: []const u8, writer: anytype) !void {
     try writer.writeIntBig(u16, @truncate(u16, hostname.len));
     try writer.writeAll(hostname);
+}
+fn unmarshalHostname(input: *BytesView) !HostName {
+    return try unmarshalLenAndBytes(u16, input);
 }
 
 const testing = std.testing;
@@ -636,11 +723,10 @@ test "Handshake.write" {
 
 test "read ServerHelloDone" {
     const allocator = testing.allocator;
-
     const data = "\x0e" ++ // server_hello_done
         "\x00\x00\x00";
-    var fbs = io.fixedBufferStream(data);
-    const hs = try Handshake.read(allocator, fbs.reader());
+    var input = BytesView.init(data, true);
+    const hs = try Handshake.unmarshal(allocator, &input);
     try testing.expectEqual(HandshakeType.server_hello_done, hs.msg_type);
 }
 
