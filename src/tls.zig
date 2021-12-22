@@ -92,29 +92,23 @@ const SignatureAndHashAlgorithm = struct {
     signature: SignatureAlgorithm,
 };
 
-const ProtocolVersion = struct {
-    major: u8,
-    minor: u8,
-
-    fn write(self: *const ProtocolVersion, writer: anytype) !void {
-        try writer.writeByte(self.major);
-        try writer.writeByte(self.minor);
-    }
-
-    fn unmarshal(input: *BytesView) !ProtocolVersion {
-        const major = try input.readByte();
-        const minor = try input.readByte();
-        const ver = ProtocolVersion{ .major = major, .minor = minor };
-        if (!(ver.eql(v1_2) or ver.eql(v1_0))) return error.UnsupportedProtocolVersion;
-        return ver;
-    }
-
-    fn eql(self: ProtocolVersion, other: ProtocolVersion) bool {
-        return self.major == other.major and self.minor == other.minor;
-    }
-};
-const v1_2 = ProtocolVersion{ .major = 3, .minor = 3 };
-const v1_0 = ProtocolVersion{ .major = 3, .minor = 1 };
+const ProtocolVersion = u16;
+const v1_2: ProtocolVersion = 0x0303;
+const v1_0: ProtocolVersion = 0x0301;
+fn procotolVersionMajor(ver: ProtocolVersion) u8 {
+    return @truncate(u8, ver >> 8);
+}
+fn procotolVersionMinor(ver: ProtocolVersion) u8 {
+    return @truncate(u8, ver);
+}
+fn writeProtocolVersion(ver: ProtocolVersion, writer: anytype) !void {
+    try writer.writeIntBig(u16, ver);
+}
+fn unmarshalProtocolVersion(input: *BytesView) !ProtocolVersion {
+    const ver = try input.readIntBig(u16);
+    if (ver != v1_2 and ver != v1_0) return error.UnsupportedProtocolVersion;
+    return ver;
+}
 
 const ContentType = enum(u8) {
     change_cipher_spec = 20,
@@ -206,9 +200,10 @@ const Handshake = struct {
         client_key_exchange: ClientKeyExchange,
         finished: Finished,
 
-        fn write(self: *const Body, writer: anytype) !void {
+        fn deinit(self: *Body, allocator: mem.Allocator) void {
             switch (self.*) {
-                .client_hello => |*ch| try ch.write(writer),
+                .server_hello => |*sh| sh.deinit(allocator),
+                .server_hello_done => {},
                 else => @panic("not implemented yet"),
             }
         }
@@ -224,11 +219,32 @@ const Handshake = struct {
                 else => @panic("not implemented yet"),
             }
         }
+
+        fn write(self: *const Body, writer: anytype) !void {
+            switch (self.*) {
+                .client_hello => |*ch| try ch.write(writer),
+                else => @panic("not implemented yet"),
+            }
+        }
     };
 
     msg_type: HandshakeType,
     length: u24,
     body: Body,
+
+    fn deinit(self: *Handshake, allocator: mem.Allocator) void {
+        self.body.deinit(allocator);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !Handshake {
+        const hs_type = try HandshakeType.unmarshal(input);
+        const len = try input.readIntBig(u24);
+        const old_pos = input.pos;
+        const body = try Body.unmarshal(allocator, input, hs_type);
+        const bytes_read = input.pos - old_pos;
+        if (bytes_read != len) return error.MismatchedLength;
+        return Handshake{ .msg_type = hs_type, .length = len, .body = body };
+    }
 
     fn updateLength(self: *Handshake) !void {
         var writer = io.countingWriter(io.null_writer);
@@ -241,16 +257,6 @@ const Handshake = struct {
         try writer.writeIntBig(u24, self.length);
         try self.body.write(writer);
     }
-
-    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !Handshake {
-        const hs_type = try HandshakeType.unmarshal(input);
-        const len = try input.readIntBig(u24);
-        const old_pos = input.pos;
-        const body = try Body.unmarshal(allocator, input, hs_type);
-        const bytes_read = input.pos - old_pos;
-        if (bytes_read != len) return error.MismatchedLength;
-        return Handshake{ .msg_type = hs_type, .length = len, .body = body };
-    }
 };
 
 const ClientHello = struct {
@@ -259,7 +265,11 @@ const ClientHello = struct {
     session_id: SessionId,
     cipher_suites: []CipherSuite,
     compression_methods: []const CompressionMethod,
-    extensions: []const Extension,
+    extensions: []Extension,
+
+    fn deinit(self: *ClientHello, allocator: mem.Allocator) void {
+        deinitExtensions(self.extensions, allocator);
+    }
 
     fn write(self: *const ClientHello, writer: anytype) !void {
         try self.client_version.write(writer);
@@ -277,14 +287,14 @@ const ServerHello = struct {
     session_id: SessionId,
     cipher_suite: CipherSuite,
     compression_method: CompressionMethod,
-    extensions: []const Extension,
+    extensions: []Extension,
 
     fn deinit(self: *ServerHello, allocator: mem.Allocator) void {
-        allocator.free(self.extensions);
+        deinitExtensions(self.extensions, allocator);
     }
 
     fn unmarshal(allocator: mem.Allocator, input: *BytesView) !ServerHello {
-        const ver = try ProtocolVersion.unmarshal(input);
+        const ver = try unmarshalProtocolVersion(input);
         const rnd = try unmarshalRandom(input);
         const ses_id = try unmarshalSessionId(input);
         const suite = try CipherSuite.unmarshal(input);
@@ -339,7 +349,7 @@ test "unmarshalSessionId" {
 
 const CipherSuite = enum(u16) {
     ECDHE_RSA_AES128_GCM_SHA256 = 0xC02F,
-    ECDHE_RSA_Chacha20_Poly1305 = 0xCCA,
+    ECDHE_RSA_Chacha20_Poly1305 = 0xCCA8,
 
     fn unmarshal(input: *BytesView) !CipherSuite {
         return @intToEnum(CipherSuite, try input.readIntBig(u16));
@@ -375,9 +385,8 @@ const Extension = struct {
     extension_type: ExtensionType,
     extension_data: ExtensionData,
 
-    fn write(self: *const Extension, writer: anytype) !void {
-        try writer.writeIntBig(u16, @enumToInt(self.extension_type));
-        try self.extension_data.write(writer);
+    fn deinit(self: *Extension, allocator: mem.Allocator) void {
+        self.extension_data.deinit(allocator);
     }
 
     fn unmarshal(allocator: mem.Allocator, input: *BytesView) !Extension {
@@ -388,8 +397,19 @@ const Extension = struct {
             .extension_data = ext_data,
         };
     }
+
+    fn write(self: *const Extension, writer: anytype) !void {
+        try writer.writeIntBig(u16, @enumToInt(self.extension_type));
+        try self.extension_data.write(writer);
+    }
 };
-fn unmarshalExtensions(allocator: mem.Allocator, input: *BytesView) ![]const Extension {
+fn deinitExtensions(extensions: []Extension, allocator: mem.Allocator) void {
+    for (extensions) |*ext| {
+        ext.deinit(allocator);
+    }
+    allocator.free(extensions);
+}
+fn unmarshalExtensions(allocator: mem.Allocator, input: *BytesView) ![]Extension {
     const len = try input.readIntBig(u16);
     const end_pos = input.pos + len;
     var extensions = std.ArrayListUnmanaged(Extension){};
@@ -402,7 +422,7 @@ fn unmarshalExtensions(allocator: mem.Allocator, input: *BytesView) ![]const Ext
 
 // https://datatracker.ietf.org/doc/html/rfc6066#section-1.1
 const ExtensionType = enum(u16) {
-    server_name = 0,
+    server_name = 0x0000,
     // max_fragment_length = 1,
     // client_certificate_url = 2,
     // trusted_ca_keys = 3,
@@ -421,7 +441,8 @@ const ExtensionType = enum(u16) {
     renegotiation_info = 0xff01,
 
     fn unmarshal(input: *BytesView) !ExtensionType {
-        return @intToEnum(ExtensionType, try input.readIntBig(u16));
+        const ext_type = try input.readIntBig(u16);
+        return @intToEnum(ExtensionType, ext_type);
     }
 };
 
@@ -431,10 +452,12 @@ const ExtensionData = union(ExtensionType) {
     supported_points: EcPointFormatList,
     renegotiation_info: RenegotiationInfo,
 
-    fn write(self: *const ExtensionData, writer: anytype) !void {
+    fn deinit(self: *ExtensionData, allocator: mem.Allocator) void {
         switch (self.*) {
-            .server_name => |sn| try sn.write(writer),
-            else => @panic("not implemented yet"),
+            .server_name => |*sn| sn.deinit(allocator),
+            .application_layer_protocol_negotiation => |*alpn| alpn.deinit(allocator),
+            .supported_points => |*sp| sp.deinit(allocator),
+            .renegotiation_info => {},
         }
     }
 
@@ -452,6 +475,13 @@ const ExtensionData = union(ExtensionType) {
             .renegotiation_info => return ExtensionData{
                 .renegotiation_info = try RenegotiationInfo.unmarshal(input),
             },
+        }
+    }
+
+    fn write(self: *const ExtensionData, writer: anytype) !void {
+        switch (self.*) {
+            .server_name => |sn| try sn.write(writer),
+            else => @panic("not implemented yet"),
         }
     }
 };
@@ -489,8 +519,10 @@ const EcPointFormatList = struct {
     }
 
     fn unmarshal(allocator: mem.Allocator, input: *BytesView) !EcPointFormatList {
-        const len = try input.readIntBig(u16);
-        const end_pos = input.pos + len;
+        const ext_len = try input.readIntBig(u16);
+        const list_len = try input.readByte();
+        if (ext_len != @as(u16, list_len) + 1) return error.InvalidInput;
+        const end_pos = input.pos + list_len;
         var ec_point_formats = std.ArrayListUnmanaged(EcPointFormat){};
         while (input.pos < end_pos) {
             const ec_point_format = try EcPointFormat.unmarshal(input);
@@ -518,7 +550,7 @@ const RenegotiationInfo = struct {
 
     fn unmarshal(input: *BytesView) !RenegotiationInfo {
         return RenegotiationInfo{
-            .renegotiated_connection = try unmarshalLenAndBytes(u8, input),
+            .renegotiated_connection = try unmarshalLenAndBytes(u16, input),
         };
     }
 };
@@ -790,6 +822,37 @@ test "read ServerHelloDone" {
     var input = BytesView.init(data, true);
     const hs = try Handshake.unmarshal(allocator, &input);
     try testing.expectEqual(HandshakeType.server_hello_done, hs.msg_type);
+}
+
+test "ServerHello.unmarshal" {
+    const allocator = testing.allocator;
+    const data =
+        "\x02" ++ // server_hello
+        "\x00\x00\x68" ++ // length:u24 = 0x68 = 104
+        "\x03\x03" ++ // server_version
+        "\xca\xe3\x95\xf7\x9b\x56\x53\xa4\x06\x88\x47\xa8\xb5\x4c\xc6\xfb\x6d\xb5\xbd\x3f\xeb\xde\x45\x84\x44\x4f\x57\x4e\x47\x52\x44\x01" ++ // server random 32 bytes
+        "\x20" ++ // session_id length
+        "\x28\xb1\x79\x8c\x0f\x26\xbe\x48\x64\x6b\x6f\xd3\x2b\x4d\x49\x10\xf4\x0e\x05\x8b\x09\xb2\x95\x4e\xda\xa6\x22\xc9\xbb\x4f\x8c\x27" ++ // session_id
+        "\xcc\xa8" ++ // cipher suite ECDHE-RSA-CHACHA20-POLY1305
+        "\x00" ++ // compression method 0x00 = null
+        "\x00\x20" ++ // extensions length: u16 0x0020 = 32
+        "\xff\x01" ++ // extension type: u16 = 0xff01 = Renegotiation info
+        "\x00\x01" ++ // extention length: u16 = 0x0001
+        "\x00" ++ // renegotiation info: u8 = 0x00
+        "\x00\x00" ++ // extension type: u16 = 0x0000 = servername
+        "\x00\x00" ++ // extention length: u16 = 0x0000
+        "\x00\x0b" ++ // extension type: u16 = 0x000b = SupportedPoints RFC 4492, Section 5.1.2 https://datatracker.ietf.org/doc/html/rfc4492#section-5.1.2
+        "\x00\x04" ++ // extension length: u16 = 0x0004
+        "\x03\x00\x01\x02" ++ // extension data: length u1: 0x03 + 3 bytes data
+        "\x00\x10" ++ // extension type: u16 0x0010 = 16 ALPN RFC 7301, Section 3.1 https://datatracker.ietf.org/doc/html/rfc7301#section-3.1
+        "\x00\x0b" ++ // extension length: u16 0x000b = 11
+        "\x00\x09\x08\x68\x74\x74\x70\x2f\x31\x2e\x31"; // u16 len = 0x009, u8 len = 0x08, 8 bytes data
+    var input = BytesView.init(data, true);
+
+    var hs = try Handshake.unmarshal(allocator, &input);
+    defer hs.deinit(allocator);
+
+    try testing.expectEqual(HandshakeType.server_hello, hs.msg_type);
 }
 
 // test "read ServerHello" {
