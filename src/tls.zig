@@ -203,7 +203,8 @@ const Handshake = struct {
         fn deinit(self: *Body, allocator: mem.Allocator) void {
             switch (self.*) {
                 .server_hello => |*sh| sh.deinit(allocator),
-                .server_hello_done => {},
+                .certificate => |*c| c.deinit(allocator),
+                .server_key_exchange, .server_hello_done => {},
                 else => @panic("not implemented yet"),
             }
         }
@@ -212,6 +213,12 @@ const Handshake = struct {
             switch (msg_type) {
                 .server_hello => return Body{
                     .server_hello = try ServerHello.unmarshal(allocator, input),
+                },
+                .certificate => return Body{
+                    .certificate = try Certificate.unmarshal(allocator, input),
+                },
+                .server_key_exchange => return Body{
+                    .server_key_exchange = try ServerKeyExchange.unmarshal(input),
                 },
                 .server_hello_done => return Body{
                     .server_hello_done = try ServerHelloDone.unmarshal(input),
@@ -555,12 +562,32 @@ const RenegotiationInfo = struct {
     }
 };
 
-const asn1_cert_len = 1 << (24 - 1) - 1;
-const Asn1Cert = [asn1_cert_len]u8;
-
 const Certificate = struct {
     certificate_list: []Asn1Cert,
+
+    fn deinit(self: *Certificate, allocator: mem.Allocator) void {
+        allocator.free(self.certificate_list);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, input: *BytesView) !Certificate {
+        const len = try input.readIntBig(u24);
+        const end_pos = input.pos + len;
+        var certs = std.ArrayListUnmanaged(Asn1Cert){};
+        while (input.pos < end_pos) {
+            const cert = try decodeAsn1Cert(input);
+            try certs.append(allocator, cert);
+        }
+        return Certificate{
+            .certificate_list = certs.toOwnedSlice(allocator),
+        };
+    }
 };
+
+const Asn1Cert = []const u8;
+const asn1_cert_max_len = 1 << (24 - 1) - 1;
+fn decodeAsn1Cert(input: *BytesView) !Asn1Cert {
+    return try unmarshalLenAndBytes(u24, input);
+}
 
 const KeyExchangeAlgorithm = enum {
     dhe_dss,
@@ -578,25 +605,96 @@ const ServerDHParams = struct {
     dh_Ys: []u8,
 };
 
-const ServerKeyExchange = union(KeyExchangeAlgorithm) {
-    const SignedParams = struct {
-        client_random: [32]u8,
-        server_random: [32]u8,
-        params: ServerDHParams,
-    };
-    const ParamsAndSigned = struct {
-        params: ServerDHParams,
-        signed_params: SignedParams,
-    };
+// https://datatracker.ietf.org/doc/html/rfc8422#section-5.4
+const ServerKeyExchange = struct {
+    params: ServerEcdhParams,
+    signed_params: Signature,
 
-    dh_anon: ServerDHParams,
-    dhe_dss: ParamsAndSigned,
-    dhe_rsa: ParamsAndSigned,
-    rsa: void,
-    dh_dss: void,
-    dh_rsa: void,
-    // message is omitted for rsa, dh_dss, and dh_rsa
-    // may be extended, e.g., for ECDH -- see [TLSECC]
+    fn unmarshal(input: *BytesView) !ServerKeyExchange {
+        const p = try ServerEcdhParams.unmarshal(input);
+        const s = try Signature.unmarshal(input);
+        return ServerKeyExchange{
+            .params = p,
+            .signed_params = s,
+        };
+    }
+};
+const ServerEcdhParams = struct {
+    curve_params: EcParameters,
+    public: EcPoint,
+
+    fn unmarshal(input: *BytesView) !ServerEcdhParams {
+        return ServerEcdhParams{
+            .curve_params = try EcParameters.unmarshal(input),
+            .public = try unmarshalEcPoint(input),
+        };
+    }
+};
+const EcParameters = struct {
+    curve_type: EcCurveType,
+    named_curve: NamedCurve,
+
+    fn unmarshal(input: *BytesView) !EcParameters {
+        return EcParameters{
+            .curve_type = try EcCurveType.unmarshal(input),
+            .named_curve = try NamedCurve.unmarshal(input),
+        };
+    }
+};
+
+// https://datatracker.ietf.org/doc/html/rfc4492#section-5.4
+const EcCurveType = enum(u8) {
+    explicit_prime = 1,
+    explicit_char2 = 2,
+    named_curve = 3,
+
+    fn unmarshal(input: *BytesView) !EcCurveType {
+        const curve_type = @intToEnum(EcCurveType, try input.readByte());
+        if (curve_type != .named_curve) return error.UnsupportedEcCurveType;
+        return curve_type;
+    }
+};
+
+// https://datatracker.ietf.org/doc/html/rfc8422#section-5.1.1
+const NamedCurve = enum(u16) {
+    // deprecated(1..22),
+    secp256r1 = 23,
+    secp384r1 = 24,
+    secp521r1 = 25,
+    x25519 = 29,
+    x448 = 30,
+    // reserved (0xFE00..0xFEFF),
+    // deprecated(0xFF01..0xFF02),
+
+    fn unmarshal(input: *BytesView) !NamedCurve {
+        const curve = @intToEnum(NamedCurve, try input.readIntBig(u16));
+        if (curve != .x25519) return error.UnsupportedNamedCurve;
+        return curve;
+    }
+};
+const EcPoint = []const u8;
+fn unmarshalEcPoint(input: *BytesView) !EcPoint {
+    return try unmarshalLenAndBytes(u8, input);
+}
+const Signature = struct {
+    scheme: SignatureScheme,
+    data: []const u8,
+
+    fn unmarshal(input: *BytesView) !Signature {
+        return Signature{
+            .scheme = try SignatureScheme.unmarshal(input),
+            .data = try unmarshalLenAndBytes(u16, input),
+        };
+    }
+};
+const SignatureScheme = enum(u16) {
+    PKCS1WithSHA256 = 0x0401,
+
+    fn unmarshal(input: *BytesView) !SignatureScheme {
+        const scheme = @intToEnum(SignatureScheme, try input.readIntBig(u16));
+        if (scheme != .PKCS1WithSHA256) return error.UnsupportedSignatureScheme;
+        return scheme;
+    }
 };
 
 const ClientCertificateType = enum(u8) {
@@ -742,11 +840,6 @@ fn unmarshalHostname(input: *BytesView) !HostName {
 
 const testing = std.testing;
 
-test "ServerKeyExchange" {
-    const xchg = ServerKeyExchange{ .rsa = {} };
-    std.debug.print("xchg = {}\n", .{xchg});
-}
-
 test "ClientHello" {
     const client_hello = TlsPlaintext{
         .content_type = .handshake,
@@ -815,15 +908,6 @@ test "Handshake.write" {
     try testing.expectEqualSlices(u8, want, buf.readableSlice(0));
 }
 
-test "read ServerHelloDone" {
-    const allocator = testing.allocator;
-    const data = "\x0e" ++ // server_hello_done
-        "\x00\x00\x00";
-    var input = BytesView.init(data, true);
-    const hs = try Handshake.unmarshal(allocator, &input);
-    try testing.expectEqual(HandshakeType.server_hello_done, hs.msg_type);
-}
-
 test "ServerHello.unmarshal" {
     const allocator = testing.allocator;
     const data =
@@ -853,6 +937,50 @@ test "ServerHello.unmarshal" {
     defer hs.deinit(allocator);
 
     try testing.expectEqual(HandshakeType.server_hello, hs.msg_type);
+}
+
+test "Certificate.unmarshal" {
+    const allocator = testing.allocator;
+    const data =
+        "\x0b" ++ // certificate
+        "\x00\x03\x74" ++ // length:u24 0x000374 = 884
+        "\x00\x03\x71" ++ // length:u24 0x000371 = 881
+        "\x00\x03\x6e" ++ // length:u24 0x00036e = 878
+        "\x30\x82\x03\x6a\x30\x82\x02\x52\xa0\x03\x02\x01\x02\x02\x01\x01\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x05\x05\x00\x30\x4e\x31\x0b\x30\x09\x06\x03\x55\x04\x06\x13\x02\x4a\x50\x31\x0e\x30\x0c\x06\x03\x55\x04\x08\x0c\x05\x4f\x73\x61\x6b\x61\x31\x13\x30\x11\x06\x03\x55\x04\x07\x0c\x0a\x4f\x73\x61\x6b\x61\x20\x43\x69\x74\x79\x31\x1a\x30\x18\x06\x03\x55\x04\x03\x0c\x11\x74\x68\x69\x6e\x6b\x63\x65\x6e\x74\x72\x65\x32\x2e\x74\x65\x73\x74\x30\x1e\x17\x0d\x32\x31\x31\x31\x32\x37\x32\x32\x31\x31\x31\x33\x5a\x17\x0d\x32\x32\x31\x31\x32\x37\x32\x32\x31\x31\x31\x33\x5a\x30\x4e\x31\x0b\x30\x09\x06\x03\x55\x04\x06\x13\x02\x4a\x50\x31\x0e\x30\x0c\x06\x03\x55\x04\x08\x0c\x05\x4f\x73\x61\x6b\x61\x31\x13\x30\x11\x06\x03\x55\x04\x07\x0c\x0a\x4f\x73\x61\x6b\x61\x20\x43\x69\x74\x79\x31\x1a\x30\x18\x06\x03\x55\x04\x03\x0c\x11\x74\x68\x69\x6e\x6b\x63\x65\x6e\x74\x72\x65\x32\x2e\x74\x65\x73\x74\x30\x82\x01\x22\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00\x03\x82\x01\x0f\x00\x30\x82\x01\x0a\x02\x82\x01\x01\x00\xe3\xbd\x28\xba\xbf\xf8\x48\xa1\x5d\xc9\x2b\x83\xc5\x82\x6c\xe1\xc8\x5e\x32\xb0\x36\x05\xe8\xcc\xbc\x32\x59\x42\xe4\x87\x8e\xd3\xf4\x85\x26\x9c\xac\x3c\x46\xaa\x25\x45\x5a\x42\xcb\x7c\x0d\x25\xbf\x49\x2b\xf2\x38\x42\x29\x29\xb6\x2c\x43\xf8\xca\x10\xe0\x84\xf0\xef\x3c\x01\x72\xf8\xcf\x07\x2b\xe2\x5f\x46\xa5\x48\x1a\x0f\xb3\x6e\x53\x21\x5e\xd8\xf8\xeb\x31\x97\x05\x31\xec\x57\xdf\xcb\x2c\x7a\x13\x2d\x12\xff\x1e\xf5\xda\x89\x7a\x1a\xff\xd9\x76\x3a\x3b\xb9\xe3\x66\x2d\x3c\xf8\x80\xd0\x28\x99\x21\x84\xfb\xd4\x4d\x48\xc9\xc8\x7a\xeb\x67\x49\xf1\x52\xdc\x3a\x27\x71\xbb\xd2\x5a\x57\x8e\xa7\x2b\x3f\xb8\x2e\x8d\xa9\x0c\x83\xe2\x26\x2e\x98\x80\x5d\x88\xbc\xc8\x55\x5c\xde\x32\x41\xd1\x76\xea\xda\x92\xee\x2b\xd3\xda\xcd\x62\xa7\x9c\x07\x71\x5f\x49\xc2\x62\xfa\xb9\x4a\x9b\x3c\xa9\xf8\xb1\x0f\x23\x33\x7e\x08\x16\x15\x9b\xff\xd5\x16\x6c\xdb\x28\x08\x3f\xc9\x3e\xc9\xae\x28\xb1\x3c\x08\x0c\xaa\xde\x63\x00\xdc\x14\x1b\x1c\xa1\x44\x98\xdb\x03\xc0\x46\xaf\x34\x79\xb1\x67\xc8\xaa\x06\xd1\x2e\x01\xd5\x59\x6b\xb4\x83\x51\xd9\xc6\x0d\x02\x03\x01\x00\x01\xa3\x53\x30\x51\x30\x1d\x06\x03\x55\x1d\x0e\x04\x16\x04\x14\x00\xc8\x14\x1c\x66\xef\x38\xc4\x39\xb1\x4e\x61\x6e\xff\xe8\x69\x8c\x66\x03\xc4\x30\x1f\x06\x03\x55\x1d\x23\x04\x18\x30\x16\x80\x14\x00\xc8\x14\x1c\x66\xef\x38\xc4\x39\xb1\x4e\x61\x6e\xff\xe8\x69\x8c\x66\x03\xc4\x30\x0f\x06\x03\x55\x1d\x13\x01\x01\xff\x04\x05\x30\x03\x01\x01\xff\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x05\x05\x00\x03\x82\x01\x01\x00\x68\xde\x75\x92\x59\xec\x60\x22\x79\xa0\x48\x02\x2a\x9b\xf6\x27\x8d\x84\x83\x97\xe2\x3a\x74\xd2\x47\x0b\xb6\x3c\x8d\x46\x90\xd5\xf3\x66\x78\x6c\x10\x06\x45\x37\x77\xb2\x35\x14\xbf\x29\xd1\xba\xf7\xef\x7c\x21\x1b\xe9\x49\x3d\x62\xf5\x95\xaf\x41\x53\x1e\x90\xaf\x26\xef\xb6\x6a\x52\x29\x9c\x49\x10\x72\xa3\xac\x57\xe0\x7f\x8e\x25\xaa\x08\x16\x18\x4f\x53\x6e\xc2\xf2\x36\x74\xba\xb3\x1c\xf8\x45\x64\x3d\x8c\xa9\xc8\xe7\x8d\x7f\x65\x08\xd3\xf1\x89\x3d\xd1\x52\x52\x86\x2d\x7d\xeb\xc7\xf5\x7f\xdc\xd6\x0d\xb7\x76\x15\x99\xc6\xa3\xa6\x5e\xdb\x51\xc0\xa3\xdb\x30\x4d\xa1\xf4\x9b\xd8\x16\xf1\x9b\x18\xd6\xe7\x22\x01\xc2\xf7\xbb\xf7\xf3\x57\xa8\xcd\x3a\xce\x7f\xfc\xea\x91\xd8\xaf\x3e\xc5\x89\x4e\xe1\xc2\xff\x26\x4a\xb3\x2c\x23\x90\xe3\x54\x64\x3f\xa1\xc5\x12\x8f\x89\x1c\xe8\x3b\xa2\xc5\x71\x83\x08\x47\xe9\x4f\xce\x28\x5f\x5a\xc3\xab\x1b\xf6\xba\x69\x7b\x3a\x81\x68\x56\x6d\xf9\x97\x83\xa3\xa4\x72\x34\xb6\x81\x6e\x92\xda\x3b\x5a\x32\xb0\xe1\x8e\xb3\x10\xf3\x72\x8b\xac\x45\x88\x8e\x1f\xb3\x84\x73\x84\xe4\x71\xe5\x34\xbf\xae\x0f"; // cerificate
+
+    var input = BytesView.init(data, true);
+
+    var hs = try Handshake.unmarshal(allocator, &input);
+    defer hs.deinit(allocator);
+
+    try testing.expectEqual(HandshakeType.certificate, hs.msg_type);
+    try testing.expectEqualSlices(u8, data[1 + 3 + 3 + 3 ..], hs.body.certificate.certificate_list[0]);
+}
+
+test "ServerKeyExchange.unmarshal" {
+    const allocator = testing.allocator;
+    const data = "\x0c" ++ // server_key_exchange
+        "\x00\x01\x28" ++ // length: u24 = 0x00128 = 296
+        "\x03" ++ // must be 0x03
+        "\x00\x1d" ++ // curve_id 0x001d = x25519
+        "\x20" ++ // pub key len = 0x20 = 32
+        "\x45\x0b\x06\xec\xfa\xc3\x2d\x22\x79\x27\x50\x80\xb4\xbe\x85\xee\xcd\xfb\x91\xb8\x77\xf4\x3d\x64\xc0\x34\x89\xd1\xc5\x22\x2d\x4d" ++ // pub key
+        "\x04\x01" ++ // signature scheme 0x0401 = RSA/PKCS1/SHA256
+        "\x01\x00" ++ // signature_len 0x0100 = 256
+        "\x22\xe1\xdf\x1d\x2c\x06\xe6\x67\x97\xb7\x55\x4c\x91\x12\x35\x3f\xe2\x05\x43\xa5\x0a\xaf\xdc\xaa\x6c\x16\x4b\xd6\xf8\x97\x73\xb5\x1d\xbe\x0b\x25\xd2\x22\xc4\x0d\xcd\xc1\x22\x5c\x10\xe9\x23\xce\x10\x90\x40\xc5\xbd\x82\x4c\x87\xf5\x2c\x29\xcb\xad\xfc\xf9\x33\xed\x7b\xcd\x9b\x9c\x9a\x64\x88\x5a\xdd\xf1\x8a\x21\x8f\xae\x26\x9f\xe1\xfd\xf4\x69\x40\x90\xbe\xdc\xe8\xc2\x5a\xee\xed\x45\x82\x14\xef\xac\x86\x9c\x05\x22\xd2\x2f\x32\xfe\xb1\xf6\x4b\x74\x1b\x76\x58\x28\x8b\x59\xfe\x07\xba\x4a\x15\x7e\xc2\x45\xa0\x63\x8a\xb6\xf2\xf7\xa8\xca\x90\x71\xa5\xdd\xd0\xef\xbf\xe2\xf2\xff\xc6\x51\x34\x34\xcb\x66\x68\x2b\xd6\x16\xea\xa0\x51\x58\x73\xb3\xd9\x90\x73\x4c\xb0\x14\x41\x50\x4b\xb9\x1f\xf1\x9e\xf2\x10\x19\xc6\x0e\x8b\xfb\x3a\x64\xb3\x68\x79\xfa\x64\xff\x41\xe5\xeb\x10\x44\x69\xb2\xc8\x6a\x60\x81\x2d\xdc\xff\xf2\xaa\xa2\xa9\xf6\xec\x4a\x03\x20\xb5\xe8\x9e\x05\xf8\xd2\x6b\x95\x9f\x28\x06\xc6\x36\x83\x7e\x1e\x4f\xb5\x4c\xa0\xa6\x00\x0e\x5f\x7d\x8e\xbe\x07\xf7\xeb\xc6\x42\x4e\x7f\x19\x83\x26\x24\x53\xd3\xd8\x31\x6b\x64\x86\x8e"; // signature 256 bytes
+    var input = BytesView.init(data, true);
+    const hs = try Handshake.unmarshal(allocator, &input);
+    try testing.expectEqual(HandshakeType.server_key_exchange, hs.msg_type);
+    try testing.expectEqual(data.len, input.pos);
+}
+
+test "ServerHelloDone.unmarshal" {
+    const allocator = testing.allocator;
+    const data = "\x0e" ++ // server_hello_done
+        "\x00\x00\x00";
+    var input = BytesView.init(data, true);
+    const hs = try Handshake.unmarshal(allocator, &input);
+    try testing.expectEqual(HandshakeType.server_hello_done, hs.msg_type);
 }
 
 // test "read ServerHello" {
@@ -886,7 +1014,7 @@ test "ServerHello.unmarshal" {
 //         "\x16\x03\x03\x01\x2c" ++ // handshake TLSv1.2 length 0x012c
 //         "\x0c" ++ // server_key_exchange
 //         "\x00\x01\x28" ++ // length: u24 = 0x00128 = 296
-//         "\x03" ++ // must be 0x03
+//         "\x03" ++ // must be 0x03 = named curve
 //         "\x00\x1d" ++ // curve_id 0x001d = x25519
 //         "\x20" ++ // pub key len = 0x20 = 32
 //         "\x45\x0b\x06\xec\xfa\xc3\x2d\x22\x79\x27\x50\x80\xb4\xbe\x85\xee\xcd\xfb\x91\xb8\x77\xf4\x3d\x64\xc0\x34\x89\xd1\xc5\x22\x2d\x4d" ++ // pub key
