@@ -1,6 +1,8 @@
 const std = @import("std");
+const crypto = std.crypto;
 const io = std.io;
 const mem = std.mem;
+const rand = std.rand;
 const BytesView = @import("parser/bytes.zig").BytesView;
 
 const SecurityParameters = struct {
@@ -115,6 +117,41 @@ const ContentType = enum(u8) {
     alert = 21,
     handshake = 22,
     application_data = 23,
+
+    fn unmarshal(input: *BytesView) !ContentType {
+        return @intToEnum(ContentType, try input.readByte());
+    }
+
+    fn write(self: ContentType,  writer: anytype) !void {
+        try writer.writeByte(@enumToInt(self));
+    }
+};
+
+const Record = struct {
+    content_type: ContentType,
+    version: ProtocolVersion,
+    length: u16,
+    fragment: []const u8,
+
+    fn unmarshal(input: *BytesView) !Record {
+        const ct = try ContentType.unmarshal(input);
+        const ver = try unmarshalProtocolVersion(input);
+        const len = try input.readIntBig(u16);
+        const frag = try input.sliceBytesNoEof(len);
+        return Record{
+            .content_type = ct,
+            .version = ver,
+            .length = len,
+            .fragment = frag,
+        };
+    }
+
+    fn write(self: *const Record, writer: anytype) !void {
+        try self.content_type.write(writer);
+        try writeProtocolVersion(self.version, writer);
+        try writer.writeIntBig(u16, self.length);
+        try writer.writeAll(self.fragment);
+    }
 };
 
 const TlsPlaintext = struct {
@@ -122,6 +159,26 @@ const TlsPlaintext = struct {
     version: ProtocolVersion,
     length: u16,
     fragment: []u8,
+
+    fn unmarshal(input: *BytesView) !TlsPlaintext {
+        const ct = try ContentType.unmarshal(input);
+        const ver = try unmarshalProtocolVersion(input);
+        const len = try input.readIntBig(u16, input);
+        const frag = try input.sliceBytesNoEof(len);
+        return TlsPlaintext{
+            .content_type = ct,
+            .version = ver,
+            .length = len,
+            .fragment = frag,
+        };
+    }
+
+    fn write(self: *const TlsPlaintext, writer: anytype) !void {
+        try self.content_type.write(writer);
+        try writeProtocolVersion(self.version, writer);
+        try writer.writeIntBig(u16, self.length);
+        try writer.writeAll(self.fragment);
+    }
 };
 
 // https://datatracker.ietf.org/doc/html/rfc6066#section-4
@@ -230,6 +287,7 @@ const Handshake = struct {
         fn write(self: *const Body, writer: anytype) !void {
             switch (self.*) {
                 .client_hello => |*ch| try ch.write(writer),
+                .client_key_exchange => |*ckx| try ckx.write(writer),
                 else => @panic("not implemented yet"),
             }
         }
@@ -279,7 +337,7 @@ const ClientHello = struct {
     }
 
     fn write(self: *const ClientHello, writer: anytype) !void {
-        try self.client_version.write(writer);
+        try writeProtocolVersion(self.client_version, writer);
         try writer.writeAll(&self.random);
         try writeSessionId(self.session_id, writer);
         try writeCipherSuiteList(self.cipher_suites, writer);
@@ -326,7 +384,7 @@ fn unmarshalRandom(input: *BytesView) !Random {
 
 test "unmarshalRandom" {
     const data = [_]u8{0} ** 32;
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(&data, true);
     const rnd = try unmarshalRandom(&input);
     try testing.expectEqual(Random, @TypeOf(rnd));
 }
@@ -361,12 +419,130 @@ const CipherSuite = enum(u16) {
     fn unmarshal(input: *BytesView) !CipherSuite {
         return @intToEnum(CipherSuite, try input.readIntBig(u16));
     }
+
+    fn write(self: CipherSuite, writer: anytype) !void {
+        try writer.writeIntBig(u16, @enumToInt(self));
+    }
+
+    fn keyAgreement(self: CipherSuite, ver: ProtocolVersion) KeyAgreement {
+        switch (self) {
+            .ECDHE_RSA_AES128_GCM_SHA256, .ECDHE_RSA_Chacha20_Poly1305 => return KeyAgreement{
+                .ecdhe = EcdheKeyAgreement{ .version = ver, .is_rsa = true },
+            },
+        }
+    }
+};
+
+const KeyAgreement = union(enum) {
+    rsa: void,
+    ecdhe: EcdheKeyAgreement,
+};
+const EcdheKeyAgreement = struct {
+    version: ProtocolVersion,
+    is_rsa: bool,
+
+    params: EcdheParameters = undefined,
+    client_key_exchange: *const ClientKeyExchange = undefined,
+    pre_master_secret: []const u8 = undefined,
+
+    fn deinit(self: *EcdheKeyAgreement, allocator: mem.Allocator) void {
+        allocator.destroy(self.client_key_exchange);
+    }
+
+    fn processServerKeyExchange(
+        self: *EcdheKeyAgreement,
+        allocator: mem.Allocator,
+        client_hello: *const ClientHello,
+        server_hello: *ServerHello,
+        peer_certificate: []const u8,
+        server_key_exchange: *const ServerKeyExchange,
+    ) !void {
+        _ = client_hello;
+        _ = server_hello;
+        _ = peer_certificate;
+        self.params = try EcdheParameters.generate(
+            server_key_exchange.params.curve_params.named_curve,
+        );
+
+        self.pre_master_secret = try self.params.sharedKey(server_key_exchange.params.public);
+
+        const our_pub_key = self.params.x25519.public_key;
+        var ckx = try allocator.create(ClientKeyExchange);
+        ckx.ciphertext = try allocator.alloc(u8, 1 + our_pub_key.len);
+        ckx.ciphertext[0] = @truncate(u8, our_pub_key.len);
+        mem.copy(ckx.ciphertext[1..], our_pub_key);
+        self.client_key_exchange.* = ckx;
+
+        // TODO: verify handshake signature
+        
+        // switch (server_key_exchange.signed_params.scheme) {
+        //     .PKCS1WithSHA256 => {},
+        //     else => @panic("not implemented yet"),
+        // }
+    }
+};
+// const EcdheParametersType = enum {
+//     x25519,
+//     nist,
+// };
+const EcdheParameters = union(enum) {
+    x25519: X25519Parameters,
+    nist: NistParameters,
+
+    fn generate(curve: NamedCurve) !EcdheParameters {
+        switch (curve) {
+            .x25519 => return EcdheParameters{
+                .x25519 = try X25519Parameters.generate(),
+            },
+            else => @panic("not implemented yet"),
+        }
+    }
+
+    fn sharedKey(self: *const EcdheParameters, public_key: EcPoint) ![32]u8 {
+        _ = self;
+        _ = public_key;
+        // TODO: change return type to ![]const u8 and think about allocation,
+        // since the shared key length is not 32 for NistParameters.
+        // switch (curve) {
+        //     .x25519 => |*x| return try x.sharedKey(public_key),
+        //     else => @panic("not implemented yet"),
+        // }
+    }
+};
+const X25519Parameters = struct {
+    const key_len = 32;
+    const Curve25519 = crypto.ecc.Curve25519;
+
+    private_key: [key_len]u8,
+    public_key: [key_len]u8,
+    shared_key: [key_len]u8,
+    curve: NamedCurve = .x25519,
+
+    fn generate() !X25519Parameters {
+        var priv_key: [key_len]u8 = undefined;
+        rand.DefaultCsprng.random().bytes(&priv_key);
+        const priv_key_curve = Curve25519.fromBytes(priv_key);
+        const pub_key_curve = try priv_key_curve.clampedMul(Curve25519.basePoint.toBytes());
+        const pub_key = pub_key_curve.toBytes();
+        return X25519Parameters{
+            .private_key = priv_key,
+            .public_key = pub_key,
+        };
+    }
+
+    fn sharedKey(self: *const X25519Parameters, peer_public_key: EcPoint) ![key_len]u8 {
+        const priv_key_curve = Curve25519.fromBytes(self.private_key);
+        return try priv_key_curve.clampedMul(peer_public_key[0..key_len]).toBytes();
+    }
+};
+const NistParameters = struct {
+    curve: NamedCurve,
 };
 
 fn writeCipherSuiteList(cipher_suites: []const CipherSuite, writer: anytype) !void {
     try writer.writeIntBig(u16, @truncate(u16, cipher_suites.len) * @sizeOf(CipherSuite));
-    for (cipher_suites) |*suite| {
-        try writer.writeAll(suite);
+    for (cipher_suites) |suite| {
+        try suite.write(writer);
     }
 }
 
@@ -728,16 +904,26 @@ const CertificateVerify = struct {
 };
 
 const ClientKeyExchange = struct {
-    const Keys = union(KeyExchangeAlgorithm) {
-        rsa: EncryptedPreMasterSecret,
-        dhe_dss: ClientDiffieHellmanPublic,
-        dhe_rsa: ClientDiffieHellmanPublic,
-        dh_dss: ClientDiffieHellmanPublic,
-        dh_rsa: ClientDiffieHellmanPublic,
-        dh_anon: ClientDiffieHellmanPublic,
-    };
+    // const Keys = union(KeyExchangeAlgorithm) {
+    //     rsa: EncryptedPreMasterSecret,
+    //     dhe_dss: ClientDiffieHellmanPublic,
+    //     dhe_rsa: ClientDiffieHellmanPublic,
+    //     dh_dss: ClientDiffieHellmanPublic,
+    //     dh_rsa: ClientDiffieHellmanPublic,
+    //     dh_anon: ClientDiffieHellmanPublic,
+    // };
 
-    exchange_keys: Keys,
+    // exchange_keys: Keys,
+
+    ciphertext: []u8,
+
+    fn deinit(self: *ClientKeyExchange, allocator: mem.Allocator) void {
+        allocator.free(self.ciphertext);
+    }
+
+    fn write(self: *const ClientKeyExchange, writer: anytype) !void {
+        try writer.writeAll(self.ciphertext);
+    }
 };
 
 const EncryptedPreMasterSecret = struct {
@@ -861,17 +1047,7 @@ test "write_u24" {
 }
 
 test "Handshake.write" {
-    var hs = Handshake{
-        .msg_type = .client_hello,
-        .length = 0,
-        .body = .{
-            .client_hello = ClientHello{
-                .client_version = v1_2,
-                .random = [_]u8{0} ** 32,
-                .session_id = &[_]u8{0},
-                .cipher_suites = &[_]CipherSuite{},
-                .compression_methods = &[_]CompressionMethod{.@"null"},
-                .extensions = &[_]Extension{
+    var extensions = [_]Extension{
                     .{
                         .extension_type = .server_name,
                         .extension_data = .{
@@ -884,7 +1060,18 @@ test "Handshake.write" {
                             },
                         },
                     },
-                },
+                };
+    var hs = Handshake{
+        .msg_type = .client_hello,
+        .length = 0,
+        .body = .{
+            .client_hello = ClientHello{
+                .client_version = v1_2,
+                .random = [_]u8{0} ** 32,
+                .session_id = &[_]u8{0},
+                .cipher_suites = &[_]CipherSuite{},
+                .compression_methods = &[_]CompressionMethod{.@"null"},
+                .extensions = &extensions,
             },
         },
     };
@@ -910,7 +1097,7 @@ test "Handshake.write" {
 
 test "ServerHello.unmarshal" {
     const allocator = testing.allocator;
-    const data =
+    const data = "\x16\x03\x03\x00\x6c" ++ // handshake TLSv1.2, length 0x006c
         "\x02" ++ // server_hello
         "\x00\x00\x68" ++ // length:u24 = 0x68 = 104
         "\x03\x03" ++ // server_version
@@ -931,12 +1118,19 @@ test "ServerHello.unmarshal" {
         "\x00\x10" ++ // extension type: u16 0x0010 = 16 ALPN RFC 7301, Section 3.1 https://datatracker.ietf.org/doc/html/rfc7301#section-3.1
         "\x00\x0b" ++ // extension length: u16 0x000b = 11
         "\x00\x09\x08\x68\x74\x74\x70\x2f\x31\x2e\x31"; // u16 len = 0x009, u8 len = 0x08, 8 bytes data
-    var input = BytesView.init(data, true);
+    var rec_bytes = BytesView.init(data, true);
+    var rec = try Record.unmarshal(&rec_bytes);
+    try testing.expectEqual(ContentType.handshake, rec.content_type);
+    try testing.expectEqual(v1_2, rec.version);
+    try testing.expectEqual(@as(u16, 0x006c), rec.length);
+    try testing.expectEqual(@as(usize, rec.length), rec.fragment.len);
 
-    var hs = try Handshake.unmarshal(allocator, &input);
+    var hs_bytes = BytesView.init(rec.fragment, true);
+    var hs = try Handshake.unmarshal(allocator, &hs_bytes);
     defer hs.deinit(allocator);
 
     try testing.expectEqual(HandshakeType.server_hello, hs.msg_type);
+    try testing.expectEqual(rec.fragment.len, hs_bytes.pos);
 }
 
 test "Certificate.unmarshal" {
