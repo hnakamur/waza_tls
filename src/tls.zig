@@ -437,7 +437,7 @@ test "ClientHelloMsg" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
-    const Case = struct {
+    const TestCase = struct {
         fn run(msg: ClientHelloMsg, want: []const u8) !void {
             var copy = msg;
             const got = try copy.marshal(allocator);
@@ -455,7 +455,7 @@ test "ClientHelloMsg" {
         }
     };
 
-    try Case.run(
+    try TestCase.run(
         ClientHelloMsg{
             .vers = .v1_3,
             .random = &[_]u8{0} ** 32,
@@ -475,7 +475,7 @@ test "ClientHelloMsg" {
             "\x00", // CompressionMethod.none
     );
 
-    try Case.run(
+    try TestCase.run(
         ClientHelloMsg{
             .vers = .v1_3,
             .random = &[_]u8{0} ** 32,
