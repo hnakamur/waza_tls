@@ -26,6 +26,7 @@ const ChunkedDecoder = @import("chunk_decoder.zig").ChunkedDecoder;
 
 const dns = @import("dns.zig");
 const tls = @import("tls.zig");
+const fmtx = @import("fmtx.zig");
 
 pub const config = @import("config.zig");
 

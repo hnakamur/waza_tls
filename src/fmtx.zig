@@ -42,3 +42,19 @@ pub fn fmtSliceHexEscapeLower(bytes: []const u8) std.fmt.Formatter(formatSliceHe
 pub fn fmtSliceHexEscapeUpper(bytes: []const u8) std.fmt.Formatter(formatSliceHexEscapeUpper) {
     return .{ .data = bytes };
 }
+
+const testing = std.testing;
+
+test "fmtSliceHexEscapeLower" {
+    var buf = [_]u8{0} ** 8;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try std.fmt.format(fbs.writer(), "{}", .{fmtSliceHexEscapeLower("\x12\xab")});
+    try testing.expectEqualSlices(u8, "\\x12\\xab", fbs.getWritten());
+}
+
+test "fmtSliceHexEscapeUpper" {
+    var buf = [_]u8{0} ** 8;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try std.fmt.format(fbs.writer(), "{}", .{fmtSliceHexEscapeUpper("\x12\xab")});
+    try testing.expectEqualSlices(u8, "\\x12\\xAB", fbs.getWritten());
+}

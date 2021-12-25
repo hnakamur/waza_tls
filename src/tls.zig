@@ -575,14 +575,16 @@ test "ClientHelloMsg" {
             var copy = msg;
             const got = try copy.marshal(allocator);
             defer copy.deinit(allocator);
-            if (!mem.eql(u8, got, want)) {
-                std.log.warn("msg={},\n got={x},\nwant={x}\n", .{
-                    msg,
-                    fmtx.fmtSliceHexEscapeLower(got),
-                    fmtx.fmtSliceHexEscapeLower(want),
-                });
-            }
+            // if (!mem.eql(u8, got, want)) {
+            //     std.log.warn("msg={},\n got={},\nwant={}\n", .{
+            //         msg,
+            //         fmtx.fmtSliceHexEscapeLower(got),
+            //         fmtx.fmtSliceHexEscapeLower(want),
+            //     });
+            // }
             try testing.expectEqualSlices(u8, want, got);
+            const got2 = try copy.marshal(allocator);
+            try testing.expectEqual(got, got2);
         }
     };
 
