@@ -913,7 +913,7 @@ test "dns.Response/A" {
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
-    std.debug.print("response={}", .{resp});
+    std.log.debug("response={}", .{resp});
 }
 
 test "dns.Response/NS" {
@@ -939,7 +939,7 @@ test "dns.Response/NS" {
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
-    std.debug.print("response={}", .{resp});
+    std.log.debug("response={}", .{resp});
 }
 
 test "dns.Response/CNAME" {
@@ -961,7 +961,7 @@ test "dns.Response/CNAME" {
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
-    std.debug.print("response={}", .{resp});
+    std.log.debug("response={}", .{resp});
 }
 
 test "dns.Response/AAAA" {
@@ -981,7 +981,7 @@ test "dns.Response/AAAA" {
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
-    std.debug.print("response={}", .{resp});
+    std.log.debug("response={}", .{resp});
 }
 
 test "dns.calcLabelsDecodedLen" {
@@ -1140,24 +1140,24 @@ test "dns.send/recv" {
     var i: usize = 0;
     while (i < nr_wait) : (i += 1) {
         const cqe = try ring.copy_cqe();
-        std.debug.print("i={}, cqe.user_data=0x{x}, res={}\n", .{ i, cqe.user_data, cqe.res });
+        std.log.debug("i={}, cqe.user_data=0x{x}, res={}\n", .{ i, cqe.user_data, cqe.res });
         if (cqe.user_data == 0xffffffff and cqe.res > 0) {
-            // std.debug.print("raw_answer", .{});
+            // std.log.debug("raw_answer", .{});
             // for (buffer_recv[0..@intCast(usize, cqe.res)]) |b| {
-            //     std.debug.print("\\x{x:0>2}", .{b});
+            //     std.log.debug("\\x{x:0>2}", .{b});
             // }
-            // std.debug.print("\n", .{});
+            // std.log.debug("\n", .{});
 
             var input = BytesView.init(buffer_recv[0..@intCast(usize, cqe.res)], true);
             var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
             defer resp.deinit(allocator);
-            std.debug.print("response={}\n", .{resp});
+            std.log.debug("response={}\n", .{resp});
         }
     }
 }
 
 test "dns.Client" {
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
 
     try struct {
         const Context = @This();
@@ -1253,7 +1253,7 @@ test "dns.Client" {
                 try io.tick();
             }
 
-            std.debug.print("response={}\n", .{self.response});
+            std.log.debug("response={}\n", .{self.response});
         }
     }.runTest();
 }
