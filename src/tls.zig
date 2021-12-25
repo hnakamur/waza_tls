@@ -6,7 +6,6 @@ const fmt = std.fmt;
 const io = std.io;
 const mem = std.mem;
 
-const fmtx = @import("fmtx.zig");
 const BytesView = @import("parser/bytes.zig").BytesView;
 
 const ProtocolVersion = enum(u16) {
@@ -434,7 +433,6 @@ fn toInt(comptime T: type, val: anytype) T {
 const testing = std.testing;
 
 test "ClientHelloMsg" {
-    testing.log_level = .debug;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -442,13 +440,7 @@ test "ClientHelloMsg" {
             var copy = msg;
             const got = try copy.marshal(allocator);
             defer copy.deinit(allocator);
-            // if (!mem.eql(u8, got, want)) {
-            //     std.log.warn("msg={},\n got={},\nwant={}\n", .{
-            //         msg,
-            //         fmtx.fmtSliceHexEscapeLower(got),
-            //         fmtx.fmtSliceHexEscapeLower(want),
-            //     });
-            // }
+
             try testing.expectEqualSlices(u8, want, got);
             const got2 = try copy.marshal(allocator);
             try testing.expectEqual(got, got2);
