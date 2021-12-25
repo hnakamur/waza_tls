@@ -1,6 +1,7 @@
 const std = @import("std");
 const crypto = std.crypto;
 const io = std.io;
+const math = std.math;
 const mem = std.mem;
 const rand = std.rand;
 const BytesView = @import("parser/bytes.zig").BytesView;
@@ -95,6 +96,7 @@ const SignatureAndHashAlgorithm = struct {
 };
 
 const ProtocolVersion = u16;
+const v1_3: ProtocolVersion = 0x0304;
 const v1_2: ProtocolVersion = 0x0303;
 const v1_0: ProtocolVersion = 0x0301;
 fn procotolVersionMajor(ver: ProtocolVersion) u8 {
@@ -122,7 +124,7 @@ const ContentType = enum(u8) {
         return @intToEnum(ContentType, try input.readByte());
     }
 
-    fn write(self: ContentType,  writer: anytype) !void {
+    fn write(self: ContentType, writer: anytype) !void {
         try writer.writeByte(@enumToInt(self));
     }
 };
@@ -474,7 +476,7 @@ const EcdheKeyAgreement = struct {
         self.client_key_exchange.* = ckx;
 
         // TODO: verify handshake signature
-        
+
         // switch (server_key_exchange.signed_params.scheme) {
         //     .PKCS1WithSHA256 => {},
         //     else => @panic("not implemented yet"),
@@ -515,12 +517,12 @@ const X25519Parameters = struct {
 
     private_key: [key_len]u8,
     public_key: [key_len]u8,
-    shared_key: [key_len]u8,
+    shared_key: [key_len]u8 = undefined,
     curve: NamedCurve = .x25519,
 
     fn generate() !X25519Parameters {
         var priv_key: [key_len]u8 = undefined;
-        rand.DefaultCsprng.random().bytes(&priv_key);
+        crypto.random.bytes(&priv_key);
         const priv_key_curve = Curve25519.fromBytes(priv_key);
         const pub_key_curve = try priv_key_curve.clampedMul(Curve25519.basePoint.toBytes());
         const pub_key = pub_key_curve.toBytes();
@@ -530,11 +532,23 @@ const X25519Parameters = struct {
         };
     }
 
-    fn sharedKey(self: *const X25519Parameters, peer_public_key: EcPoint) ![key_len]u8 {
+    fn sharedKey(self: *const X25519Parameters, peer_public_key: [key_len]u8) ![key_len]u8 {
         const priv_key_curve = Curve25519.fromBytes(self.private_key);
-        return try priv_key_curve.clampedMul(peer_public_key[0..key_len]).toBytes();
+        const curve = try priv_key_curve.clampedMul(peer_public_key);
+        return curve.toBytes();
     }
 };
+
+test "X25519Parameters" {
+    const params = try X25519Parameters.generate();
+
+    var pub_key: [X25519Parameters.key_len]u8 = undefined;
+    crypto.random.bytes(&pub_key);
+
+    const shared_key = try params.sharedKey(pub_key);
+    debugPrintlnHex(&shared_key);
+}
+
 const NistParameters = struct {
     curve: NamedCurve,
 };
@@ -613,7 +627,7 @@ const ExtensionType = enum(u16) {
     // status_request = 5,
 
     // https://datatracker.ietf.org/doc/html/rfc7301#section-3.1
-    application_layer_protocol_negotiation = 0x0010,
+    alpn = 0x0010,
 
     // https://datatracker.ietf.org/doc/html/rfc4492#section-5.1.2
     supported_points = 0x000b,
@@ -631,14 +645,14 @@ const ExtensionType = enum(u16) {
 
 const ExtensionData = union(ExtensionType) {
     server_name: ServerNameList,
-    application_layer_protocol_negotiation: ProtocolNameList,
+    alpn: ProtocolNameList,
     supported_points: EcPointFormatList,
     renegotiation_info: RenegotiationInfo,
 
     fn deinit(self: *ExtensionData, allocator: mem.Allocator) void {
         switch (self.*) {
             .server_name => |*sn| sn.deinit(allocator),
-            .application_layer_protocol_negotiation => |*alpn| alpn.deinit(allocator),
+            .alpn => |*alpn| alpn.deinit(allocator),
             .supported_points => |*sp| sp.deinit(allocator),
             .renegotiation_info => {},
         }
@@ -649,8 +663,8 @@ const ExtensionData = union(ExtensionType) {
             .server_name => return ExtensionData{
                 .server_name = try ServerNameList.unmarshal(allocator, input),
             },
-            .application_layer_protocol_negotiation => return ExtensionData{
-                .application_layer_protocol_negotiation = try ProtocolNameList.unmarshal(allocator, input),
+            .alpn => return ExtensionData{
+                .alpn = try ProtocolNameList.unmarshal(allocator, input),
             },
             .supported_points => return ExtensionData{
                 .supported_points = try EcPointFormatList.unmarshal(allocator, input),
@@ -1048,19 +1062,20 @@ test "write_u24" {
 
 test "Handshake.write" {
     var extensions = [_]Extension{
-                    .{
-                        .extension_type = .server_name,
-                        .extension_data = .{
-                            .server_name = ServerNameList{
-                                .server_name_list = &[_]ServerName{
-                                    .{
-                                        .host_name = "example.com",
-                                    },
-                                },
-                            },
+        .{
+            .extension_type = .server_name,
+            .extension_data = .{
+                .server_name = ServerNameList{
+                    .server_name_list = &[_]ServerName{
+                        .{
+                            .host_name = "example.com",
                         },
                     },
-                };
+                },
+            },
+        },
+    };
+    var session_id = [_]u8{0} ** 32;
     var hs = Handshake{
         .msg_type = .client_hello,
         .length = 0,
@@ -1068,7 +1083,7 @@ test "Handshake.write" {
             .client_hello = ClientHello{
                 .client_version = v1_2,
                 .random = [_]u8{0} ** 32,
-                .session_id = &[_]u8{0},
+                .session_id = &session_id,
                 .cipher_suites = &[_]CipherSuite{},
                 .compression_methods = &[_]CompressionMethod{.@"null"},
                 .extensions = &extensions,
@@ -1082,9 +1097,10 @@ test "Handshake.write" {
     defer buf.deinit();
     var writer = buf.writer();
     try hs.updateLength();
-    try testing.expectEqual(@as(u24, 49 + "example.com".len), hs.length);
+    try testing.expectEqual(@as(u24, 49 + (33 - 2) + "example.com".len), hs.length);
     try hs.write(writer);
-    const want = "\x01\x00\x00\x3c" ++ "\x03\x03" ++ "\x00" ** 32 ++ "\x01\x00" ++
+    const want = "\x01\x00\x00\x5b" ++ "\x03\x03" ++ "\x00" ** 32 ++
+        "\x20" ++ "\x00" ** 32 ++
         "\x00\x00" ++ "\x01\x00" ++
         "\x00\x12" ++
         "\x00\x00" ++
@@ -1219,3 +1235,139 @@ test "ServerHelloDone.unmarshal" {
 //         "\x0e" ++ // server_hello_done
 //         "\x00\x00\x00";
 // }
+
+// https://datatracker.ietf.org/doc/html/rfc4346#section-5
+fn pHash(comptime Hash: type, secret: []const u8, seed: []const u8, out: []u8) void {
+    const Hmac = std.crypto.auth.hmac.Hmac(Hash);
+    var h = Hmac.init(secret);
+    var a: [Hmac.mac_length]u8 = undefined;
+    h.final(&a);
+
+    var j: usize = 0;
+    while (j < out.len) {
+        h = Hmac.init(secret);
+        h.update(&a);
+        h.update(seed);
+        var b: [Hmac.mac_length]u8 = undefined;
+        h.final(&b);
+        const copy_len = math.min(out[j..].len, b.len);
+        mem.copy(u8, out[j..], b[0..copy_len]);
+        j += b.len;
+
+        h = Hmac.init(secret);
+        h.update(&a);
+        h.final(&a);
+    }
+}
+
+test "pHash" {
+    var result: [12]u8 = undefined;
+    pHash(&result, "master secret", "seed", std.crypto.hash.sha2.Sha256);
+    var i: usize = 0;
+    while (i < result.len) : (i += 1) {
+        std.debug.print("{x:0>2}", .{result[i]});
+    }
+    std.debug.print("\n", .{});
+}
+
+const master_secret_label = "master secret";
+const key_expansion_label = "key expansion";
+const client_finished_label = "client finished";
+const server_finisehd_label = "server finished";
+
+const finished_verify_length = 12;
+
+// https://datatracker.ietf.org/doc/html/rfc5246#section-5
+fn prf12(
+    comptime Hash: type,
+    comptime label: []const u8,
+    secret: []const u8,
+    seed: *const [Hash.digest_length]u8,
+    out: []u8,
+) void {
+    var label_and_seed: [label.len + seed.len]u8 = undefined;
+    mem.copy(u8, label_and_seed[0..label.len], label);
+    mem.copy(u8, label_and_seed[label.len..], seed);
+    pHash(Hash, secret, &label_and_seed, out);
+}
+
+test "prf12" {
+    const Sha256 = std.crypto.hash.sha2.Sha256;
+    var d_out: [Sha256.digest_length]u8 = undefined;
+    var d = Sha256.init(.{});
+    d.update("hello world\n");
+    d.final(&d_out);
+
+    var out: [finished_verify_length]u8 = undefined;
+    prf12(Sha256, client_finished_label, "my secret", &d_out, &out);
+    var i: usize = 0;
+    while (i < out.len) : (i += 1) {
+        std.debug.print("{x:0>2}", .{out[i]});
+    }
+    std.debug.print("\n", .{});
+}
+
+test "sha256" {
+    const Sha256 = std.crypto.hash.sha2.Sha256;
+
+    var out: [Sha256.digest_length]u8 = undefined;
+    var d = Sha256.init(.{});
+    d.update("hello world\n");
+    d.final(&out);
+    var i: usize = 0;
+    while (i < out.len) : (i += 1) {
+        std.debug.print("{x:0>2}", .{out[i]});
+    }
+    std.debug.print("\n", .{});
+}
+
+fn debugPrintHex(data: []const u8) void {
+    var i: usize = 0;
+    while (i < data.len) : (i += 1) {
+        std.debug.print("{x:0>2}", .{data[i]});
+    }
+}
+
+fn debugPrintlnHex(data: []const u8) void {
+    debugPrintHex(data);
+    std.debug.print("\n", .{});
+}
+
+const ClientHandshakeState = struct {
+
+};
+
+
+// Go
+//
+// type clientHandshakeState struct {
+// 	c            *Conn
+// 	ctx          context.Context
+// 	serverHello  *serverHelloMsg
+// 	hello        *clientHelloMsg
+// 	suite        *cipherSuite
+// 	finishedHash finishedHash
+// 	masterSecret []byte
+// 	session      *ClientSessionState
+// }
+
+// type clientHandshakeStateTLS13 struct {
+// 	c           *Conn
+// 	ctx         context.Context
+// 	serverHello *serverHelloMsg
+// 	hello       *clientHelloMsg
+// 	ecdheParams ecdheParameters
+
+// 	session     *ClientSessionState
+// 	earlySecret []byte
+// 	binderKey   []byte
+
+// 	certReq       *certificateRequestMsgTLS13
+// 	usingPSK      bool
+// 	sentDummyCCS  bool
+// 	suite         *cipherSuiteTLS13
+// 	transcript    hash.Hash
+// 	masterSecret  []byte
+// 	trafficSecret []byte // client_application_traffic_secret_0
+// }
+
