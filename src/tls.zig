@@ -5,6 +5,8 @@ const fifo = std.fifo;
 const fmt = std.fmt;
 const io = std.io;
 const mem = std.mem;
+
+const fmtx = @import("fmtx.zig");
 const BytesView = @import("parser/bytes.zig").BytesView;
 
 const ProtocolVersion = enum(u16) {
@@ -54,7 +56,7 @@ const ClientHelloMsg = struct {
     server_name: ?[]const u8 = null,
     ocsp_stapling: bool = undefined,
     supported_curves: []const CurveId = &[_]CurveId{},
-    supported_points: []const u8 = &[_]u8{},
+    supported_points: []const EcPointFormat = &[_]EcPointFormat{},
     ticket_supported: bool = false,
     session_ticket: []const u8 = "",
     supported_signature_algorithms: []const SignatureScheme = &[_]SignatureScheme{},
@@ -148,7 +150,7 @@ const ClientHelloMsg = struct {
         if (self.supported_points.len > 0) {
             // RFC 4492, Section 5.1.2
             try writeInt(u16, ExtensionType.SupportedPoints, writer);
-            try writeLenLenAndBytes(u16, u8, self.supported_points, writer);
+            try writeLenLenAndIntSlice(u16, u8, u8, EcPointFormat, self.supported_points, writer);
         }
         if (self.ticket_supported) {
             // RFC 5077, Section 3.2
@@ -202,6 +204,18 @@ const ClientHelloMsg = struct {
             // RFC 6962, Section 3.3.1
             try writeInt(u16, ExtensionType.Sct, writer);
             try writeInt(u16, 0, writer); // empty extension_data
+        }
+        if (self.supported_versions.len > 0) {
+            // RFC 8446, Section 4.2.1
+            try writeInt(u16, ExtensionType.SupportedVersions, writer);
+            try writeLenLenAndIntSlice(
+                u16,
+                u8,
+                u16,
+                ProtocolVersion,
+                self.supported_versions,
+                writer,
+            );
         }
         if (self.cookie.len > 0) {
             // RFC 8446, Section 4.2.2
@@ -270,10 +284,16 @@ const CurveId = enum(u16) {
     x25519 = 29,
 };
 
+// TLS Elliptic Curve Point Formats
+// https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
+const EcPointFormat = enum(u8) {
+    uncompressed = 0,
+};
+
 // TLS 1.3 Key Share. See RFC 8446, Section 4.2.8.
 const KeyShare = struct {
     group: CurveId,
-    data: []u8,
+    data: []const u8,
 };
 
 // TLS 1.3 PSK Key Exchange Modes. See RFC 8446, Section 4.2.9.
@@ -285,7 +305,7 @@ const PskMode = enum(u8) {
 // TLS 1.3 PSK Identity. Can be a Session Ticket, or a reference to a saved
 // session. See RFC 8446, Section 4.2.11.
 const PskIdentity = struct {
-    label: []u8,
+    label: []const u8,
     obfuscated_ticket_age: u32,
 };
 
@@ -558,44 +578,1124 @@ test "ClientHelloMsg" {
             if (!mem.eql(u8, got, want)) {
                 std.log.warn("msg={},\n got={x},\nwant={x}\n", .{
                     msg,
-                    fmt.fmtSliceHexLower(got),
-                    fmt.fmtSliceHexLower(want),
+                    fmtx.fmtSliceHexEscapeLower(got),
+                    fmtx.fmtSliceHexEscapeLower(want),
                 });
             }
             try testing.expectEqualSlices(u8, want, got);
         }
     };
 
-    try Case.run(ClientHelloMsg{
-        .vers = .v1_3,
-        .random = &[_]u8{0} ** 32,
-        .session_id = &[_]u8{0} ** 32,
-        .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
-        .compression_methods = &[_]CompressionMethod{.none},
-    }, "\x12\x34");
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x49" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00", // CompressionMethod.none
+    );
 
-    // var session_id = [_]u8{0} ** 32;
-    // var msg = ClientHelloMsg{
-    //     .vers = .v1_3,
-    //     .random = &[_]u8{0} ** 32,
-    //     .session_id = &session_id,
-    //     .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
-    //     .compression_methods = &[_]CompressionMethod{.none},
-    //     .server_name = "example.com",
-    //     .supported_curves = &[_]CurveId{.x25519},
-    //     .supported_points = &[_]u8{'\xff'},
-    //     .ticket_supported = true,
-    //     .session_ticket = "session_ticket",
-    //     .psk_binders = &[_][]const u8{ "hi", "there" },
-    // };
-    // defer msg.deinit(allocator);
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x5f" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x14" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d", // server_name
+    );
 
-    // var data = try msg.marshal(allocator);
-    // msg.deinit(allocator);
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x68" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x1d" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00", // empty request_extensions
+    );
 
-    // msg.random = &[_]u8{1} ** 32;
-    // data = try msg.marshal(allocator);
-    // std.debug.print("data=0x{x}\n", .{fmt.fmtSliceHexLower(data)});
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x70" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x25" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d", // CurveId.x25519
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x76" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x2b" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00", // EcPointFormat.uncompressed
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x7e" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x33" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78", // session_ticket
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x86" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x3b" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01", // SignatureScheme.Pkcs1WithSha256
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x8e" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x43" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01", // SignatureScheme.Pkcs1WithSha256
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\x93" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x48" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00", // u8 len
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xa9" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x5e" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31", // "spdy/1"
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xad" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x62" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00", // empty extension_data
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xb6" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x6b" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03", // ProtocolVersion.v1_2
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+            .cookie = "my cookie",
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xc5" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x7a" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03" ++ // ProtocolVersion.v1_2
+            "\x00\x2c" ++ // ExtensionType.Cookie
+            "\x00\x0b" ++ // u16 len
+            "\x00\x09" ++ // u16 len
+            "\x6d\x79\x20\x63\x6f\x6f\x6b\x69\x65", // "my cookie"
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+            .cookie = "my cookie",
+            .key_shares = &[_]KeyShare{.{ .group = .x25519, .data = "public key here" }},
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xde" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x93" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03" ++ // ProtocolVersion.v1_2
+            "\x00\x2c" ++ // ExtensionType.Cookie
+            "\x00\x0b" ++ // u16 len
+            "\x00\x09" ++ // u16 len
+            "\x6d\x79\x20\x63\x6f\x6f\x6b\x69\x65" ++ // "my cookie"
+            "\x00\x33" ++ // ExtensionType.KeyShare
+            "\x00\x15" ++ // u16 len
+            "\x00\x13" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0f" ++ // u16 len
+            "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65", // "public key here"
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+            .cookie = "my cookie",
+            .key_shares = &[_]KeyShare{.{ .group = .x25519, .data = "public key here" }},
+            .early_data = true,
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xe2" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x97" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03" ++ // ProtocolVersion.v1_2
+            "\x00\x2c" ++ // ExtensionType.Cookie
+            "\x00\x0b" ++ // u16 len
+            "\x00\x09" ++ // u16 len
+            "\x6d\x79\x20\x63\x6f\x6f\x6b\x69\x65" ++ // "my cookie"
+            "\x00\x33" ++ // ExtensionType.KeyShare
+            "\x00\x15" ++ // u16 len
+            "\x00\x13" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0f" ++ // u16 len
+            "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65" ++ // "public key here"
+            "\x00\x2a" ++ // ExtensionType.EarlyData
+            "\x00\x00", // empty extension_data
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+            .cookie = "my cookie",
+            .key_shares = &[_]KeyShare{.{ .group = .x25519, .data = "public key here" }},
+            .early_data = true,
+            .psk_modes = &[_]PskMode{ .plain, .dhe },
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x00\xe9" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\x9e" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03" ++ // ProtocolVersion.v1_2
+            "\x00\x2c" ++ // ExtensionType.Cookie
+            "\x00\x0b" ++ // u16 len
+            "\x00\x09" ++ // u16 len
+            "\x6d\x79\x20\x63\x6f\x6f\x6b\x69\x65" ++ // "my cookie"
+            "\x00\x33" ++ // ExtensionType.KeyShare
+            "\x00\x15" ++ // u16 len
+            "\x00\x13" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0f" ++ // u16 len
+            "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65" ++ // "public key here"
+            "\x00\x2a" ++ // ExtensionType.EarlyData
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2d" ++ // ExtensionType.PskModes
+            "\x00\x03" ++ // u16 len
+            "\x02" ++ // u8 len
+            "\x00" ++ // PskMode.plain
+            "\x01", // PskMode.dhe
+    );
+
+    try Case.run(
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+            .cookie = "my cookie",
+            .key_shares = &[_]KeyShare{.{ .group = .x25519, .data = "public key here" }},
+            .early_data = true,
+            .psk_modes = &[_]PskMode{ .plain, .dhe },
+            .psk_identities = &[_]PskIdentity{.{ .label = "my id 1", .obfuscated_ticket_age = 0x778899aa }},
+            .psk_binders = &[_][]const u8{ "binder1", "binder2" },
+        },
+        "\x01" ++ // ClientHello
+            "\x00\x01\x0e" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\xc3" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03" ++ // ProtocolVersion.v1_2
+            "\x00\x2c" ++ // ExtensionType.Cookie
+            "\x00\x0b" ++ // u16 len
+            "\x00\x09" ++ // u16 len
+            "\x6d\x79\x20\x63\x6f\x6f\x6b\x69\x65" ++ // "my cookie"
+            "\x00\x33" ++ // ExtensionType.KeyShare
+            "\x00\x15" ++ // u16 len
+            "\x00\x13" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0f" ++ // u16 len
+            "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65" ++ // "public key here"
+            "\x00\x2a" ++ // ExtensionType.EarlyData
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2d" ++ // ExtensionType.PskModes
+            "\x00\x03" ++ // u16 len
+            "\x02" ++ // u8 len
+            "\x00" ++ // PskMode.plain
+            "\x01" ++ // PskMode.dhe
+            "\x00\x29" ++ // ExtensionType.PreSharedKey
+            "\x00\x1f" ++ // u16 len
+            "\x00\x0d" ++ // u16 len
+            "\x00\x07" ++ // u16 len
+            "\x6d\x79\x20\x69\x64\x20\x31" ++ // label "my id 1"
+            "\x77\x88\x99\xaa" ++ // obfuscated_ticket_age 0x778899aa
+            "\x00\x10" ++ // u16 len
+            "\x07" ++ // u8 len
+            "\x62\x69\x6e\x64\x65\x72\x31" ++ // "binder1"
+            "\x07" ++ // u8 len
+            "\x62\x69\x6e\x64\x65\x72\x32", // "binder2"
+    );
 }
 
 test "writeLengthPrefixed" {
