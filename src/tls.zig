@@ -67,7 +67,7 @@ const CompressionMethod = enum(u8) {
     }
 };
 fn writeCompressionMethodList(methods: []const CompressionMethod, writer: anytype) !void {
-    try writer.writeByte(@truncate(u8, methods.len * @sizeOf(CompressionMethod)));
+    try writer.writeByte(@intCast(u8, methods.len * @sizeOf(CompressionMethod)));
     for (methods) |method| {
         try method.write(writer);
     }
@@ -100,10 +100,10 @@ const v1_3: ProtocolVersion = 0x0304;
 const v1_2: ProtocolVersion = 0x0303;
 const v1_0: ProtocolVersion = 0x0301;
 fn procotolVersionMajor(ver: ProtocolVersion) u8 {
-    return @truncate(u8, ver >> 8);
+    return @intCast(u8, ver >> 8);
 }
 fn procotolVersionMinor(ver: ProtocolVersion) u8 {
-    return @truncate(u8, ver);
+    return @intCast(u8, ver);
 }
 fn writeProtocolVersion(ver: ProtocolVersion, writer: anytype) !void {
     try writer.writeIntBig(u16, ver);
@@ -316,7 +316,7 @@ const Handshake = struct {
     fn updateLength(self: *Handshake) !void {
         var writer = io.countingWriter(io.null_writer);
         try self.body.write(writer.writer());
-        self.length = @truncate(u24, writer.bytes_written);
+        self.length = @intCast(u24, writer.bytes_written);
     }
 
     fn write(self: *const Handshake, writer: anytype) !void {
@@ -395,7 +395,7 @@ const SessionId = []const u8;
 const session_id_max_len = 32;
 
 fn writeSessionId(self: SessionId, writer: anytype) !void {
-    try writer.writeByte(@truncate(u8, self.len));
+    try writer.writeByte(@intCast(u8, self.len));
     try writer.writeAll(self);
 }
 
@@ -471,7 +471,7 @@ const EcdheKeyAgreement = struct {
         const our_pub_key = self.params.x25519.public_key;
         var ckx = try allocator.create(ClientKeyExchange);
         ckx.ciphertext = try allocator.alloc(u8, 1 + our_pub_key.len);
-        ckx.ciphertext[0] = @truncate(u8, our_pub_key.len);
+        ckx.ciphertext[0] = @intCast(u8, our_pub_key.len);
         mem.copy(ckx.ciphertext[1..], our_pub_key);
         self.client_key_exchange.* = ckx;
 
@@ -554,7 +554,7 @@ const NistParameters = struct {
 };
 
 fn writeCipherSuiteList(cipher_suites: []const CipherSuite, writer: anytype) !void {
-    try writer.writeIntBig(u16, @truncate(u16, cipher_suites.len) * @sizeOf(CipherSuite));
+    try writer.writeIntBig(u16, @intCast(u16, cipher_suites.len) * @sizeOf(CipherSuite));
     for (cipher_suites) |suite| {
         try suite.write(writer);
     }
@@ -562,7 +562,7 @@ fn writeCipherSuiteList(cipher_suites: []const CipherSuite, writer: anytype) !vo
 
 fn writeExtensions(extensions: []const Extension, writer: anytype) !void {
     const len = try calcExtensionsContentswritedLen(extensions);
-    try writer.writeIntBig(u16, @truncate(u16, len));
+    try writer.writeIntBig(u16, @intCast(u16, len));
     try writeExtensionsContents(extensions, writer);
 }
 
@@ -988,7 +988,7 @@ const ServerNameList = struct {
 
     fn write(self: *const ServerNameList, writer: anytype) !void {
         const len = try calcServerNameListContentsLen(self.server_name_list);
-        try writer.writeIntBig(u16, @truncate(u16, len));
+        try writer.writeIntBig(u16, @intCast(u16, len));
         try writeServerNameListContents(self.server_name_list, writer);
     }
 };
@@ -1031,7 +1031,7 @@ const NameType = enum(u8) {
 
 const HostName = []const u8;
 fn writeHostName(hostname: []const u8, writer: anytype) !void {
-    try writer.writeIntBig(u16, @truncate(u16, hostname.len));
+    try writer.writeIntBig(u16, @intCast(u16, hostname.len));
     try writer.writeAll(hostname);
 }
 fn unmarshalHostname(input: *BytesView) !HostName {
@@ -1262,7 +1262,7 @@ fn pHash(comptime Hash: type, secret: []const u8, seed: []const u8, out: []u8) v
 
 test "pHash" {
     var result: [12]u8 = undefined;
-    pHash(&result, "master secret", "seed", std.crypto.hash.sha2.Sha256);
+    pHash(std.crypto.hash.sha2.Sha256, "master secret", "seed", &result);
     var i: usize = 0;
     while (i < result.len) : (i += 1) {
         std.debug.print("{x:0>2}", .{result[i]});
