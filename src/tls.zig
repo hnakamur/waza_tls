@@ -6,7 +6,8 @@ const fmt = std.fmt;
 const io = std.io;
 const mem = std.mem;
 
-const BytesView = @import("parser/bytes.zig").BytesView;
+const BytesView = @import("BytesView.zig");
+const handshake_msg = @import("tls/handshake_msg.zig");
 
 const ProtocolVersion = enum(u16) {
     v1_3 = 0x0304,
@@ -581,4 +582,8 @@ test "ClientHelloMsg" {
             "\x07" ++ // u8 len
             "\x62\x69\x6e\x64\x65\x72\x32", // "binder2"
     );
+}
+
+comptime {
+    std.testing.refAllDecls(@This());
 }

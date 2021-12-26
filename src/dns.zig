@@ -6,7 +6,7 @@ const mem = std.mem;
 const os = std.os;
 const time = std.time;
 const native_endian = builtin.cpu.arch.endian();
-const BytesView = @import("parser/bytes.zig").BytesView;
+const BytesView = @import("BytesView.zig");
 const IO = @import("tigerbeetle-io").IO;
 
 const http_log = std.log.scoped(.http);
@@ -350,14 +350,14 @@ pub const Header = packed struct {
     pub fn decode(bytes: *const [header_len]u8) Header {
         return .{
             .id = @as(u16, bytes[0]) << 8 | @as(u16, bytes[1]),
-            .qr = @intToEnum(Qr, @truncate(u1, bytes[2] >> 7)),
-            .opcode = @intToEnum(Opcode, @truncate(u4, bytes[2] << 1 >> 4)),
-            .aa = @truncate(u1, bytes[2] << 5 >> 7),
-            .tc = @truncate(u1, bytes[2] << 6 >> 7),
-            .rd = @truncate(u1, bytes[2] << 7 >> 7),
-            .ra = @truncate(u1, bytes[3] >> 7),
-            .z = @truncate(u3, bytes[3] << 1 >> 4),
-            .rcode = @intToEnum(Rcode, @truncate(u4, bytes[3] << 4 >> 4)),
+            .qr = @intToEnum(Qr, @intCast(u1, bytes[2] >> 7)),
+            .opcode = @intToEnum(Opcode, @intCast(u4, bytes[2] << 1 >> 4)),
+            .aa = @intCast(u1, bytes[2] << 5 >> 7),
+            .tc = @intCast(u1, bytes[2] << 6 >> 7),
+            .rd = @intCast(u1, bytes[2] << 7 >> 7),
+            .ra = @intCast(u1, bytes[3] >> 7),
+            .z = @intCast(u3, bytes[3] << 1 >> 4),
+            .rcode = @intToEnum(Rcode, @intCast(u4, bytes[3] << 4 >> 4)),
             .qdcount = @as(u16, bytes[4]) << 8 | @as(u16, bytes[5]),
             .ancount = @as(u16, bytes[6]) << 8 | @as(u16, bytes[7]),
             .nscount = @as(u16, bytes[8]) << 8 | @as(u16, bytes[9]),
@@ -366,7 +366,7 @@ pub const Header = packed struct {
     }
 
     pub fn encode(self: *const Header, dest: *[header_len]u8) void {
-        dest[0] = @truncate(u8, self.id >> 8);
+        dest[0] = @intCast(u8, self.id >> 8);
         dest[1] = @truncate(u8, self.id);
 
         dest[2] = @as(u8, @enumToInt(self.qr)) << 7 |
@@ -378,16 +378,16 @@ pub const Header = packed struct {
             @as(u8, self.z) << 4 |
             @as(u8, @enumToInt(self.rcode));
 
-        dest[4] = @truncate(u8, self.qdcount >> 8);
+        dest[4] = @intCast(u8, self.qdcount >> 8);
         dest[5] = @truncate(u8, self.qdcount);
 
-        dest[6] = @truncate(u8, self.ancount >> 8);
+        dest[6] = @intCast(u8, self.ancount >> 8);
         dest[7] = @truncate(u8, self.ancount);
 
-        dest[8] = @truncate(u8, self.nscount >> 8);
+        dest[8] = @intCast(u8, self.nscount >> 8);
         dest[9] = @truncate(u8, self.nscount);
 
-        dest[10] = @truncate(u8, self.arcount >> 8);
+        dest[10] = @intCast(u8, self.arcount >> 8);
         dest[11] = @truncate(u8, self.arcount);
     }
 };
@@ -483,10 +483,10 @@ pub const Question = struct {
     pub fn encode(self: *const Question, dest: []u8) !usize {
         var pos = try encodeName(self.name, dest);
 
-        dest[pos] = @truncate(u8, @enumToInt(self.qtype) >> 8);
+        dest[pos] = @intCast(u8, @enumToInt(self.qtype) >> 8);
         dest[pos + 1] = @truncate(u8, @enumToInt(self.qtype));
 
-        dest[pos + 2] = @truncate(u8, @enumToInt(self.qclass) >> 8);
+        dest[pos + 2] = @intCast(u8, @enumToInt(self.qclass) >> 8);
         dest[pos + 3] = @truncate(u8, @enumToInt(self.qclass));
 
         return pos + 4;
@@ -883,7 +883,7 @@ fn encodeName(name: []const u8, dest: []u8) !usize {
         const end = pos orelse name.len;
         var label_len: usize = end - start;
 
-        dest[dest_pos] = @truncate(u8, label_len);
+        dest[dest_pos] = @intCast(u8, label_len);
         mem.copy(u8, dest[dest_pos + 1 ..], name[start..end]);
         dest_pos += 1 + label_len;
 
@@ -909,7 +909,7 @@ test "dns.Response/A" {
         "\x00\x04" ++
         "\x5d\xb8\xd8\x22";
 
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(data);
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
@@ -935,7 +935,7 @@ test "dns.Response/NS" {
         "\xc0\x0c\x00\x02\x00\x01\x00\x00\x4e\x83" ++
         "\x00\x04\x01\x62\xc0\x2b";
 
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(data);
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
@@ -957,7 +957,7 @@ test "dns.Response/CNAME" {
         "\x00\x24" ++
         "\x11\x73\x69\x74\x65\x2d\x31\x31\x32\x38\x30\x30\x33\x35\x30\x31\x31\x36\x05\x67\x73\x6c\x62\x33\x06\x73\x61\x6b\x75\x72\x61\x02\x6e\x65\xc0\x1a";
 
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(data);
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
@@ -977,7 +977,7 @@ test "dns.Response/AAAA" {
         "\x00\x10" ++
         "\x26\x06\x28\x00\x02\x20\x00\x01\x02\x48\x18\x93\x25\xc8\x19\x46";
 
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(data);
     var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
     defer resp.deinit(allocator);
 
@@ -1148,7 +1148,7 @@ test "dns.send/recv" {
             // }
             // std.log.debug("\n", .{});
 
-            var input = BytesView.init(buffer_recv[0..@intCast(usize, cqe.res)], true);
+            var input = BytesView.init(buffer_recv[0..@intCast(usize, cqe.res)]);
             var resp: ResponseMessage = try ResponseMessage.decode(allocator, &input);
             defer resp.deinit(allocator);
             std.log.debug("response={}\n", .{resp});
@@ -1220,7 +1220,7 @@ test "dns.Client" {
             if (result) |received| {
                 std.log.debug("Context.recvResponseCallback received={}", .{received});
 
-                var input = BytesView.init(self.client.response_buf[0..received], true);
+                var input = BytesView.init(self.client.response_buf[0..received]);
                 if (ResponseMessage.decode(self.allocator, &input)) |resp| {
                     self.response = resp;
                 } else |err| {

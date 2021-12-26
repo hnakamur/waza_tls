@@ -1,7 +1,7 @@
 const std = @import("std");
 const lex = @import("lex.zig");
 const isTokenChar = lex.isTokenChar;
-const BytesView = @import("bytes.zig").BytesView;
+const BytesView = @import("../BytesView.zig");
 
 pub fn TokenParser(
     comptime WriterOrVoidType: type,
@@ -49,7 +49,8 @@ pub fn TokenParser(
                     else => return error.InvalidState,
                 }
             }
-            return input.eof;
+            // In this case, it may or may not be the end of a token.
+            return false;
         }
 
         fn writeByte(
@@ -74,13 +75,9 @@ test "TokenParser success with eof" {
     defer output.deinit();
 
     var parser = TokenParser(DynamicBuf.Writer).init();
-    var vw = BytesView.init("ab", false);
+    var vw = BytesView.init("ab");
     try testing.expect(!try parser.parse(&vw, output.writer()));
     try testing.expectEqualStrings("ab", output.readableSlice(0));
-
-    vw = BytesView.init("c", true);
-    try testing.expect(try parser.parse(&vw, output.writer()));
-    try testing.expectEqualStrings("abc", output.readableSlice(0));
 }
 
 test "TokenParser success with delimiter" {
@@ -91,16 +88,16 @@ test "TokenParser success with delimiter" {
     defer output.deinit();
 
     var parser = TokenParser(DynamicBuf.Writer).init();
-    var vw = BytesView.init("ab;", false);
+    var vw = BytesView.init("ab;");
     try testing.expect(try parser.parse(&vw, output.writer()));
     try testing.expectEqualStrings("ab", output.readableSlice(0));
 
-    vw = BytesView.init("c", true);
+    vw = BytesView.init("c");
     try testing.expectError(error.InvalidState, parser.parse(&vw, output.writer()));
 }
 
 test "TokenParser empty" {
     var parser = TokenParser(void).init();
-    var vw = BytesView.init("\x7f", false);
+    var vw = BytesView.init("\x7f");
     try testing.expectError(error.EmptyToken, parser.parse(&vw, {}));
 }

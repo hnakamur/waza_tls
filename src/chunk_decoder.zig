@@ -1,7 +1,6 @@
 const std = @import("std");
 const fifo = std.fifo;
-const BytesBuf = @import("parser.zig").bytes.BytesBuf;
-const BytesView = @import("parser.zig").bytes.BytesView;
+const BytesView = @import("BytesView.zig");
 const isTokenChar = @import("parser.zig").lex.isTokenChar;
 const TokenParser = @import("parser.zig").TokenParser;
 const QuotedStringParser = @import("parser.zig").QuotedStringParser;
@@ -146,7 +145,7 @@ pub fn ChunkedDecoder(comptime WriterOrVoidType: type) type {
                     else => return error.InvalidState,
                 }
             }
-            return if (input.eof) error.UnexpectedEof else false;
+            return false;
         }
     };
 }
@@ -155,7 +154,6 @@ const ChunkExtSkipper = struct {
     pub const Error = error{
         InvalidCharacter,
         InvalidState,
-        UnexpectedEof,
     } || TokenParser(void).Error;
 
     const State = enum {
@@ -274,8 +272,7 @@ const ChunkExtSkipper = struct {
                 else => return error.InvalidState,
             }
         }
-        std.log.debug("ChunkExtSkipper.parse return after loop input.eof={}", .{input.eof});
-        return if (input.eof) error.UnexpectedEof else false;
+        return false;
     }
 };
 
@@ -286,28 +283,28 @@ fn skipOptionalWhiteSpaces(input: *BytesView) bool {
             else => return true,
         }
     }
-    return input.eof;
+    return false;
 }
 
 const testing = std.testing;
 
 test "ChunkDecoder / void output" {
-    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n", true);
+    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n0\r\n");
     var decoder = ChunkedDecoder(void).init();
     try testing.expect(try decoder.decode(&input, {}));
 }
 
 test "ChunkDecoder / incomplete input void output" {
-    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n", true);
+    var input = BytesView.init("7\r\nhello, \r\n7\r\nchunked\r\n");
     var decoder = ChunkedDecoder(void).init();
-    try testing.expectError(error.UnexpectedEof, decoder.decode(&input, {}));
+    try testing.expect(!try decoder.decode(&input, {}));
 }
 
 test "ChunkDecoder / dynamic output buffer" {
     const allocator = testing.allocator;
 
-    var input = BytesView.init("17\r\nhello, chunked encoding\r\n0\r\n", true);
-    const DynamicBuf = BytesBuf(.Dynamic);
+    var input = BytesView.init("17\r\nhello, chunked encoding\r\n0\r\n");
+    const DynamicBuf = fifo.LinearFifo(u8, .Dynamic);
 
     var output = DynamicBuf.init(allocator);
     defer output.deinit();
@@ -319,9 +316,9 @@ test "ChunkDecoder / dynamic output buffer" {
 
 test "ChunkDecoder / slice output buffer" {
     var data = "7\r\nhello, \r\n7\r\nchunked\r\n0\r\n";
-    var input = BytesView.init(data[0..7], false);
+    var input = BytesView.init(data[0..7]);
 
-    const SliceBuf = BytesBuf(.Slice);
+    const SliceBuf = fifo.LinearFifo(u8, .Slice);
 
     var buf = [_]u8{0} ** 5;
     var output = SliceBuf.init(&buf);
@@ -332,7 +329,7 @@ test "ChunkDecoder / slice output buffer" {
     try testing.expect(!try decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("hell", output.readableSlice(0));
 
-    input = BytesView.init(data[7..], true);
+    input = BytesView.init(data[7..]);
     try testing.expectError(error.OutOfMemory, decoder.decode(&input, output.writer()));
     try testing.expectEqualStrings("hello", output.readableSlice(0));
 
@@ -347,7 +344,7 @@ test "ChunkDecoder / slice output buffer" {
 
 test "ChunkDecoder / invalid chunk" {
     var buf = [_]u8{0} ** 16;
-    const SliceBuf = BytesBuf(.Slice);
+    const SliceBuf = fifo.LinearFifo(u8, .Slice);
     var output = SliceBuf.init(&buf);
     defer output.deinit();
 
@@ -360,7 +357,7 @@ test "ChunkDecoder / invalid chunk" {
         "0\r\r",
     };
     for (data_list) |data| {
-        var input = BytesView.init(data, true);
+        var input = BytesView.init(data);
         var decoder = ChunkedDecoder(SliceBuf.Writer).init();
         output.discard(output.count);
         try testing.expectError(error.InvalidChunk, decoder.decode(&input, output.writer()));
@@ -371,16 +368,16 @@ test "ChunkDecoder / invalid state" {
     const allocator = testing.allocator;
 
     var data = "7\r\nhello, \r\n7\r\nchunked\r\n0\r\n";
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(data);
 
-    const DynamicBuf = BytesBuf(.Dynamic);
+    const DynamicBuf = fifo.LinearFifo(u8, .Dynamic);
     var output = DynamicBuf.init(allocator);
     defer output.deinit();
 
     var decoder = ChunkedDecoder(DynamicBuf.Writer).init();
     try testing.expect(try decoder.decode(&input, output.writer()));
 
-    input = BytesView.init(data, true);
+    input = BytesView.init(data);
     try testing.expectError(error.InvalidState, decoder.decode(&input, output.writer()));
 }
 
@@ -388,12 +385,12 @@ test "ChunkDecoder / chunk ext" {
     const data = "1;aa=bb\r\na\r\n0;bb=cc\r";
     var decoder = ChunkedDecoder(void).init();
     for (data) |c| {
-        var input = BytesView.init(&[_]u8{c}, false);
+        var input = BytesView.init(&[_]u8{c});
         try testing.expect(!try decoder.decode(&input, {}));
     }
 
     decoder = ChunkedDecoder(void).init();
-    var input = BytesView.init(data, false);
+    var input = BytesView.init(data);
     try testing.expect(!try decoder.decode(&input, {}));
 
     const invalid_data_list = [_][]const u8{
@@ -403,7 +400,7 @@ test "ChunkDecoder / chunk ext" {
     };
     for (invalid_data_list) |invalid_data| {
         decoder = ChunkedDecoder(void).init();
-        input = BytesView.init(invalid_data, false);
+        input = BytesView.init(invalid_data);
         try testing.expectError(error.InvalidChunk, decoder.decode(&input, {}));
     }
 }
@@ -411,22 +408,22 @@ test "ChunkDecoder / chunk ext" {
 test "ChunkDecoder / incomplete chunk ext" {
     // testing.log_level = .debug;
     const data = "1;aa=bb\r\na\r\n0;bb=cc\r";
-    var input = BytesView.init(data, true);
+    var input = BytesView.init(data);
     var decoder = ChunkedDecoder(void).init();
-    try testing.expectError(error.UnexpectedEof, decoder.decode(&input, {}));
+    try testing.expect(!try decoder.decode(&input, {}));
 }
 
 test "skipOptionalWhiteSpaces" {
-    var input = BytesView.init("\t a", false);
+    var input = BytesView.init("\t a");
     try testing.expect(skipOptionalWhiteSpaces(&input));
     try testing.expectEqualStrings("a", input.rest());
 
-    input = BytesView.init("", false);
+    input = BytesView.init("");
     try testing.expect(!skipOptionalWhiteSpaces(&input));
 }
 
 test "ChunkExtSkipper case 1" {
-    var input = BytesView.init("\t ; a ; bb = cc ; c = \"a\"\r", false);
+    var input = BytesView.init("\t ; a ; bb = cc ; c = \"a\"\r");
     var parser = ChunkExtSkipper.init();
     try testing.expect(try parser.parse(&input));
     try testing.expectEqualStrings("\r", input.rest());
@@ -435,26 +432,17 @@ test "ChunkExtSkipper case 1" {
 }
 
 test "ChunkExtSkipper case 2" {
-    var input = BytesView.init("\t ; a ; bb = cc ; c = \"a\"", false);
+    var input = BytesView.init("\t ; a ; bb = cc ; c = \"a\"");
     var parser = ChunkExtSkipper.init();
     try testing.expect(!try parser.parse(&input));
     try testing.expectEqualStrings("", input.rest());
 }
 
 test "ChunkExtSkipper case 3" {
-    var input = BytesView.init("\t ; a\r", false);
+    var input = BytesView.init("\t ; a\r");
     var parser = ChunkExtSkipper.init();
     try testing.expect(try parser.parse(&input));
     try testing.expectEqualStrings("\r", input.rest());
-}
-
-test "ChunkExtSkipper case 4" {
-    const data = "\t ;  aa  ;  bb  =  cc  ;  cc  =  \"aa\"\r";
-    var parser = ChunkExtSkipper.init();
-    for (data) |c| {
-        var input = BytesView.init(&[_]u8{c}, false);
-        try testing.expectEqual(c == '\r', try parser.parse(&input));
-    }
 }
 
 test "ChunkExtSkipper invalid cases" {
@@ -464,7 +452,7 @@ test "ChunkExtSkipper invalid cases" {
         ";x=\x7f",
     };
     for (data_list) |data| {
-        var input = BytesView.init(data, false);
+        var input = BytesView.init(data);
         var parser = ChunkExtSkipper.init();
         try testing.expectError(error.InvalidCharacter, parser.parse(&input));
     }
