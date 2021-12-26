@@ -136,19 +136,27 @@ pub const ClientHelloMsg = struct {
         }
     }
 
+    pub fn deinitForUnmarshal(self: *ClientHelloMsg, allocator: mem.Allocator) void {
+        allocator.free(self.cipher_suites);
+        allocator.free(self.compression_methods);
+    }
+
     fn unmarshal(allocator: mem.Allocator, data: []const u8) !ClientHelloMsg {
-        _ = allocator;
         var bv = BytesView.init(data);
         bv.advance(intTypeLen(u8) + intTypeLen(u24));
         const vers = @intToEnum(ProtocolVersion, try bv.readIntBig(u16));
         const random = try bv.sliceBytesNoEof(random_length);
-        const session_id = try sliceLenAndBytes(u8, &bv);
+        const session_id = try readLenAndSliceBytes(u8, &bv);
+        const cipher_suites = try readLenAndEnumSlice(u16, CipherSuite, allocator, &bv);
+        const compression_methods = try readLenAndEnumSlice(u8, CompressionMethod, allocator, &bv);
 
         return ClientHelloMsg{
             .raw = data[0..bv.pos],
             .vers = vers,
             .random = random,
             .session_id = session_id,
+            .cipher_suites = cipher_suites,
+            .compression_methods = compression_methods,
         };
     }
 
@@ -407,9 +415,42 @@ const ExtensionType = enum(u16) {
     RenegotiationInfo = 0xff01,
 };
 
-fn sliceLenAndBytes(comptime LenType: type, bv: *BytesView) ![]const u8 {
+fn readLenAndSliceBytes(comptime LenType: type, bv: *BytesView) ![]const u8 {
     const len = try bv.readIntBig(LenType);
     return try bv.sliceBytesNoEof(len);
+}
+
+fn readLenAndEnumSlice(comptime LenType: type, comptime Enum: type, allocator: mem.Allocator, bv: *BytesView) ![]Enum {
+    const enum_len = enumTypeLen(Enum);
+    assert(enum_len > 0);
+
+    const len = try bv.readIntBig(LenType);
+    try bv.ensureLen(len);
+
+    if (len % enum_len != 0) return error.BadPrefixLength;
+
+    const count = len / enum_len;
+    var values = try allocator.alloc(Enum, count);
+    errdefer allocator.free(values);
+
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        values[i] = try readEnum(Enum, bv);
+    }
+    return values;
+}
+
+test "readLenAndEnumSlice" {
+    const allocator = testing.allocator;
+    var bv = BytesView.init("\x00\x04\x03\x04\x03\x03");
+    const got = try readLenAndEnumSlice(u16, ProtocolVersion, allocator, &bv);
+    defer allocator.free(got);
+
+    try testing.expectEqualSlices(ProtocolVersion, &[_]ProtocolVersion{ .v1_3, .v1_2 }, got);
+}
+
+fn readEnum(comptime Enum: type, bv: *BytesView) !Enum {
+    return try bv.readEnum(Enum, std.builtin.Endian.Big);
 }
 
 fn writeLengthPrefixed(
@@ -483,6 +524,14 @@ fn writeLenAndIntSlice(
 
 fn intTypeLen(comptime IntType: type) usize {
     return (@typeInfo(IntType).Int.bits + 7) / 8;
+}
+
+fn enumTypeLen(comptime EnumType: type) usize {
+    return intTypeLen(@typeInfo(EnumType).Enum.tag_type);
+}
+
+test "enumTypeLen" {
+    try testing.expectEqual(@as(usize, 2), enumTypeLen(ProtocolVersion));
 }
 
 fn writeIntSlice(
@@ -669,7 +718,7 @@ test "ClientHelloMsg.unmarshal" {
         fn run(data: []const u8, want: ClientHelloMsg) !void {
             _ = want;
             var got = try ClientHelloMsg.unmarshal(allocator, data);
-            defer got.deinit(allocator);
+            defer got.deinitForUnmarshal(allocator);
 
             std.log.debug("got={}", .{got});
         }
