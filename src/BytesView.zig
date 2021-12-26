@@ -97,6 +97,31 @@ pub fn readIntBig(self: *BytesView, comptime T: type) !T {
     return mem.readIntBig(T, &bytes);
 }
 
+pub fn readInt(self: *BytesView, comptime T: type, endian: std.builtin.Endian) !T {
+    const bytes = try self.readBytesNoEof((@typeInfo(T).Int.bits + 7) / 8);
+    return mem.readInt(T, &bytes, endian);
+}
+
+/// Reads an integer with the same size as the given enum's tag type. If the integer matches
+/// an enum tag, casts the integer to the enum tag and returns it. Otherwise, returns an error.
+/// TODO optimization taking advantage of most fields being in order
+pub fn readEnum(self: *BytesView, comptime Enum: type, endian: std.builtin.Endian) !Enum {
+    const E = error{
+        /// An integer was read, but it did not match any of the tags in the supplied enum.
+        InvalidValue,
+    };
+    const type_info = @typeInfo(Enum).Enum;
+    const tag = try self.readInt(type_info.tag_type, endian);
+
+    inline for (std.meta.fields(Enum)) |field| {
+        if (tag == field.value) {
+            return @field(Enum, field.name);
+        }
+    }
+
+    return E.InvalidValue;
+}
+
 /// `len` must be equal to or less than `self.restLen()` or panics.
 pub fn getBytes(self: *const BytesView, len: usize) []const u8 {
     return self.bytes[self.pos .. self.pos + len];
@@ -173,4 +198,21 @@ test "readIntBig" {
 test "reader.readIntBig" {
     var vw = BytesView.init("\x12\x34");
     try testing.expectEqual(@as(u16, 0x1234), try vw.reader().readIntBig(u16));
+}
+
+test "readEnum" {
+    const ProtocolVersion = enum(u16) {
+        v1_3 = 0x0304,
+        v1_2 = 0x0303,
+        v1_0 = 0x0301,
+    };
+    var vw = BytesView.init("\x03\x04\x03\x01");
+    try testing.expectEqual(
+        ProtocolVersion.v1_3,
+        try vw.readEnum(ProtocolVersion, std.builtin.Endian.Big),
+    );
+    try testing.expectEqual(
+        ProtocolVersion.v1_0,
+        try vw.readEnum(ProtocolVersion, std.builtin.Endian.Big),
+    );
 }

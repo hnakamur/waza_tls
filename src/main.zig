@@ -23,6 +23,7 @@ pub const writeDatetimeHeader = @import("datetime.zig").writeDatetimeHeader;
 const parser = @import("parser.zig");
 const lex = parser.lex;
 const ChunkedDecoder = @import("chunk_decoder.zig").ChunkedDecoder;
+const BytesView = @import("BytesView.zig");
 
 const dns = @import("dns.zig");
 const tls = @import("tls.zig");

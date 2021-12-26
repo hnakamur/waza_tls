@@ -45,6 +45,63 @@ const MsgType = enum(u8) {
 
 const random_length = 32;
 
+pub const HandshakeMsg = union(MsgType) {
+    HelloRequest: HelloRequestMsg,
+    ClientHello: ClientHelloMsg,
+    ServerHello: ServerHelloMsg,
+    NewSessionTicket: NewSessionTicketMsg,
+    EndOfEarlyData: EndOfEarlyDataMsg,
+    EncryptedExtensions: EncryptedExtensionsMsg,
+    Certificate: CertificateMsg,
+    ServerKeyExchange: ServerKeyExchangeMsg,
+    CertificateRequest: CertificateRequestMsg,
+    ServerHelloDone: ServerHelloDoneMsg,
+    CertificateVerify: CertificateVerifyMsg,
+    ClientKeyExchange: ClientKeyExchangeMsg,
+    Finished: FinishedMsg,
+    CertificateStatus: CertificateStatusMsg,
+    KeyUpdate: KeyUpdateMsg,
+    NextProtocol: NextProtocolMsg,
+    MessageHash: MessageHashMsg,
+
+    pub fn unmarshal(allocator: mem.Allocator, data: []const u8) !HandshakeMsg {
+        if (data.len < intTypeLen(u8) + intTypeLen(u24)) {
+            return error.EndOfStream;
+        }
+
+        var bv = BytesView.init(data);
+        const msg_type = @intToEnum(MsgType, try bv.readByte());
+        const msg_len = try bv.readIntBig(u24);
+        if (bv.restLen() < msg_len) {
+            return error.EndOfStream;
+        }
+
+        switch (msg_type) {
+            .ClientHello => HandshakeMsg{
+                .ClientHello = try ClientHelloMsg.unmarshal(allocator, data),
+            },
+            else => @panic("not implemented yet"),
+        }
+    }
+};
+
+const HelloRequestMsg = void;
+const ServerHelloMsg = void;
+const NewSessionTicketMsg = void;
+const EndOfEarlyDataMsg = void;
+const EncryptedExtensionsMsg = void;
+const CertificateMsg = void;
+const ServerKeyExchangeMsg = void;
+const CertificateRequestMsg = void;
+const ServerHelloDoneMsg = void;
+const CertificateVerifyMsg = void;
+const ClientKeyExchangeMsg = void;
+const FinishedMsg = void;
+const CertificateStatusMsg = void;
+const KeyUpdateMsg = void;
+const NextProtocolMsg = void;
+const MessageHashMsg = void;
+
 pub const ClientHelloMsg = struct {
     raw: ?[]const u8 = null,
     vers: ProtocolVersion = undefined,
@@ -77,6 +134,22 @@ pub const ClientHelloMsg = struct {
             allocator.free(raw);
             self.raw = null;
         }
+    }
+
+    fn unmarshal(allocator: mem.Allocator, data: []const u8) !ClientHelloMsg {
+        _ = allocator;
+        var bv = BytesView.init(data);
+        bv.advance(intTypeLen(u8) + intTypeLen(u24));
+        const vers = @intToEnum(ProtocolVersion, try bv.readIntBig(u16));
+        const random = try bv.sliceBytesNoEof(random_length);
+        const session_id = try sliceLenAndBytes(u8, &bv);
+
+        return ClientHelloMsg{
+            .raw = data[0..bv.pos],
+            .vers = vers,
+            .random = random,
+            .session_id = session_id,
+        };
     }
 
     pub fn marshal(self: *ClientHelloMsg, allocator: mem.Allocator) ![]const u8 {
@@ -334,6 +407,11 @@ const ExtensionType = enum(u16) {
     RenegotiationInfo = 0xff01,
 };
 
+fn sliceLenAndBytes(comptime LenType: type, bv: *BytesView) ![]const u8 {
+    const len = try bv.readIntBig(LenType);
+    return try bv.sliceBytesNoEof(len);
+}
+
 fn writeLengthPrefixed(
     comptime LenType: type,
     comptime Context: type,
@@ -432,7 +510,7 @@ fn toInt(comptime T: type, val: anytype) T {
 
 const testing = std.testing;
 
-test "ClientHelloMsg" {
+test "ClientHelloMsg.marshal" {
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -580,5 +658,40 @@ test "ClientHelloMsg" {
             "\x62\x69\x6e\x64\x65\x72\x31" ++ // "binder1"
             "\x07" ++ // u8 len
             "\x62\x69\x6e\x64\x65\x72\x32", // "binder2"
+    );
+}
+
+test "ClientHelloMsg.unmarshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(data: []const u8, want: ClientHelloMsg) !void {
+            _ = want;
+            var got = try ClientHelloMsg.unmarshal(allocator, data);
+            defer got.deinit(allocator);
+
+            std.log.debug("got={}", .{got});
+        }
+    };
+
+    try TestCase.run(
+        "\x01" ++ // ClientHello
+            "\x00\x00\x49" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00", // CompressionMethod.none
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+        },
     );
 }
