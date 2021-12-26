@@ -21,6 +21,9 @@ pub const ProtocolVersion = enum(u16) {
 pub const CipherSuite = enum(u16) {
     // TLS 1.3 cipher suites.
     TLS_AES_128_GCM_SHA256 = 0x1301,
+
+    // TLS signaling cipher suite values
+    scsvRenegotiation = 0x00ff,
 };
 
 const MsgType = enum(u8) {
@@ -64,21 +67,21 @@ pub const HandshakeMsg = union(MsgType) {
     NextProtocol: NextProtocolMsg,
     MessageHash: MessageHashMsg,
 
-    pub fn unmarshal(allocator: mem.Allocator, data: []const u8) !HandshakeMsg {
-        if (data.len < intTypeLen(u8) + intTypeLen(u24)) {
-            return error.EndOfStream;
+    pub fn deinitForUnmarshal(self: *HandshakeMsg, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .ClientHello => |*msg| msg.deinitForUnmarshal(allocator),
+            else => @panic("not implemented yet"),
         }
+    }
 
-        var bv = BytesView.init(data);
-        const msg_type = @intToEnum(MsgType, try bv.readByte());
+    pub fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !HandshakeMsg {
+        try bv.ensureLen(intTypeLen(u8) + intTypeLen(u24));
+        const msg_type = try readEnum(MsgType, bv);
         const msg_len = try bv.readIntBig(u24);
-        if (bv.restLen() < msg_len) {
-            return error.EndOfStream;
-        }
-
+        try bv.ensureLen(msg_len);
         switch (msg_type) {
-            .ClientHello => HandshakeMsg{
-                .ClientHello = try ClientHelloMsg.unmarshal(allocator, data),
+            .ClientHello => return HandshakeMsg{
+                .ClientHello = try ClientHelloMsg.unmarshal(allocator, bv, msg_len),
             },
             else => @panic("not implemented yet"),
         }
@@ -141,23 +144,34 @@ pub const ClientHelloMsg = struct {
         allocator.free(self.compression_methods);
     }
 
-    fn unmarshal(allocator: mem.Allocator, data: []const u8) !ClientHelloMsg {
-        var bv = BytesView.init(data);
-        bv.advance(intTypeLen(u8) + intTypeLen(u24));
-        const vers = @intToEnum(ProtocolVersion, try bv.readIntBig(u16));
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !ClientHelloMsg {
+        const msg_start_pos = bv.pos;
+        const raw = bv.getBytes(msg_len);
+        const vers = try readEnum(ProtocolVersion, bv);
         const random = try bv.sliceBytesNoEof(random_length);
-        const session_id = try readLenAndSliceBytes(u8, &bv);
-        const cipher_suites = try readLenAndEnumSlice(u16, CipherSuite, allocator, &bv);
-        const compression_methods = try readLenAndEnumSlice(u8, CompressionMethod, allocator, &bv);
+        const session_id = try readLenAndSliceBytes(u8, bv);
 
-        return ClientHelloMsg{
-            .raw = data[0..bv.pos],
+        const cipher_suites = try readLenAndEnumSlice(u16, CipherSuite, allocator, bv);
+        const idx = mem.indexOfScalar(CipherSuite, cipher_suites, .scsvRenegotiation);
+        const secure_renegotiation_supported = idx != null;
+
+        const compression_methods = try readLenAndEnumSlice(u8, CompressionMethod, allocator, bv);
+
+        var msg = ClientHelloMsg{
+            .raw = raw,
             .vers = vers,
             .random = random,
             .session_id = session_id,
             .cipher_suites = cipher_suites,
+            .secure_renegotiation_supported = secure_renegotiation_supported,
             .compression_methods = compression_methods,
         };
+        if (bv.pos - msg_start_pos == msg_len) {
+            return msg;
+        }
+
+        try msg.unmarshalExtensions(allocator, bv);
+        return msg;
     }
 
     pub fn marshal(self: *ClientHelloMsg, allocator: mem.Allocator) ![]const u8 {
@@ -172,6 +186,84 @@ pub const ClientHelloMsg = struct {
         assert(raw.ptr == buf.buf.ptr);
         self.raw = raw;
         return raw;
+    }
+
+    fn unmarshalExtensions(self: *ClientHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
+        _ = self;
+        _ = allocator;
+        const extensions_len = try bv.readIntBig(u16);
+        try bv.ensureLen(extensions_len);
+        const extensions_end_pos = bv.pos + extensions_len;
+        while (bv.pos < extensions_end_pos) {
+            const ext_type = try readEnum(ExtensionType, bv);
+            const ext_len = try bv.readIntBig(u16);
+            try bv.ensureLen(ext_len);
+            switch (ext_type) {
+                .ServerName => {
+                    // RFC 6066, Section 3
+                    const server_names_len = try bv.readIntBig(u16);
+                    try bv.ensureLen(server_names_len);
+                    const server_names_end_pos = bv.pos + server_names_len;
+                    while (bv.pos < server_names_end_pos) {
+                        const name_type = try bv.readByte();
+                        const server_name = try readLenAndSliceBytes(u16, bv);
+                        if (name_type != 0) {
+                            continue;
+                        }
+                        if (self.server_name) |_| {
+                            // Multiple names of the same name_type are prohibited.
+                            return error.MultipleSameNameTypeServerName;
+                        }
+                        // An SNI value may not include a trailing dot.
+                        if (mem.endsWith(u8, server_name, ".")) {
+                            return error.SniWithTrailingDot;
+                        }
+                        self.server_name = server_name;
+                    }
+                },
+                .StatusRequest => {
+                    // RFC 4366, Section 3.6
+                    const status_type = try readEnum(CertificateStatusType, bv);
+                    // ignore responder_id_list and request_extensions
+                    bv.advance(intTypeLen(u16) * 2);
+                    self.ocsp_stapling = status_type == .ocsp;
+                },
+                .SupportedCurves => {
+                    // RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
+                    self.supported_curves = try readLenAndEnumSlice(u16, CurveId, allocator, bv);
+                },
+                .SupportedPoints => {
+                    const supported_points = try readLenAndEnumSlice(
+                        u8,
+                        EcPointFormat,
+                        allocator,
+                        bv,
+                    );
+                    if (supported_points.len == 0) {
+                        return error.EmptySupportedPoints;
+                    }
+                    self.supported_points = supported_points;
+                },
+                .SessionTicket => {
+                    self.ticket_supported = true;
+                    self.session_ticket = try bv.sliceBytesNoEof(ext_len);
+                },
+                // .SignatureAlgorithms => {},
+                // .Alpn => {},
+                // .Sct => {},
+                // .PreSharedKey => {},
+                // .EarlyData => {},
+                // .SupportedVersions => {},
+                // .Cookie => {},
+                // .PskModes => {},
+                // .CertificateAuthorities => {},
+                // .SignatureAlgorithmsCert => {},
+                // .KeyShare => {},
+                // .RenegotiationInfo => {},
+
+                else => bv.advance(ext_len),
+            }
+        }
     }
 
     fn writeTo(self: *const ClientHelloMsg, writer: anytype) !void {
@@ -198,8 +290,7 @@ pub const ClientHelloMsg = struct {
         if (self.server_name) |server_name| {
             // RFC 6066, Section 3
             try writeInt(u16, ExtensionType.ServerName, writer);
-            const len3 = intTypeLen(u8) + intTypeLen(u16) + server_name.len;
-            const len2 = intTypeLen(u16) + len3;
+            const len2 = intTypeLen(u8) + intTypeLen(u16) + server_name.len;
             const len1 = intTypeLen(u16) + len2;
             try writeInt(u16, len1, writer);
             try writeInt(u16, len2, writer);
@@ -338,7 +429,7 @@ pub const ClientHelloMsg = struct {
             for (self.psk_binders) |binder| {
                 len2b += intTypeLen(u8) + binder.len;
             }
-            const len1 = intTypeLen(u16) + len2i + len2b;
+            const len1 = intTypeLen(u16) * 2 + len2i + len2b;
             try writeInt(u16, len1, writer);
             try writeInt(u16, len2i, writer);
             for (self.psk_identities) |*psk| {
@@ -351,6 +442,11 @@ pub const ClientHelloMsg = struct {
             }
         }
     }
+};
+
+const CertificateStatusType = enum(u8) {
+    ocsp = 1,
+    _,
 };
 
 // SignatureScheme identifies a signature algorithm supported by TLS. See
@@ -450,7 +546,7 @@ test "readLenAndEnumSlice" {
 }
 
 fn readEnum(comptime Enum: type, bv: *BytesView) !Enum {
-    return try bv.readEnum(Enum, std.builtin.Endian.Big);
+    return try bv.readEnum(Enum, .Big);
 }
 
 fn writeLengthPrefixed(
@@ -633,8 +729,8 @@ test "ClientHelloMsg.marshal" {
             "\x00" ++ // CompressionMethod.none
             "\x00\xc3" ++ // u16 extensions len
             "\x00\x00" ++ // ExtensionType.ServerName
-            "\x00\x12" ++ // u16 len
             "\x00\x10" ++ // u16 len
+            "\x00\x0e" ++ // u16 len
             "\x00" ++ // name_type = host_name
             "\x00\x0b" ++ // u16 len
             "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
@@ -697,7 +793,7 @@ test "ClientHelloMsg.marshal" {
             "\x00" ++ // PskMode.plain
             "\x01" ++ // PskMode.dhe
             "\x00\x29" ++ // ExtensionType.PreSharedKey
-            "\x00\x1f" ++ // u16 len
+            "\x00\x21" ++ // u16 len
             "\x00\x0d" ++ // u16 len
             "\x00\x07" ++ // u16 len
             "\x6d\x79\x20\x69\x64\x20\x31" ++ // label "my id 1"
@@ -710,17 +806,28 @@ test "ClientHelloMsg.marshal" {
     );
 }
 
+fn expectPrintEqual(allocator: mem.Allocator, comptime template: []const u8, expected: anytype, actual: @TypeOf(expected)) !void {
+    const expected_str = try std.fmt.allocPrint(allocator, template, .{expected});
+    defer allocator.free(expected_str);
+    const actual_str = try std.fmt.allocPrint(allocator, template, .{actual});
+    defer allocator.free(actual_str);
+    try testing.expectEqualStrings(expected_str, actual_str);
+}
+
 test "ClientHelloMsg.unmarshal" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
     const TestCase = struct {
         fn run(data: []const u8, want: ClientHelloMsg) !void {
-            _ = want;
-            var got = try ClientHelloMsg.unmarshal(allocator, data);
-            defer got.deinitForUnmarshal(allocator);
+            var bv = BytesView.init(data);
+            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            defer msg.deinitForUnmarshal(allocator);
 
-            std.log.debug("got={}", .{got});
+            var got = msg.ClientHello;
+            got.raw = null;
+
+            try expectPrintEqual(allocator, "{}", got, want);
         }
     };
 
@@ -741,6 +848,121 @@ test "ClientHelloMsg.unmarshal" {
             .session_id = &[_]u8{0} ** 32,
             .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
             .compression_methods = &[_]CompressionMethod{.none},
+        },
+    );
+
+    try TestCase.run(
+        "\x01" ++ // ClientHello
+            "\x00\x01\x0e" ++ // u24 len
+            "\x03\x04" ++ // TLS v1.3
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte random
+            "\x20" ++ // u8 len 32
+            "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
+            "\x00\x02" ++ // u16 len 2
+            "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+            "\x01" ++ // u8 len 1
+            "\x00" ++ // CompressionMethod.none
+            "\x00\xc3" ++ // u16 extensions len
+            "\x00\x00" ++ // ExtensionType.ServerName
+            "\x00\x10" ++ // u16 len
+            "\x00\x0e" ++ // u16 len
+            "\x00" ++ // name_type = host_name
+            "\x00\x0b" ++ // u16 len
+            "\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d" ++ // server_name
+            "\x00\x05" ++ // ExtensionType.StatusRequest
+            "\x00\x05" ++ // u16 len
+            "\x01" ++ // status_type = ocsp
+            "\x00\x00" ++ // empty responder_id_list
+            "\x00\x00" ++ // empty request_extensions
+            "\x00\x0a" ++ // ExtensionType.SupportedCurves
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0b" ++ // ExtensionType.SupportedPoints
+            "\x00\x02" ++ // u16 len
+            "\x01" ++ // u8 len
+            "\x00" ++ // EcPointFormat.uncompressed
+            "\x00\x23" ++ // ExtensionType.SessionTicket
+            "\x00\x04" ++ // u16 len
+            "\x12\x34\x56\x78" ++ // session_ticket
+            "\x00\x0d" ++ // ExtensionType.SignatureAlgorithms
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\x00\x32" ++ // ExtensionType.SignatureAlgorithmsCert
+            "\x00\x04" ++ // u16 len
+            "\x00\x02" ++ // u16 len
+            "\x04\x01" ++ // SignatureScheme.Pkcs1WithSha256
+            "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+            "\x00\x01" ++ // u16 len
+            "\x00" ++ // u8 len
+            "\x00\x10" ++ // ExtensionType.Alpn
+            "\x00\x12" ++ // u16 len
+            "\x00\x10" ++ // u16 len
+            "\x08" ++ // u8 len
+            "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ //"http/1.1"
+            "\x06" ++ // u8 len
+            "\x73\x70\x64\x79\x2f\x31" ++ // "spdy/1"
+            "\x00\x12" ++ // ExtensionType.Sct
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2b" ++ // ExtensionType.SupportedVersions
+            "\x00\x05" ++ // u16 len
+            "\x04" ++ // u8 len
+            "\x03\x04" ++ // ProtocolVersion.v1_3
+            "\x03\x03" ++ // ProtocolVersion.v1_2
+            "\x00\x2c" ++ // ExtensionType.Cookie
+            "\x00\x0b" ++ // u16 len
+            "\x00\x09" ++ // u16 len
+            "\x6d\x79\x20\x63\x6f\x6f\x6b\x69\x65" ++ // "my cookie"
+            "\x00\x33" ++ // ExtensionType.KeyShare
+            "\x00\x15" ++ // u16 len
+            "\x00\x13" ++ // u16 len
+            "\x00\x1d" ++ // CurveId.x25519
+            "\x00\x0f" ++ // u16 len
+            "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65" ++ // "public key here"
+            "\x00\x2a" ++ // ExtensionType.EarlyData
+            "\x00\x00" ++ // empty extension_data
+            "\x00\x2d" ++ // ExtensionType.PskModes
+            "\x00\x03" ++ // u16 len
+            "\x02" ++ // u8 len
+            "\x00" ++ // PskMode.plain
+            "\x01" ++ // PskMode.dhe
+            "\x00\x29" ++ // ExtensionType.PreSharedKey
+            "\x00\x21" ++ // u16 len
+            "\x00\x0d" ++ // u16 len
+            "\x00\x07" ++ // u16 len
+            "\x6d\x79\x20\x69\x64\x20\x31" ++ // label "my id 1"
+            "\x77\x88\x99\xaa" ++ // obfuscated_ticket_age 0x778899aa
+            "\x00\x10" ++ // u16 len
+            "\x07" ++ // u8 len
+            "\x62\x69\x6e\x64\x65\x72\x31" ++ // "binder1"
+            "\x07" ++ // u8 len
+            "\x62\x69\x6e\x64\x65\x72\x32", // "binder2"
+        ClientHelloMsg{
+            .vers = .v1_3,
+            .random = &[_]u8{0} ** 32,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suites = &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            .compression_methods = &[_]CompressionMethod{.none},
+            .server_name = "example.com",
+            .ocsp_stapling = true,
+            .supported_curves = &[_]CurveId{.x25519},
+            .supported_points = &[_]EcPointFormat{.uncompressed},
+            .ticket_supported = true,
+            .session_ticket = "\x12\x34\x56\x78",
+            .supported_signature_algorithms = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .supported_signature_algorithms_cert = &[_]SignatureScheme{.Pkcs1WithSha256},
+            .secure_renegotiation_supported = true,
+            .secure_renegotiation = "",
+            .alpn_protocols = &[_][]const u8{ "http/1.1", "spdy/1" },
+            .scts = true,
+            .supported_versions = &[_]ProtocolVersion{ .v1_3, .v1_2 },
+            .cookie = "my cookie",
+            .key_shares = &[_]KeyShare{.{ .group = .x25519, .data = "public key here" }},
+            .early_data = true,
+            .psk_modes = &[_]PskMode{ .plain, .dhe },
+            .psk_identities = &[_]PskIdentity{.{ .label = "my id 1", .obfuscated_ticket_age = 0x778899aa }},
+            .psk_binders = &[_][]const u8{ "binder1", "binder2" },
         },
     );
 }

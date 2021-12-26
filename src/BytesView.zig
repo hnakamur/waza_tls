@@ -41,6 +41,10 @@ pub fn restLen(self: *const BytesView) usize {
     return self.bytes.len - self.pos;
 }
 
+pub fn setRestLen(self: *BytesView, len: usize) void {
+    self.bytes.len = self.pos + len;
+}
+
 pub fn ensureLen(self: *const BytesView, len: usize) Error!void {
     if (len > self.restLen()) {
         return error.EndOfStream;
@@ -106,20 +110,24 @@ pub fn readInt(self: *BytesView, comptime T: type, endian: std.builtin.Endian) !
 /// an enum tag, casts the integer to the enum tag and returns it. Otherwise, returns an error.
 /// TODO optimization taking advantage of most fields being in order
 pub fn readEnum(self: *BytesView, comptime Enum: type, endian: std.builtin.Endian) !Enum {
-    const E = error{
-        /// An integer was read, but it did not match any of the tags in the supplied enum.
-        InvalidValue,
-    };
     const type_info = @typeInfo(Enum).Enum;
     const tag = try self.readInt(type_info.tag_type, endian);
 
-    inline for (std.meta.fields(Enum)) |field| {
-        if (tag == field.value) {
-            return @field(Enum, field.name);
-        }
-    }
+    if (type_info.is_exhaustive) {
+        const E = error{
+            /// An integer was read, but it did not match any of the tags in the supplied enum.
+            InvalidValue,
+        };
 
-    return E.InvalidValue;
+        inline for (std.meta.fields(Enum)) |field| {
+            if (tag == field.value) {
+                return @field(Enum, field.name);
+            }
+        }
+        return E.InvalidValue;
+    } else {
+        return @intToEnum(Enum, tag);
+    }
 }
 
 /// `len` must be equal to or less than `self.restLen()` or panics.
@@ -139,8 +147,9 @@ pub fn isBytes(self: *const BytesView, slice: []const u8) !bool {
 }
 
 const testing = std.testing;
+const assert = std.debug.assert;
 
-test "bytes operations" {
+test "BytesView bytes operations" {
     var vw = BytesView.init("zig is great");
     try testing.expectEqual(@as(?u8, 'z'), vw.peekByte());
     vw.advance(1);
@@ -157,7 +166,7 @@ test "bytes operations" {
     try testing.expectEqual(@as(?u8, null), vw.peekByte());
 }
 
-test "readNoEof" {
+test "BytesView.readNoEof" {
     var vw = BytesView.init("zig is great");
     var buf = [_]u8{0} ** 7;
     try vw.readNoEof(&buf);
@@ -168,7 +177,7 @@ test "readNoEof" {
     try testing.expectEqualStrings("great", buf[0..5]);
 }
 
-test "read" {
+test "BytesView.read" {
     var vw = BytesView.init("zig is great");
     var buf = [_]u8{0} ** 7;
     try testing.expectEqual(@as(usize, 7), try vw.read(&buf));
@@ -177,12 +186,12 @@ test "read" {
     try testing.expectEqualStrings("great", buf[0..5]);
 }
 
-test "readByte" {
+test "BytesView.readByte" {
     var vw = BytesView.init("\x12\x34");
     try testing.expectEqual(@as(u8, 0x12), try vw.readByte());
 }
 
-test "isBytes" {
+test "BytesView.isBytes" {
     var vw = BytesView.init("zig is great");
     try testing.expect(try vw.isBytes("zig"));
     try testing.expect(!try vw.isBytes("zag"));
@@ -190,29 +199,41 @@ test "isBytes" {
     try testing.expectError(error.EndOfStream, vw.isBytes("zig is great!"));
 }
 
-test "readIntBig" {
+test "BytesView.readIntBig" {
     var vw = BytesView.init("\x12\x34");
     try testing.expectEqual(@as(u16, 0x1234), try vw.readIntBig(u16));
 }
 
-test "reader.readIntBig" {
+test "BytesView.reader.readIntBig" {
     var vw = BytesView.init("\x12\x34");
     try testing.expectEqual(@as(u16, 0x1234), try vw.reader().readIntBig(u16));
 }
 
-test "readEnum" {
+test "BytesView.readEnum exhaustive" {
     const ProtocolVersion = enum(u16) {
         v1_3 = 0x0304,
         v1_2 = 0x0303,
         v1_0 = 0x0301,
     };
-    var vw = BytesView.init("\x03\x04\x03\x01");
+    assert(@typeInfo(ProtocolVersion).Enum.is_exhaustive);
+
+    var bv = BytesView.init("\x03\x04\x03\x01\x00\x00");
+    try testing.expectEqual(ProtocolVersion.v1_3, try bv.readEnum(ProtocolVersion, .Big));
+    try testing.expectEqual(ProtocolVersion.v1_0, try bv.readEnum(ProtocolVersion, .Big));
+    try testing.expectError(error.InvalidValue, bv.readEnum(ProtocolVersion, .Big));
+}
+
+test "BytesView.readEnum non-exhaustive" {
+    const NonExhaustiveEnum = enum(u8) {
+        a = 1,
+        _,
+    };
+    assert(!@typeInfo(NonExhaustiveEnum).Enum.is_exhaustive);
+
+    var bv = BytesView.init("\x01\x02");
+    try testing.expectEqual(NonExhaustiveEnum.a, try bv.readEnum(NonExhaustiveEnum, .Big));
     try testing.expectEqual(
-        ProtocolVersion.v1_3,
-        try vw.readEnum(ProtocolVersion, std.builtin.Endian.Big),
-    );
-    try testing.expectEqual(
-        ProtocolVersion.v1_0,
-        try vw.readEnum(ProtocolVersion, std.builtin.Endian.Big),
+        @intToEnum(NonExhaustiveEnum, 2),
+        try bv.readEnum(NonExhaustiveEnum, .Big),
     );
 }
