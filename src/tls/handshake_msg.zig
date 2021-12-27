@@ -75,6 +75,7 @@ pub const HandshakeMsg = union(MsgType) {
             .Certificate => |*msg| msg.deinit(allocator),
             .ServerKeyExchange => |*msg| msg.deinit(allocator),
             .ServerHelloDone => |*msg| msg.deinit(allocator),
+            .ClientKeyExchange => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
     }
@@ -106,6 +107,9 @@ pub const HandshakeMsg = union(MsgType) {
             .ServerHelloDone => return HandshakeMsg{
                 .ServerHelloDone = try ServerHelloDoneMsg.unmarshal(allocator, msg_data),
             },
+            .ClientKeyExchange => return HandshakeMsg{
+                .ClientKeyExchange = try ClientKeyExchangeMsg.unmarshal(allocator, msg_data),
+            },
             else => @panic("not implemented yet"),
         }
     }
@@ -119,7 +123,6 @@ const EndOfEarlyDataMsg = void;
 const EncryptedExtensionsMsg = void;
 const CertificateRequestMsg = void;
 const CertificateVerifyMsg = void;
-const ClientKeyExchangeMsg = void;
 const FinishedMsg = void;
 const CertificateStatusMsg = void;
 const KeyUpdateMsg = void;
@@ -860,6 +863,45 @@ const ServerHelloDoneMsg = struct {
         var writer = fbs.writer();
         try writeInt(u8, MsgType.ServerHelloDone, writer);
         try writeInt(u24, 0, writer);
+        self.raw = raw;
+        return raw;
+    }
+};
+
+const ClientKeyExchangeMsg = struct {
+    raw: ?[]const u8 = null,
+    ciphertext: []const u8 = undefined,
+
+    pub fn deinit(self: *ClientKeyExchangeMsg, allocator: mem.Allocator) void {
+        freeOptionalField(self, allocator, "raw");
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ClientKeyExchangeMsg {
+        const raw = try allocator.dupe(u8, msg_data);
+        var bv = BytesView.init(raw);
+        bv.skip(enumTypeLen(MsgType));
+        const ciphertext = try readString(u24, &bv);
+
+        return ClientKeyExchangeMsg{
+            .raw = raw,
+            .ciphertext = ciphertext,
+        };
+    }
+
+    pub fn marshal(self: *ClientKeyExchangeMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        const body_len = self.ciphertext.len;
+        const msg_len = handshake_msg_header_len + body_len;
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.ClientKeyExchange, writer);
+        try writeLenAndBytes(u24, self.ciphertext, writer);
         self.raw = raw;
         return raw;
     }
@@ -1844,3 +1886,62 @@ fn testCreateServerHelloDoneMsg() ServerHelloDoneMsg {
 
 const test_marshaled_server_hello_done_msg = "\x0e" ++ // MsgType.ServerHelloDone
     "\x00\x00\x00"; // u24 msg_len = 0
+
+test "ClientKeyExchangeMsg.marshal" {
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(msg: *ClientKeyExchangeMsg, want: []const u8) !void {
+            const got = try msg.marshal(allocator);
+            if (!mem.eql(u8, got, want)) {
+                std.log.warn("\n got={},\nwant={}\n", .{
+                    fmtx.fmtSliceHexEscapeLower(got),
+                    fmtx.fmtSliceHexEscapeLower(want),
+                });
+            }
+            try testing.expectEqualSlices(u8, want, got);
+            const got2 = try msg.marshal(allocator);
+            try testing.expectEqual(got, got2);
+        }
+    };
+
+    {
+        var msg = testCreateClientKeyExchangeMsg();
+        defer msg.deinit(allocator);
+        try TestCase.run(&msg, test_marshaled_client_key_exchange_msg);
+    }
+}
+
+test "ClientKeyExchangeMsg.unmarshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(data: []const u8, want: *ClientKeyExchangeMsg) !void {
+            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            defer msg.deinit(allocator);
+
+            var got = msg.ClientKeyExchange;
+            try testing.expectEqualSlices(u8, data, got.raw.?);
+            got.raw = null;
+
+            try testingExpectPrintEqual(allocator, "{}", want, &got);
+        }
+    };
+
+    {
+        var msg = testCreateClientKeyExchangeMsg();
+        defer msg.deinit(allocator);
+        try TestCase.run(test_marshaled_client_key_exchange_msg, &msg);
+    }
+}
+
+fn testCreateClientKeyExchangeMsg() ClientKeyExchangeMsg {
+    return ClientKeyExchangeMsg{
+        .ciphertext = "cipher text",
+    };
+}
+
+const test_marshaled_client_key_exchange_msg = "\x10" ++ // MsgType.ClientKeyExchange
+    "\x00\x00\x0b" ++ // u24 msg_len
+    "\x63\x69\x70\x68\x65\x72\x20\x74\x65\x78\x74"; // "cipher text"
