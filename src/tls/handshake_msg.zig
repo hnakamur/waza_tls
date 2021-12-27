@@ -211,11 +211,12 @@ pub const ClientHelloMsg = struct {
             return raw;
         }
 
-        var buf = fifo.LinearFifo(u8, .Dynamic).init(allocator);
-        var writer = buf.writer();
+        const msg_len: usize = try countLength(*const ClientHelloMsg, writeTo, self);
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
         try self.writeTo(writer);
-        const raw = buf.readableSlice(0);
-        assert(raw.ptr == buf.buf.ptr);
         self.raw = raw;
         return raw;
     }
@@ -562,11 +563,12 @@ pub const ServerHelloMsg = struct {
             return raw;
         }
 
-        var buf = fifo.LinearFifo(u8, .Dynamic).init(allocator);
-        var writer = buf.writer();
+        const msg_len: usize = try countLength(*const ServerHelloMsg, writeTo, self);
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
         try self.writeTo(writer);
-        const raw = buf.readableSlice(0);
-        assert(raw.ptr == buf.buf.ptr);
         self.raw = raw;
         return raw;
     }
