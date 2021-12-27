@@ -89,7 +89,6 @@ pub const HandshakeMsg = union(MsgType) {
 };
 
 const HelloRequestMsg = void;
-const ServerHelloMsg = void;
 const NewSessionTicketMsg = void;
 const EndOfEarlyDataMsg = void;
 const EncryptedExtensionsMsg = void;
@@ -324,10 +323,10 @@ pub const ClientHelloMsg = struct {
 
     fn writeTo(self: *const ClientHelloMsg, writer: anytype) !void {
         try writeInt(u8, MsgType.ClientHello, writer);
-        try writeLengthPrefixed(u24, *const ClientHelloMsg, writeMsgWithoutLen, self, writer);
+        try writeLengthPrefixed(u24, *const ClientHelloMsg, writeBody, self, writer);
     }
 
-    fn writeMsgWithoutLen(self: *const ClientHelloMsg, writer: anytype) !void {
+    fn writeBody(self: *const ClientHelloMsg, writer: anytype) !void {
         try writeInt(u16, self.vers, writer);
         assert(self.random.len == random_length);
         try writeBytes(self.random, writer);
@@ -472,6 +471,142 @@ pub const ClientHelloMsg = struct {
                     try writeLenAndBytes(u8, binder, writer);
                 }
             }
+        }
+    }
+};
+
+pub const ServerHelloMsg = struct {
+    raw: ?[]const u8 = null,
+    vers: ProtocolVersion = undefined,
+    random: []const u8 = undefined,
+    session_id: []const u8 = undefined,
+    cipher_suite: CipherSuite,
+    compression_method: CompressionMethod,
+    ocsp_stapling: bool = undefined,
+    ticket_supported: bool = false,
+    secure_renegotiation_supported: bool = false,
+    secure_renegotiation: []const u8 = "",
+    alpn_protocol: ?[]const u8 = null,
+    scts: ?[]const []const u8 = null,
+    supported_version: ?ProtocolVersion = null,
+    server_share: ?KeyShare = null,
+    selected_identity: ?u16 = null,
+    supported_points: ?[]const EcPointFormat = null,
+
+    // HelloRetryRequest extensions
+    cookie: ?[]const u8 = null,
+    selected_group: ?CurveId = null,
+
+    pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
+        freeOptionalField(self, allocator, "supported_points");
+        freeOptionalField(self, allocator, "scts");
+        freeOptionalField(self, allocator, "raw");
+    }
+
+    pub fn marshal(self: *ServerHelloMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        var buf = fifo.LinearFifo(u8, .Dynamic).init(allocator);
+        var writer = buf.writer();
+        try self.writeTo(writer);
+        const raw = buf.readableSlice(0);
+        assert(raw.ptr == buf.buf.ptr);
+        self.raw = raw;
+        return raw;
+    }
+
+    fn writeTo(self: *const ServerHelloMsg, writer: anytype) !void {
+        try writeInt(u8, MsgType.ServerHello, writer);
+        try writeLengthPrefixed(u24, *const ServerHelloMsg, writeBody, self, writer);
+    }
+
+    fn writeBody(self: *const ServerHelloMsg, writer: anytype) !void {
+        try writeInt(u16, self.vers, writer);
+        assert(self.random.len == random_length);
+        try writeBytes(self.random, writer);
+        try writeLenAndBytes(u8, self.session_id, writer);
+        try writeInt(u16, self.cipher_suite, writer);
+        try writeInt(u8, self.compression_method, writer);
+
+        const ext_len: usize = try countLength(*const ServerHelloMsg, writeExtensions, self);
+        if (ext_len > 0) {
+            try writeInt(u16, ext_len, writer);
+            try self.writeExtensions(writer);
+        }
+    }
+
+    fn writeExtensions(self: *const ServerHelloMsg, writer: anytype) !void {
+        if (self.ocsp_stapling) {
+            try writeInt(u16, ExtensionType.StatusRequest, writer);
+            const ext_len = 0;
+            try writeInt(u16, ext_len, writer); // empty extension_data
+        }
+        if (self.ticket_supported) {
+            try writeInt(u16, ExtensionType.SessionTicket, writer);
+            const ext_len = 0;
+            try writeInt(u16, ext_len, writer); // empty extension_data
+        }
+        if (self.secure_renegotiation_supported) {
+            try writeInt(u16, ExtensionType.RenegotiationInfo, writer);
+            try writeLenLenAndBytes(u16, u8, self.secure_renegotiation, writer);
+        }
+        if (self.alpn_protocol) |protocol| {
+            try writeInt(u16, ExtensionType.Alpn, writer);
+            const ext_len = intTypeLen(u16) + intTypeLen(u8) + protocol.len;
+            try writeInt(u16, ext_len, writer);
+            try writeLenLenAndBytes(u16, u8, protocol, writer);
+        }
+        if (self.scts) |scts| {
+            try writeInt(u16, ExtensionType.Sct, writer);
+            var scts_len: usize = 0;
+            for (scts) |sct| {
+                scts_len += intTypeLen(u16) + sct.len;
+            }
+            const ext_len = intTypeLen(u16) + scts_len;
+            try writeInt(u16, ext_len, writer);
+            try writeInt(u16, scts_len, writer);
+            for (scts) |sct| {
+                try writeLenAndBytes(u16, sct, writer);
+            }
+        }
+        if (self.supported_version) |version| {
+            try writeInt(u16, ExtensionType.SupportedVersions, writer);
+            const ext_len = intTypeLen(u16);
+            try writeInt(u16, ext_len, writer);
+            try writeInt(u16, version, writer);
+        }
+        if (self.server_share) |key_share| {
+            try writeInt(u16, ExtensionType.KeyShare, writer);
+            const ext_len = intTypeLen(u16) * 2 + key_share.data.len;
+            try writeInt(u16, ext_len, writer);
+            try writeInt(u16, key_share.group, writer);
+            try writeLenAndBytes(u16, key_share.data, writer);
+        }
+        if (self.selected_identity) |selected_identity| {
+            try writeInt(u16, ExtensionType.PreSharedKey, writer);
+            const ext_len = intTypeLen(u16);
+            try writeInt(u16, ext_len, writer);
+            try writeInt(u16, selected_identity, writer);
+        }
+        if (self.cookie) |cookie| {
+            try writeInt(u16, ExtensionType.Cookie, writer);
+            const ext_len = intTypeLen(u16) + cookie.len;
+            try writeInt(u16, ext_len, writer);
+            try writeLenAndBytes(u16, cookie, writer);
+        }
+        if (self.selected_group) |curve| {
+            try writeInt(u16, ExtensionType.KeyShare, writer);
+            const ext_len = intTypeLen(u16);
+            try writeInt(u16, ext_len, writer);
+            try writeInt(u16, curve, writer);
+        }
+        if (self.supported_points) |points| {
+            try writeInt(u16, ExtensionType.SupportedPoints, writer);
+            const ext_len = intTypeLen(u8) + points.len;
+            try writeInt(u16, ext_len, writer);
+            try writeLenAndIntSlice(u8, u8, EcPointFormat, points, writer);
         }
     }
 };
@@ -869,7 +1004,12 @@ test "ClientHelloMsg.marshal" {
     }
 }
 
-fn testingExpectPrintEqual(allocator: mem.Allocator, comptime template: []const u8, expected: anytype, actual: @TypeOf(expected)) !void {
+fn testingExpectPrintEqual(
+    allocator: mem.Allocator,
+    comptime template: []const u8,
+    expected: anytype,
+    actual: @TypeOf(expected),
+) !void {
     const expected_str = try std.fmt.allocPrint(allocator, template, .{expected});
     defer allocator.free(expected_str);
     const actual_str = try std.fmt.allocPrint(allocator, template, .{actual});
@@ -1110,3 +1250,131 @@ const test_marshaled_client_hello_msg_with_extensions = "\x01" ++ // ClientHello
     "\x62\x69\x6e\x64\x65\x72\x31" ++ // "binder1"
     "\x07" ++ // u8 len
     "\x62\x69\x6e\x64\x65\x72\x32"; // "binder2"
+
+const fmtx = @import("../fmtx.zig");
+
+test "ServerHelloMsg.marshal" {
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(msg: *ServerHelloMsg, want: []const u8) !void {
+            const got = try msg.marshal(allocator);
+            if (!mem.eql(u8, got, want)) {
+                std.log.warn("\n got={},\nwant={}\n", .{
+                    fmtx.fmtSliceHexEscapeLower(got),
+                    fmtx.fmtSliceHexEscapeLower(want),
+                });
+            }
+            try testing.expectEqualSlices(u8, want, got);
+            const got2 = try msg.marshal(allocator);
+            try testing.expectEqual(got, got2);
+        }
+    };
+
+    {
+        var msg = testCreateServerHelloMsg();
+        defer msg.deinit(allocator);
+        try TestCase.run(&msg, test_marshaled_server_hello_msg);
+    }
+
+    {
+        var msg = try testCreateServerHelloMsgWithExtensions(allocator);
+        defer msg.deinit(allocator);
+        try TestCase.run(&msg, test_marshaled_server_hello_msg_with_extensions);
+    }
+}
+
+fn testCreateServerHelloMsg() ServerHelloMsg {
+    return ServerHelloMsg{
+        .vers = .v1_3,
+        .random = &[_]u8{0} ** 32,
+        .session_id = &[_]u8{0} ** 32,
+        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .compression_method = .none,
+        .ocsp_stapling = false,
+    };
+}
+
+const test_marshaled_server_hello_msg = "\x02" ++ // ServerHello
+    "\x00\x00\x46" ++ // u24 len
+    "\x03\x04" ++ // TLS v1.3
+    "\x00" ** 32 ++ // 32 byte random
+    "\x20" ++ // u8 len 32
+    "\x00" ** 32 ++ // 32 byte session id
+    "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+    "\x00"; // CompressionMethod.none
+
+fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHelloMsg {
+    const scts = try allocator.dupe(
+        []const u8,
+        &[_][]const u8{ "sct1", "sct2" },
+    );
+    errdefer allocator.free(scts);
+    const supported_points = try allocator.dupe(
+        EcPointFormat,
+        &[_]EcPointFormat{.uncompressed},
+    );
+    errdefer allocator.free(supported_points);
+    return ServerHelloMsg{
+        .vers = .v1_3,
+        .random = &[_]u8{0} ** 32,
+        .session_id = &[_]u8{0} ** 32,
+        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .compression_method = .none,
+        .ocsp_stapling = true,
+        .ticket_supported = true,
+        .secure_renegotiation_supported = true,
+        .secure_renegotiation = "renegoation",
+        .alpn_protocol = "http/1.1",
+        .scts = scts,
+        .supported_version = .v1_3,
+        .server_share = .{ .group = .x25519, .data = "public key here" },
+        .selected_identity = 0x4321,
+        .supported_points = supported_points,
+    };
+}
+
+const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
+    "\x00\x00\xaa" ++ // u24 len
+    "\x03\x04" ++ // TLS v1.3
+    "\x00" ** 32 ++ // 32 byte random
+    "\x20" ++ // u8 len 32
+    "\x00" ** 32 ++ // 32 byte session id
+    "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+    "\x00" ++ // CompressionMethod.none
+    "\x00\x62" ++ // u16 extensions_len
+    "\x00\x05" ++ // ExtensionType.StatusRequest
+    "\x00\x00" ++ // u16 ext_len = 0 (empty)
+    "\x00\x23" ++ // ExtensionType.SessionTicket
+    "\x00\x00" ++ // u16 ext_len = 0 (empty)
+    "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+    "\x00\x0c" ++ // u16 ext_len
+    "\x0b" ++ // u8 len
+    "\x72\x65\x6e\x65\x67\x6f\x61\x74\x69\x6f\x6e" ++ // "renegoation"
+    "\x00\x10" ++ // ExtensionType.Alpn
+    "\x00\x0b" ++ // u16 ext_len
+    "\x00\x09" ++ // u16 protocols len
+    "\x08" ++ // u8 protocol len
+    "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ // "http/1.1"
+    "\x00\x12" ++ // ExtensionType.Sct
+    "\x00\x0e" ++ // u16 ext_len
+    "\x00\x0c" ++ // u16 scts len
+    "\x00\x04" ++ // u16 sct len
+    "\x73\x63\x74\x31" ++ // "sct1"
+    "\x00\x04" ++ // u16 sct len
+    "\x73\x63\x74\x32" ++ // "sct2"
+    "\x00\x2b" ++ // ExtensionType.SupportedVersions
+    "\x00\x02" ++ // u16 ext_len
+    "\x03\x04" ++ // TLS v1.3
+    "\x00\x33" ++ // ExtensionType.KeyShare
+    "\x00\x13" ++ // u16 ext_len
+    "\x00\x1d" ++ // u16 server_share.group = CurveId.x25519
+    "\x00\x0f" ++ // u16 server_share.data.len
+    "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65" ++ // "public key here"
+    "\x00\x29" ++ // ExtensionType.PreSharedKey
+    "\x00\x02" ++ // u16 ext_len
+    "\x43\x21" ++ // u16 selected_identity = 0x4321
+    "\x00\x0b" ++ // ExtensionType.SupportedPoints
+    "\x00\x02" ++ // u16 ext_len
+    "\x01" ++ // u8 len
+    "\x00"; // EcPointFormat.uncompressed
