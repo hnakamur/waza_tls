@@ -303,7 +303,7 @@ pub const ResponseMessage = struct {
     answer: Answer,
 
     pub fn decode(allocator: mem.Allocator, input: *BytesView) !ResponseMessage {
-        try input.ensureLen(header_len);
+        try input.ensureRestLen(header_len);
         const header = Header.decode(input.getBytes(header_len)[0..header_len]);
         input.skip(header_len);
 
@@ -459,7 +459,7 @@ pub const Question = struct {
 
     pub fn decode(allocator: mem.Allocator, input: *BytesView) !Question {
         const name = try decodeDomainName(allocator, input);
-        try input.ensureLen(qtype_len + qclass_len);
+        try input.ensureRestLen(qtype_len + qclass_len);
         const qtype = @intToEnum(
             QType,
             mem.readIntBig(u16, input.getBytes(qtype_len)[0..qtype_len]),
@@ -561,7 +561,7 @@ pub const Rr = struct {
         const ttl_len = @sizeOf(u32);
         const rd_length_len = @sizeOf(u16);
         const header_rest_len = type_len + class_len + ttl_len + rd_length_len;
-        try input.ensureLen(header_rest_len);
+        try input.ensureRestLen(header_rest_len);
         const rr_type = @intToEnum(
             Type,
             mem.readIntBig(u16, input.getBytes(type_len)[0..2]),
@@ -692,7 +692,7 @@ pub const Rdata = union(Type) {
     AAAA: Ip6Addr,
 
     pub fn decode(allocator: mem.Allocator, input: *BytesView, rr_type: Type, rd_length: u16) !Rdata {
-        try input.ensureLen(rd_length);
+        try input.ensureRestLen(rd_length);
         switch (rr_type) {
             .A => {
                 if (rd_length != ipv4_addr_len) return error.InvalidRdLength;

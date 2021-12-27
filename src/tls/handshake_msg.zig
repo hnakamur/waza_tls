@@ -102,7 +102,7 @@ const handshake_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
 fn getAndEnsureHandshakeBodyLen(bv: *BytesView) !u24 {
     const body_len = mem.readIntBig(u24, bv.getBytesPos(1, intTypeLen(u24))[0..3]);
-    try bv.ensureLen(handshake_header_len + @as(usize, body_len));
+    try bv.ensureRestLen(handshake_header_len + @as(usize, body_len));
     return body_len;
 }
 
@@ -234,17 +234,17 @@ pub const ClientHelloMsg = struct {
 
     fn unmarshalExtensions(self: *ClientHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
         const extensions_len = try bv.readIntBig(u16);
-        try bv.ensureLen(extensions_len);
+        try bv.ensureRestLen(extensions_len);
         const extensions_end_pos = bv.pos + extensions_len;
         while (bv.pos < extensions_end_pos) {
             const ext_type = try readEnum(ExtensionType, bv);
             const ext_len = try bv.readIntBig(u16);
-            try bv.ensureLen(ext_len);
+            try bv.ensureRestLen(ext_len);
             switch (ext_type) {
                 .ServerName => {
                     // RFC 6066, Section 3
                     const server_names_len = try bv.readIntBig(u16);
-                    try bv.ensureLen(server_names_len);
+                    try bv.ensureRestLen(server_names_len);
                     const server_names_end_pos = bv.pos + server_names_len;
                     while (bv.pos < server_names_end_pos) {
                         const name_type = try bv.readByte();
@@ -587,12 +587,12 @@ pub const ServerHelloMsg = struct {
 
     fn unmarshalExtensions(self: *ServerHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
         const extensions_len = try bv.readIntBig(u16);
-        try bv.ensureLen(extensions_len);
+        try bv.ensureRestLen(extensions_len);
         const extensions_end_pos = bv.pos + extensions_len;
         while (bv.pos < extensions_end_pos) {
             const ext_type = try readEnum(ExtensionType, bv);
             const ext_len = try bv.readIntBig(u16);
-            try bv.ensureLen(ext_len);
+            try bv.ensureRestLen(ext_len);
             switch (ext_type) {
                 .StatusRequest => self.ocsp_stapling = true,
                 .SessionTicket => self.ticket_supported = true,
@@ -926,14 +926,14 @@ fn readStringList(
     bv: *BytesView,
 ) ![]const []const u8 {
     const len1 = try bv.readIntBig(LenType1);
-    try bv.ensureLen(len1);
+    try bv.ensureRestLen(len1);
 
     const start_pos = bv.pos;
     const end_pos = start_pos + len1;
     var n: usize = 0;
     while (bv.pos < end_pos) {
         const len2 = try bv.readIntBig(LenType2);
-        try bv.ensureLen(len2);
+        try bv.ensureRestLen(len2);
         bv.skip(len2);
         n += 1;
     }
@@ -956,7 +956,7 @@ fn readNonEmptyStringList(
     bv: *BytesView,
 ) ![]const []const u8 {
     const len1 = try bv.readIntBig(LenType1);
-    try bv.ensureLen(len1);
+    try bv.ensureRestLen(len1);
 
     const start_pos = bv.pos;
     const end_pos = start_pos + len1;
@@ -966,7 +966,7 @@ fn readNonEmptyStringList(
         if (len2 == 0) {
             return error.EmptyString;
         }
-        try bv.ensureLen(len2);
+        try bv.ensureRestLen(len2);
         bv.skip(len2);
         n += 1;
     }
@@ -989,7 +989,7 @@ fn readString(comptime LenType: type, bv: *BytesView) ![]const u8 {
 
 fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare {
     const list_len = try bv.readIntBig(u16);
-    try bv.ensureLen(list_len);
+    try bv.ensureRestLen(list_len);
 
     const start_pos = bv.pos;
     const end_pos = start_pos + list_len;
@@ -1000,7 +1000,7 @@ fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare 
         if (data_len == 0) {
             return error.EmptyKeyShareData;
         }
-        try bv.ensureLen(data_len);
+        try bv.ensureRestLen(data_len);
         bv.skip(data_len);
         n += 1;
     }
@@ -1020,7 +1020,7 @@ fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare 
 
 fn readPskIdentityList(allocator: mem.Allocator, bv: *BytesView) ![]const PskIdentity {
     const list_len = try bv.readIntBig(u16);
-    try bv.ensureLen(list_len);
+    try bv.ensureRestLen(list_len);
 
     const start_pos = bv.pos;
     const end_pos = start_pos + list_len;
@@ -1030,7 +1030,7 @@ fn readPskIdentityList(allocator: mem.Allocator, bv: *BytesView) ![]const PskIde
         if (label_len == 0) {
             return error.EmptyPskIdentityLabel;
         }
-        try bv.ensureLen(label_len);
+        try bv.ensureRestLen(label_len);
         bv.skip(label_len);
         bv.skip(intTypeLen(u32));
         n += 1;
@@ -1054,7 +1054,7 @@ fn readIntList(comptime Len: type, comptime Int: type, allocator: mem.Allocator,
     assert(int_len > 0);
 
     const len = try bv.readIntBig(Len);
-    try bv.ensureLen(len);
+    try bv.ensureRestLen(len);
 
     if (len % int_len != 0) return error.BadPrefixLength;
 
@@ -1074,7 +1074,7 @@ fn readEnumList(comptime Len: type, comptime Enum: type, allocator: mem.Allocato
     assert(enum_len > 0);
 
     const len = try bv.readIntBig(Len);
-    try bv.ensureLen(len);
+    try bv.ensureRestLen(len);
 
     if (len % enum_len != 0) return error.BadPrefixLength;
 

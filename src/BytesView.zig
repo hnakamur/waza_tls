@@ -27,7 +27,7 @@ pub fn skip(self: *BytesView, len: usize) void {
 }
 
 pub fn sliceBytesNoEof(self: *BytesView, num_bytes: usize) Error![]const u8 {
-    try self.ensureLen(num_bytes);
+    try self.ensureRestLen(num_bytes);
     const bytes = self.bytes[self.pos .. self.pos + num_bytes];
     self.skip(num_bytes);
     return bytes;
@@ -41,7 +41,7 @@ pub fn restLen(self: *const BytesView) usize {
     return self.bytes.len - self.pos;
 }
 
-pub fn ensureLen(self: *const BytesView, len: usize) Error!void {
+pub fn ensureRestLen(self: *const BytesView, len: usize) Error!void {
     if (len > self.restLen()) {
         return error.EndOfStream;
     }
@@ -70,13 +70,13 @@ fn readAll(self: *BytesView, buffer: []u8) ReadError!usize {
 
 /// If the number read would be smaller than `buf.len`, `error.EndOfStream` is returned instead.
 pub fn readNoEof(self: *BytesView, buf: []u8) !void {
-    try self.ensureLen(buf.len);
+    try self.ensureRestLen(buf.len);
     _ = try self.readAll(buf);
 }
 
 /// Reads 1 byte from the stream or returns `error.EndOfStream`.
 pub fn readByte(self: *BytesView) !u8 {
-    try self.ensureLen(1);
+    try self.ensureRestLen(1);
     const b = self.bytes[self.pos];
     self.skip(1);
     return b;
@@ -138,7 +138,7 @@ pub fn getBytesPos(self: *const BytesView, pos: usize, len: usize) []const u8 {
 
 /// Reads `slice.len` bytes from the stream and returns if they are the same as the passed slice
 pub fn isBytes(self: *const BytesView, slice: []const u8) !bool {
-    try self.ensureLen(slice.len);
+    try self.ensureRestLen(slice.len);
     return mem.eql(u8, self.bytes[self.pos .. self.pos + slice.len], slice);
 }
 
