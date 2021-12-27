@@ -70,6 +70,7 @@ pub const HandshakeMsg = union(MsgType) {
     pub fn deinit(self: *HandshakeMsg, allocator: mem.Allocator) void {
         switch (self.*) {
             .ClientHello => |*msg| msg.deinit(allocator),
+            .ServerHello => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
     }
@@ -82,6 +83,9 @@ pub const HandshakeMsg = union(MsgType) {
         switch (msg_type) {
             .ClientHello => return HandshakeMsg{
                 .ClientHello = try ClientHelloMsg.unmarshal(allocator, bv, msg_len),
+            },
+            .ServerHello => return HandshakeMsg{
+                .ServerHello = try ServerHelloMsg.unmarshal(allocator, bv, msg_len),
             },
             else => @panic("not implemented yet"),
         }
@@ -503,6 +507,39 @@ pub const ServerHelloMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !ServerHelloMsg {
+        const msg_start_pos = bv.pos;
+
+        var msg: ServerHelloMsg = undefined;
+        {
+            const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
+            errdefer allocator.free(raw);
+            const vers = try readEnum(ProtocolVersion, bv);
+            const random = try bv.sliceBytesNoEof(random_length);
+            const session_id = try readString(u8, bv);
+
+            const cipher_suite = try readEnum(CipherSuite, bv);
+            const compression_method = try readEnum(CompressionMethod, bv);
+
+            msg = ServerHelloMsg{
+                .raw = raw,
+                .vers = vers,
+                .random = random,
+                .session_id = session_id,
+                .cipher_suite = cipher_suite,
+                .compression_method = compression_method,
+            };
+        }
+        errdefer msg.deinit(allocator);
+
+        if (bv.pos - msg_start_pos == msg_len) {
+            return msg;
+        }
+
+        try msg.unmarshalExtensions(allocator, bv);
+        return msg;
+    }
+
     pub fn marshal(self: *ServerHelloMsg, allocator: mem.Allocator) ![]const u8 {
         if (self.raw) |raw| {
             return raw;
@@ -515,6 +552,72 @@ pub const ServerHelloMsg = struct {
         assert(raw.ptr == buf.buf.ptr);
         self.raw = raw;
         return raw;
+    }
+
+    fn unmarshalExtensions(self: *ServerHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
+        const extensions_len = try bv.readIntBig(u16);
+        try bv.ensureLen(extensions_len);
+        const extensions_end_pos = bv.pos + extensions_len;
+        while (bv.pos < extensions_end_pos) {
+            const ext_type = try readEnum(ExtensionType, bv);
+            const ext_len = try bv.readIntBig(u16);
+            try bv.ensureLen(ext_len);
+            switch (ext_type) {
+                .StatusRequest => self.ocsp_stapling = true,
+                .SessionTicket => self.ticket_supported = true,
+                .RenegotiationInfo => {
+                    self.secure_renegotiation = try readString(u8, bv);
+                    self.secure_renegotiation_supported = true;
+                },
+                .Alpn => {
+                    const protos_len = try bv.readIntBig(u16);
+                    const protos_end_pos = bv.pos + protos_len;
+                    self.alpn_protocol = try readString(u8, bv);
+                    if (bv.pos < protos_end_pos) {
+                        return error.TooManyProtocols;
+                    }
+                },
+                .Sct => self.scts = try readNonEmptyStringList(u16, u16, allocator, bv),
+                .SupportedVersions => self.supported_version = try readEnum(ProtocolVersion, bv),
+                .Cookie => {
+                    const cookie = try readString(u16, bv);
+                    if (cookie.len == 0) {
+                        return error.EmptyCookie;
+                    }
+                    self.cookie = cookie;
+                },
+                .KeyShare => {
+                    // This extension has different formats in SH and HRR, accept either
+                    // and let the handshake logic decide. See RFC 8446, Section 4.2.8.
+                    if (ext_len == 2) {
+                        self.selected_group = try readEnum(CurveId, bv);
+                    } else {
+                        const group = try readEnum(CurveId, bv);
+                        const data = try readString(u16, bv);
+                        self.server_share = .{ .group = group, .data = data };
+                    }
+                },
+                .PreSharedKey => self.selected_identity = try bv.readIntBig(u16),
+                .SupportedPoints => {
+                    // RFC 4492, Section 5.1.2
+                    self.supported_points = try readEnumList(
+                        u8,
+                        EcPointFormat,
+                        allocator,
+                        bv,
+                    );
+                    if (self.supported_points) |points| {
+                        if (points.len == 0) {
+                            return error.EmptySupportedPoints;
+                        }
+                    }
+                },
+                else => {
+                    // Ignore unknown extensions.
+                    bv.advance(ext_len);
+                },
+            }
+        }
     }
 
     fn writeTo(self: *const ServerHelloMsg, writer: anytype) !void {
@@ -1030,7 +1133,7 @@ test "ClientHelloMsg.unmarshal" {
             var got = msg.ClientHello;
             got.raw = null;
 
-            try testingExpectPrintEqual(allocator, "{}", &got, want);
+            try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
     };
 
@@ -1281,6 +1384,36 @@ test "ServerHelloMsg.marshal" {
         var msg = try testCreateServerHelloMsgWithExtensions(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(&msg, test_marshaled_server_hello_msg_with_extensions);
+    }
+}
+
+test "ServerHelloMsg.unmarshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(data: []const u8, want: *ServerHelloMsg) !void {
+            var bv = BytesView.init(data);
+            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            defer msg.deinit(allocator);
+
+            var got = msg.ServerHello;
+            got.raw = null;
+
+            try testingExpectPrintEqual(allocator, "{}", want, &got);
+        }
+    };
+
+    {
+        var msg = testCreateServerHelloMsg();
+        defer msg.deinit(allocator);
+        try TestCase.run(test_marshaled_server_hello_msg, &msg);
+    }
+
+    {
+        var msg = try testCreateServerHelloMsgWithExtensions(allocator);
+        defer msg.deinit(allocator);
+        try TestCase.run(test_marshaled_server_hello_msg_with_extensions, &msg);
     }
 }
 
