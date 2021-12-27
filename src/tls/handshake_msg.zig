@@ -44,6 +44,7 @@ const MsgType = enum(u8) {
     KeyUpdate = 24,
     NextProtocol = 67, // Not IANA assigned
     MessageHash = 254, // synthetic message
+    _,
 };
 
 const random_length = 32;
@@ -78,27 +79,45 @@ pub const HandshakeMsg = union(MsgType) {
     }
 
     pub fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !HandshakeMsg {
-        try bv.ensureLen(intTypeLen(u8) + intTypeLen(u24));
-        const msg_type = try readEnum(MsgType, bv);
-        const msg_len = try bv.readIntBig(u24);
-        try bv.ensureLen(msg_len);
+        const msg_type = @intToEnum(MsgType, bv.peekByte() orelse return error.EndOfStream);
         switch (msg_type) {
             .ClientHello => return HandshakeMsg{
-                .ClientHello = try ClientHelloMsg.unmarshal(allocator, bv, msg_len),
+                .ClientHello = try ClientHelloMsg.unmarshal(allocator, bv),
             },
             .ServerHello => return HandshakeMsg{
-                .ServerHello = try ServerHelloMsg.unmarshal(allocator, bv, msg_len),
+                .ServerHello = try ServerHelloMsg.unmarshal(allocator, bv),
             },
             .Certificate => return HandshakeMsg{
-                .Certificate = try CertificateMsg.unmarshal(allocator, bv, msg_len),
+                .Certificate = try CertificateMsg.unmarshal(allocator, bv),
             },
             .ServerKeyExchange => return HandshakeMsg{
-                .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, bv, msg_len),
+                .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, bv),
             },
             else => @panic("not implemented yet"),
         }
     }
 };
+
+const handshake_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
+
+fn getAndEnsureHandshakeBodyLen(bv: *BytesView) !u24 {
+    const body_len = mem.readIntBig(u24, bv.getBytesPos(1, intTypeLen(u24))[0..3]);
+    try bv.ensureLen(handshake_header_len + @as(usize, body_len));
+    return body_len;
+}
+
+test "HandshakeMsg.peekByte" {
+    const f = struct {
+        fn f(bv: *BytesView) !MsgType {
+            return @intToEnum(MsgType, bv.peekByte() orelse return error.EndOfStream);
+        }
+    }.f;
+
+    var bv = BytesView.init("\x01");
+    try testing.expectEqual(MsgType.ClientHello, try f(&bv));
+    bv.advance(1);
+    try testing.expectError(error.EndOfStream, f(&bv));
+}
 
 const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;
@@ -157,13 +176,16 @@ pub const ClientHelloMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !ClientHelloMsg {
-        const msg_start_pos = bv.pos;
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !ClientHelloMsg {
+        const body_len = try getAndEnsureHandshakeBodyLen(bv);
+        const msg_len = handshake_header_len + @as(usize, body_len);
+        const body_end_pos = bv.pos + msg_len;
 
         var msg: ClientHelloMsg = undefined;
         {
             const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
             errdefer allocator.free(raw);
+            bv.advance(handshake_header_len);
             const vers = try readEnum(ProtocolVersion, bv);
             const random = try bv.sliceBytesNoEof(random_length);
             const session_id = try readString(u8, bv);
@@ -188,7 +210,7 @@ pub const ClientHelloMsg = struct {
         }
         errdefer msg.deinit(allocator);
 
-        if (bv.pos - msg_start_pos == msg_len) {
+        if (bv.pos == body_end_pos) {
             return msg;
         }
 
@@ -513,13 +535,16 @@ pub const ServerHelloMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !ServerHelloMsg {
-        const msg_start_pos = bv.pos;
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !ServerHelloMsg {
+        const body_len = try getAndEnsureHandshakeBodyLen(bv);
+        const msg_len = handshake_header_len + @as(usize, body_len);
+        const body_end_pos = bv.pos + msg_len;
 
         var msg: ServerHelloMsg = undefined;
         {
             const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
             errdefer allocator.free(raw);
+            bv.advance(handshake_header_len);
             const vers = try readEnum(ProtocolVersion, bv);
             const random = try bv.sliceBytesNoEof(random_length);
             const session_id = try readString(u8, bv);
@@ -538,7 +563,7 @@ pub const ServerHelloMsg = struct {
         }
         errdefer msg.deinit(allocator);
 
-        if (bv.pos - msg_start_pos == msg_len) {
+        if (bv.pos == body_end_pos) {
             return msg;
         }
 
@@ -729,9 +754,13 @@ const CertificateMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !CertificateMsg {
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !CertificateMsg {
+        const body_len = try getAndEnsureHandshakeBodyLen(bv);
+        const msg_len = handshake_header_len + @as(usize, body_len);
+
         const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
         errdefer allocator.free(raw);
+        bv.advance(handshake_header_len);
         const certificates = try readStringList(u24, u24, allocator, bv);
         errdefer allocator.free(certificates);
 
@@ -769,7 +798,7 @@ const CertificateMsg = struct {
     }
 };
 
-const ServerKeyExchangeMsg = struct{
+const ServerKeyExchangeMsg = struct {
     raw: ?[]const u8 = null,
     key: []const u8 = undefined,
 
@@ -777,10 +806,14 @@ const ServerKeyExchangeMsg = struct{
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !ServerKeyExchangeMsg {
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !ServerKeyExchangeMsg {
+        const body_len = try getAndEnsureHandshakeBodyLen(bv);
+        const msg_len = handshake_header_len + @as(usize, body_len);
+
         const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
         errdefer allocator.free(raw);
-        const key = try bv.sliceBytesNoEof(msg_len);
+        bv.advance(handshake_header_len);
+        const key = try bv.sliceBytesNoEof(body_len);
 
         return ServerKeyExchangeMsg{
             .raw = raw,
@@ -802,7 +835,7 @@ const ServerKeyExchangeMsg = struct{
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
         try writeInt(u8, MsgType.ServerKeyExchange, writer);
-        try writeLenAndBytes(self.key, writer);
+        try writeLenAndBytes(u24, self.key, writer);
         self.raw = raw;
         return raw;
     }
@@ -1225,6 +1258,7 @@ test "ClientHelloMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.ClientHello;
+            try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
@@ -1492,6 +1526,7 @@ test "ServerHelloMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.ServerHello;
+            try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
@@ -1642,6 +1677,7 @@ test "CertificateMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.Certificate;
+            try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
@@ -1672,7 +1708,6 @@ const test_marshaled_certificate_msg = "\x0b" ++ // MsgType.Certificate
     "\x63\x65\x72\x74\x31" ++ // "cert1"
     "\x00\x00\x05" ++ // u24 certificate len
     "\x63\x65\x72\x74\x32"; // "cert2"
-
 
 test "ServerKeyExchangeMsg.marshal" {
     const allocator = testing.allocator;
@@ -1710,6 +1745,7 @@ test "ServerKeyExchangeMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.ServerKeyExchange;
+            try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
@@ -1729,6 +1765,6 @@ fn testCreateServerKeyExchangeMsg() ServerKeyExchangeMsg {
     };
 }
 
-const test_marshaled_server_key_exchange_msg = "\x0c" ++  // MsgType.ServerKeyExchange
+const test_marshaled_server_key_exchange_msg = "\x0c" ++ // MsgType.ServerKeyExchange
     "\x00\x00\x0a" ++ // u24 msg_len
     "\x73\x65\x72\x76\x65\x72\x20\x6b\x65\x79"; // "server key"
