@@ -71,6 +71,7 @@ pub const HandshakeMsg = union(MsgType) {
         switch (self.*) {
             .ClientHello => |*msg| msg.deinit(allocator),
             .ServerHello => |*msg| msg.deinit(allocator),
+            .Certificate => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
     }
@@ -87,6 +88,9 @@ pub const HandshakeMsg = union(MsgType) {
             .ServerHello => return HandshakeMsg{
                 .ServerHello = try ServerHelloMsg.unmarshal(allocator, bv, msg_len),
             },
+            .Certificate => return HandshakeMsg{
+                .Certificate = try CertificateMsg.unmarshal(allocator, bv, msg_len),
+            },
             else => @panic("not implemented yet"),
         }
     }
@@ -96,7 +100,6 @@ const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;
 const EndOfEarlyDataMsg = void;
 const EncryptedExtensionsMsg = void;
-const CertificateMsg = void;
 const ServerKeyExchangeMsg = void;
 const CertificateRequestMsg = void;
 const ServerHelloDoneMsg = void;
@@ -711,6 +714,55 @@ pub const ServerHelloMsg = struct {
             try writeInt(u16, ext_len, writer);
             try writeLenAndIntSlice(u8, u8, EcPointFormat, points, writer);
         }
+    }
+};
+
+const CertificateMsg = struct {
+    raw: ?[]const u8 = null,
+    certificates: []const []const u8 = undefined,
+
+    pub fn deinit(self: *CertificateMsg, allocator: mem.Allocator) void {
+        allocator.free(self.certificates);
+        freeOptionalField(self, allocator, "raw");
+    }
+
+    fn unmarshal(allocator: mem.Allocator, bv: *BytesView, msg_len: u24) !CertificateMsg {
+        const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
+        errdefer allocator.free(raw);
+        const certificates = try readStringList(u24, u24, allocator, bv);
+        errdefer allocator.free(certificates);
+
+        return CertificateMsg{
+            .raw = raw,
+            .certificates = certificates,
+        };
+    }
+
+    pub fn marshal(self: *CertificateMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        var certs_len: usize = 0;
+        for (self.certificates) |cert| {
+            certs_len += intTypeLen(u24) + cert.len;
+        }
+        const msg_len = intTypeLen(u24) + certs_len;
+        const raw_len = enumTypeLen(MsgType) + intTypeLen(u24) + msg_len;
+
+        var raw = try allocator.alloc(u8, raw_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.Certificate, writer);
+        try writeInt(u24, msg_len, writer);
+        try writeInt(u24, certs_len, writer);
+        for (self.certificates) |cert| {
+            try writeLenAndBytes(u24, cert, writer);
+        }
+        self.raw = raw;
+        return raw;
     }
 };
 
@@ -1511,3 +1563,70 @@ const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
     "\x00\x02" ++ // u16 ext_len
     "\x01" ++ // u8 len
     "\x00"; // EcPointFormat.uncompressed
+
+test "CertificateMsg.marshal" {
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(msg: *CertificateMsg, want: []const u8) !void {
+            const got = try msg.marshal(allocator);
+            if (!mem.eql(u8, got, want)) {
+                std.log.warn("\n got={},\nwant={}\n", .{
+                    fmtx.fmtSliceHexEscapeLower(got),
+                    fmtx.fmtSliceHexEscapeLower(want),
+                });
+            }
+            try testing.expectEqualSlices(u8, want, got);
+            const got2 = try msg.marshal(allocator);
+            try testing.expectEqual(got, got2);
+        }
+    };
+
+    {
+        var msg = try testCreateCertificateMsg(allocator);
+        defer msg.deinit(allocator);
+        try TestCase.run(&msg, test_marshaled_certificate_msg);
+    }
+}
+
+test "CertificateMsg.unmarshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(data: []const u8, want: *CertificateMsg) !void {
+            var bv = BytesView.init(data);
+            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            defer msg.deinit(allocator);
+
+            var got = msg.Certificate;
+            got.raw = null;
+
+            try testingExpectPrintEqual(allocator, "{}", want, &got);
+        }
+    };
+
+    {
+        var msg = try testCreateCertificateMsg(allocator);
+        defer msg.deinit(allocator);
+        try TestCase.run(test_marshaled_certificate_msg, &msg);
+    }
+}
+
+fn testCreateCertificateMsg(allocator: mem.Allocator) !CertificateMsg {
+    const certificates = try allocator.dupe(
+        []const u8,
+        &[_][]const u8{ "cert1", "cert2" },
+    );
+    return CertificateMsg{
+        .certificates = certificates,
+    };
+}
+
+const test_marshaled_certificate_msg = "\x0b" ++ //
+    "\x00\x00\x13" ++ // u24 msg_len
+    "\x00\x00\x10" ++ // u24 certificates_len
+    "\x00\x00\x05" ++ // u24 certificate len
+    "\x63\x65\x72\x74\x31" ++ // "cert1"
+    "\x00\x00\x05" ++ // u24 certificate len
+    "\x63\x65\x72\x74\x32"; // "cert2"
