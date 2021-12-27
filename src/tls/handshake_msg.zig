@@ -78,46 +78,36 @@ pub const HandshakeMsg = union(MsgType) {
         }
     }
 
-    pub fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !HandshakeMsg {
-        const msg_type = @intToEnum(MsgType, bv.peekByte() orelse return error.EndOfStream);
+    pub fn unmarshal(allocator: mem.Allocator, data: []const u8) !HandshakeMsg {
+        if (data.len < handshake_msg_header_len) {
+            return error.ShortInput;
+        }
+        const body_len = mem.readIntBig(u24, data[1..4]);
+        const msg_len = handshake_msg_header_len + @as(usize, body_len);
+        if (data.len < msg_len) {
+            return error.ShortInput;
+        }
+        const msg_data = data[0..msg_len];
+        const msg_type = @intToEnum(MsgType, data[0]);
         switch (msg_type) {
             .ClientHello => return HandshakeMsg{
-                .ClientHello = try ClientHelloMsg.unmarshal(allocator, bv),
+                .ClientHello = try ClientHelloMsg.unmarshal(allocator, msg_data),
             },
             .ServerHello => return HandshakeMsg{
-                .ServerHello = try ServerHelloMsg.unmarshal(allocator, bv),
+                .ServerHello = try ServerHelloMsg.unmarshal(allocator, msg_data),
             },
             .Certificate => return HandshakeMsg{
-                .Certificate = try CertificateMsg.unmarshal(allocator, bv),
+                .Certificate = try CertificateMsg.unmarshal(allocator, msg_data),
             },
             .ServerKeyExchange => return HandshakeMsg{
-                .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, bv),
+                .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, msg_data),
             },
             else => @panic("not implemented yet"),
         }
     }
 };
 
-const handshake_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
-
-fn getAndEnsureHandshakeBodyLen(bv: *BytesView) !u24 {
-    const body_len = mem.readIntBig(u24, bv.getBytesPos(1, intTypeLen(u24))[0..3]);
-    try bv.ensureRestLen(handshake_header_len + @as(usize, body_len));
-    return body_len;
-}
-
-test "HandshakeMsg.peekByte" {
-    const f = struct {
-        fn f(bv: *BytesView) !MsgType {
-            return @intToEnum(MsgType, bv.peekByte() orelse return error.EndOfStream);
-        }
-    }.f;
-
-    var bv = BytesView.init("\x01");
-    try testing.expectEqual(MsgType.ClientHello, try f(&bv));
-    bv.skip(1);
-    try testing.expectError(error.EndOfStream, f(&bv));
-}
+const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
 const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;
@@ -176,26 +166,24 @@ pub const ClientHelloMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !ClientHelloMsg {
-        const body_len = try getAndEnsureHandshakeBodyLen(bv);
-        const msg_len = handshake_header_len + @as(usize, body_len);
-        const body_end_pos = bv.pos + msg_len;
-
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ClientHelloMsg {
+        var bv: BytesView = undefined;
         var msg: ClientHelloMsg = undefined;
         {
-            const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
+            const raw = try allocator.dupe(u8, msg_data);
             errdefer allocator.free(raw);
-            bv.skip(handshake_header_len);
-            const vers = try readEnum(ProtocolVersion, bv);
+            bv = BytesView.init(raw);
+            bv.skip(handshake_msg_header_len);
+            const vers = try readEnum(ProtocolVersion, &bv);
             const random = try bv.sliceBytesNoEof(random_length);
-            const session_id = try readString(u8, bv);
+            const session_id = try readString(u8, &bv);
 
-            const cipher_suites = try readEnumList(u16, CipherSuite, allocator, bv);
+            const cipher_suites = try readEnumList(u16, CipherSuite, allocator, &bv);
             errdefer allocator.free(cipher_suites);
             const idx = mem.indexOfScalar(CipherSuite, cipher_suites, .scsvRenegotiation);
             const secure_renegotiation_supported = idx != null;
 
-            const compression_methods = try readEnumList(u8, CompressionMethod, allocator, bv);
+            const compression_methods = try readEnumList(u8, CompressionMethod, allocator, &bv);
             errdefer allocator.free(compression_methods);
 
             msg = ClientHelloMsg{
@@ -210,11 +198,11 @@ pub const ClientHelloMsg = struct {
         }
         errdefer msg.deinit(allocator);
 
-        if (bv.pos == body_end_pos) {
+        if (bv.restLen() == 0) {
             return msg;
         }
 
-        try msg.unmarshalExtensions(allocator, bv);
+        try msg.unmarshalExtensions(allocator, &bv);
         return msg;
     }
 
@@ -535,22 +523,20 @@ pub const ServerHelloMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !ServerHelloMsg {
-        const body_len = try getAndEnsureHandshakeBodyLen(bv);
-        const msg_len = handshake_header_len + @as(usize, body_len);
-        const body_end_pos = bv.pos + msg_len;
-
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ServerHelloMsg {
+        var bv: BytesView = undefined;
         var msg: ServerHelloMsg = undefined;
         {
-            const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
+            const raw = try allocator.dupe(u8, msg_data);
             errdefer allocator.free(raw);
-            bv.skip(handshake_header_len);
-            const vers = try readEnum(ProtocolVersion, bv);
+            bv = BytesView.init(raw);
+            bv.skip(handshake_msg_header_len);
+            const vers = try readEnum(ProtocolVersion, &bv);
             const random = try bv.sliceBytesNoEof(random_length);
-            const session_id = try readString(u8, bv);
+            const session_id = try readString(u8, &bv);
 
-            const cipher_suite = try readEnum(CipherSuite, bv);
-            const compression_method = try readEnum(CompressionMethod, bv);
+            const cipher_suite = try readEnum(CipherSuite, &bv);
+            const compression_method = try readEnum(CompressionMethod, &bv);
 
             msg = ServerHelloMsg{
                 .raw = raw,
@@ -563,11 +549,11 @@ pub const ServerHelloMsg = struct {
         }
         errdefer msg.deinit(allocator);
 
-        if (bv.pos == body_end_pos) {
+        if (bv.restLen() == 0) {
             return msg;
         }
 
-        try msg.unmarshalExtensions(allocator, bv);
+        try msg.unmarshalExtensions(allocator, &bv);
         return msg;
     }
 
@@ -754,14 +740,12 @@ const CertificateMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !CertificateMsg {
-        const body_len = try getAndEnsureHandshakeBodyLen(bv);
-        const msg_len = handshake_header_len + @as(usize, body_len);
-
-        const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsg {
+        const raw = try allocator.dupe(u8, msg_data);
         errdefer allocator.free(raw);
-        bv.skip(handshake_header_len);
-        const certificates = try readStringList(u24, u24, allocator, bv);
+        var bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+        const certificates = try readStringList(u24, u24, allocator, &bv);
         errdefer allocator.free(certificates);
 
         return CertificateMsg{
@@ -806,14 +790,9 @@ const ServerKeyExchangeMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, bv: *BytesView) !ServerKeyExchangeMsg {
-        const body_len = try getAndEnsureHandshakeBodyLen(bv);
-        const msg_len = handshake_header_len + @as(usize, body_len);
-
-        const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
-        errdefer allocator.free(raw);
-        bv.skip(handshake_header_len);
-        const key = try bv.sliceBytesNoEof(body_len);
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ServerKeyExchangeMsg {
+        const raw = try allocator.dupe(u8, msg_data);
+        const key = raw[handshake_msg_header_len..];
 
         return ServerKeyExchangeMsg{
             .raw = raw,
@@ -1253,8 +1232,7 @@ test "ClientHelloMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ClientHelloMsg) !void {
-            var bv = BytesView.init(data);
-            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            var msg = try HandshakeMsg.unmarshal(allocator, data);
             defer msg.deinit(allocator);
 
             var got = msg.ClientHello;
@@ -1521,8 +1499,7 @@ test "ServerHelloMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ServerHelloMsg) !void {
-            var bv = BytesView.init(data);
-            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            var msg = try HandshakeMsg.unmarshal(allocator, data);
             defer msg.deinit(allocator);
 
             var got = msg.ServerHello;
@@ -1672,8 +1649,7 @@ test "CertificateMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *CertificateMsg) !void {
-            var bv = BytesView.init(data);
-            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            var msg = try HandshakeMsg.unmarshal(allocator, data);
             defer msg.deinit(allocator);
 
             var got = msg.Certificate;
@@ -1740,8 +1716,7 @@ test "ServerKeyExchangeMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ServerKeyExchangeMsg) !void {
-            var bv = BytesView.init(data);
-            var msg = try HandshakeMsg.unmarshal(allocator, &bv);
+            var msg = try HandshakeMsg.unmarshal(allocator, data);
             defer msg.deinit(allocator);
 
             var got = msg.ServerKeyExchange;
