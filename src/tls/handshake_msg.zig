@@ -76,6 +76,7 @@ pub const HandshakeMsg = union(MsgType) {
             .ServerKeyExchange => |*msg| msg.deinit(allocator),
             .ServerHelloDone => |*msg| msg.deinit(allocator),
             .ClientKeyExchange => |*msg| msg.deinit(allocator),
+            .Finished => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
     }
@@ -110,6 +111,9 @@ pub const HandshakeMsg = union(MsgType) {
             .ClientKeyExchange => return HandshakeMsg{
                 .ClientKeyExchange = try ClientKeyExchangeMsg.unmarshal(allocator, msg_data),
             },
+            .Finished => return HandshakeMsg{
+                .Finished = try FinishedMsg.unmarshal(allocator, msg_data),
+            },
             else => @panic("not implemented yet"),
         }
     }
@@ -123,7 +127,6 @@ const EndOfEarlyDataMsg = void;
 const EncryptedExtensionsMsg = void;
 const CertificateRequestMsg = void;
 const CertificateVerifyMsg = void;
-const FinishedMsg = void;
 const CertificateStatusMsg = void;
 const KeyUpdateMsg = void;
 const NextProtocolMsg = void;
@@ -902,6 +905,45 @@ const ClientKeyExchangeMsg = struct {
         var writer = fbs.writer();
         try writeInt(u8, MsgType.ClientKeyExchange, writer);
         try writeLenAndBytes(u24, self.ciphertext, writer);
+        self.raw = raw;
+        return raw;
+    }
+};
+
+const FinishedMsg = struct {
+    raw: ?[]const u8 = null,
+    verify_data: []const u8 = undefined,
+
+    pub fn deinit(self: *FinishedMsg, allocator: mem.Allocator) void {
+        freeOptionalField(self, allocator, "raw");
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !FinishedMsg {
+        const raw = try allocator.dupe(u8, msg_data);
+        var bv = BytesView.init(raw);
+        bv.skip(enumTypeLen(MsgType));
+        const verify_data = try readString(u24, &bv);
+
+        return FinishedMsg{
+            .raw = raw,
+            .verify_data = verify_data,
+        };
+    }
+
+    pub fn marshal(self: *FinishedMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        const body_len = self.verify_data.len;
+        const msg_len = handshake_msg_header_len + body_len;
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.Finished, writer);
+        try writeLenAndBytes(u24, self.verify_data, writer);
         self.raw = raw;
         return raw;
     }
@@ -1945,3 +1987,62 @@ fn testCreateClientKeyExchangeMsg() ClientKeyExchangeMsg {
 const test_marshaled_client_key_exchange_msg = "\x10" ++ // MsgType.ClientKeyExchange
     "\x00\x00\x0b" ++ // u24 msg_len
     "\x63\x69\x70\x68\x65\x72\x20\x74\x65\x78\x74"; // "cipher text"
+
+test "FinishedMsg.marshal" {
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(msg: *FinishedMsg, want: []const u8) !void {
+            const got = try msg.marshal(allocator);
+            if (!mem.eql(u8, got, want)) {
+                std.log.warn("\n got={},\nwant={}\n", .{
+                    fmtx.fmtSliceHexEscapeLower(got),
+                    fmtx.fmtSliceHexEscapeLower(want),
+                });
+            }
+            try testing.expectEqualSlices(u8, want, got);
+            const got2 = try msg.marshal(allocator);
+            try testing.expectEqual(got, got2);
+        }
+    };
+
+    {
+        var msg = testCreateFinishedMsg();
+        defer msg.deinit(allocator);
+        try TestCase.run(&msg, test_marshaled_finished_msg);
+    }
+}
+
+test "FinishedMsg.unmarshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const TestCase = struct {
+        fn run(data: []const u8, want: *FinishedMsg) !void {
+            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            defer msg.deinit(allocator);
+
+            var got = msg.Finished;
+            try testing.expectEqualSlices(u8, data, got.raw.?);
+            got.raw = null;
+
+            try testingExpectPrintEqual(allocator, "{}", want, &got);
+        }
+    };
+
+    {
+        var msg = testCreateFinishedMsg();
+        defer msg.deinit(allocator);
+        try TestCase.run(test_marshaled_finished_msg, &msg);
+    }
+}
+
+fn testCreateFinishedMsg() FinishedMsg {
+    return FinishedMsg{
+        .verify_data = "verify data",
+    };
+}
+
+const test_marshaled_finished_msg = "\x14" ++ // MsgType.Finished
+    "\x00\x00\x0b" ++ // u24 msg_len
+    "\x76\x65\x72\x69\x66\x79\x20\x64\x61\x74\x61"; // "verify data"
