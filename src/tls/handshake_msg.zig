@@ -115,7 +115,7 @@ test "HandshakeMsg.peekByte" {
 
     var bv = BytesView.init("\x01");
     try testing.expectEqual(MsgType.ClientHello, try f(&bv));
-    bv.advance(1);
+    bv.skip(1);
     try testing.expectError(error.EndOfStream, f(&bv));
 }
 
@@ -185,7 +185,7 @@ pub const ClientHelloMsg = struct {
         {
             const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
             errdefer allocator.free(raw);
-            bv.advance(handshake_header_len);
+            bv.skip(handshake_header_len);
             const vers = try readEnum(ProtocolVersion, bv);
             const random = try bv.sliceBytesNoEof(random_length);
             const session_id = try readString(u8, bv);
@@ -267,7 +267,7 @@ pub const ClientHelloMsg = struct {
                     // RFC 4366, Section 3.6
                     const status_type = try readEnum(CertificateStatusType, bv);
                     // ignore responder_id_list and request_extensions
-                    bv.advance(intTypeLen(u16) * 2);
+                    bv.skip(intTypeLen(u16) * 2);
                     self.ocsp_stapling = status_type == .ocsp;
                 },
                 .SupportedCurves => {
@@ -348,7 +348,7 @@ pub const ClientHelloMsg = struct {
                     self.psk_identities = try readPskIdentityList(allocator, bv);
                     self.psk_binders = try readNonEmptyStringList(u16, u8, allocator, bv);
                 },
-                else => bv.advance(ext_len),
+                else => bv.skip(ext_len),
             }
         }
     }
@@ -544,7 +544,7 @@ pub const ServerHelloMsg = struct {
         {
             const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
             errdefer allocator.free(raw);
-            bv.advance(handshake_header_len);
+            bv.skip(handshake_header_len);
             const vers = try readEnum(ProtocolVersion, bv);
             const random = try bv.sliceBytesNoEof(random_length);
             const session_id = try readString(u8, bv);
@@ -645,7 +645,7 @@ pub const ServerHelloMsg = struct {
                 },
                 else => {
                     // Ignore unknown extensions.
-                    bv.advance(ext_len);
+                    bv.skip(ext_len);
                 },
             }
         }
@@ -760,7 +760,7 @@ const CertificateMsg = struct {
 
         const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
         errdefer allocator.free(raw);
-        bv.advance(handshake_header_len);
+        bv.skip(handshake_header_len);
         const certificates = try readStringList(u24, u24, allocator, bv);
         errdefer allocator.free(certificates);
 
@@ -812,7 +812,7 @@ const ServerKeyExchangeMsg = struct {
 
         const raw = try allocator.dupe(u8, bv.getBytes(msg_len));
         errdefer allocator.free(raw);
-        bv.advance(handshake_header_len);
+        bv.skip(handshake_header_len);
         const key = try bv.sliceBytesNoEof(body_len);
 
         return ServerKeyExchangeMsg{
@@ -934,7 +934,7 @@ fn readStringList(
     while (bv.pos < end_pos) {
         const len2 = try bv.readIntBig(LenType2);
         try bv.ensureLen(len2);
-        bv.advance(len2);
+        bv.skip(len2);
         n += 1;
     }
     bv.pos = start_pos;
@@ -967,7 +967,7 @@ fn readNonEmptyStringList(
             return error.EmptyString;
         }
         try bv.ensureLen(len2);
-        bv.advance(len2);
+        bv.skip(len2);
         n += 1;
     }
     bv.pos = start_pos;
@@ -995,13 +995,13 @@ fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare 
     const end_pos = start_pos + list_len;
     var n: usize = 0;
     while (bv.pos < end_pos) {
-        bv.advance(enumTypeLen(CurveId));
+        bv.skip(enumTypeLen(CurveId));
         const data_len = try bv.readIntBig(u16);
         if (data_len == 0) {
             return error.EmptyKeyShareData;
         }
         try bv.ensureLen(data_len);
-        bv.advance(data_len);
+        bv.skip(data_len);
         n += 1;
     }
     bv.pos = start_pos;
@@ -1031,8 +1031,8 @@ fn readPskIdentityList(allocator: mem.Allocator, bv: *BytesView) ![]const PskIde
             return error.EmptyPskIdentityLabel;
         }
         try bv.ensureLen(label_len);
-        bv.advance(label_len);
-        bv.advance(intTypeLen(u32));
+        bv.skip(label_len);
+        bv.skip(intTypeLen(u32));
         n += 1;
     }
     bv.pos = start_pos;

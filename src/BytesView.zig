@@ -22,14 +22,14 @@ pub fn peekByte(self: *const BytesView) ?u8 {
     return self.bytes[self.pos];
 }
 
-pub fn advance(self: *BytesView, len: usize) void {
+pub fn skip(self: *BytesView, len: usize) void {
     self.pos += len;
 }
 
 pub fn sliceBytesNoEof(self: *BytesView, num_bytes: usize) Error![]const u8 {
     try self.ensureLen(num_bytes);
     const bytes = self.bytes[self.pos .. self.pos + num_bytes];
-    self.advance(num_bytes);
+    self.skip(num_bytes);
     return bytes;
 }
 
@@ -39,10 +39,6 @@ pub fn rest(self: *const BytesView) []const u8 {
 
 pub fn restLen(self: *const BytesView) usize {
     return self.bytes.len - self.pos;
-}
-
-pub fn setRestLen(self: *BytesView, len: usize) void {
-    self.bytes.len = self.pos + len;
 }
 
 pub fn ensureLen(self: *const BytesView, len: usize) Error!void {
@@ -57,7 +53,7 @@ pub fn ensureLen(self: *const BytesView, len: usize) Error!void {
 fn read(self: *BytesView, buffer: []u8) ReadError!usize {
     const copy_len = math.min(buffer.len, self.restLen());
     mem.copy(u8, buffer, self.bytes[self.pos .. self.pos + copy_len]);
-    self.advance(copy_len);
+    self.skip(copy_len);
     return copy_len;
 }
 
@@ -82,7 +78,7 @@ pub fn readNoEof(self: *BytesView, buf: []u8) !void {
 pub fn readByte(self: *BytesView) !u8 {
     try self.ensureLen(1);
     const b = self.bytes[self.pos];
-    self.advance(1);
+    self.skip(1);
     return b;
 }
 
@@ -152,7 +148,7 @@ const assert = std.debug.assert;
 test "BytesView bytes operations" {
     var vw = BytesView.init("zig is great");
     try testing.expectEqual(@as(?u8, 'z'), vw.peekByte());
-    vw.advance(1);
+    vw.skip(1);
     try testing.expectEqual(@as(usize, 11), vw.restLen());
     try testing.expectEqualStrings("ig is great", vw.rest());
     var r = vw.reader();

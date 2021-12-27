@@ -305,7 +305,7 @@ pub const ResponseMessage = struct {
     pub fn decode(allocator: mem.Allocator, input: *BytesView) !ResponseMessage {
         try input.ensureLen(header_len);
         const header = Header.decode(input.getBytes(header_len)[0..header_len]);
-        input.advance(header_len);
+        input.skip(header_len);
 
         const question = try Question.decode(allocator, input);
         const answer = try Answer.decode(allocator, input, header.ancount);
@@ -468,7 +468,7 @@ pub const Question = struct {
             QClass,
             mem.readIntBig(u16, input.getBytesPos(qtype_len, qclass_len)[0..qclass_len]),
         );
-        input.advance(qtype_len + qclass_len);
+        input.skip(qtype_len + qclass_len);
         return Question{
             .name = name,
             .qtype = qtype,
@@ -575,7 +575,7 @@ pub const Rr = struct {
             u16,
             input.getBytesPos(type_len + class_len + ttl_len, rd_length_len)[0..2],
         );
-        input.advance(header_rest_len);
+        input.skip(header_rest_len);
 
         const rdata = try Rdata.decode(allocator, input, rr_type, rd_length);
         return Rr{
@@ -697,7 +697,7 @@ pub const Rdata = union(Type) {
             .A => {
                 if (rd_length != ipv4_addr_len) return error.InvalidRdLength;
                 const bytes = input.getBytes(ipv4_addr_len)[0..ipv4_addr_len].*;
-                input.advance(ipv4_addr_len);
+                input.skip(ipv4_addr_len);
                 return Rdata{ .A = Ip4Addr{ .bytes = bytes } };
             },
             .CNAME => {
@@ -706,10 +706,10 @@ pub const Rdata = union(Type) {
             },
             .TXT => {
                 const length: usize = input.peekByte().?;
-                input.advance(1);
+                input.skip(1);
                 if (length != rd_length - 1) return error.InvalidRdata;
                 const txt = try allocator.dupe(u8, input.getBytes(length));
-                input.advance(length);
+                input.skip(length);
                 return Rdata{ .TXT = txt };
             },
             .NS => {
@@ -719,7 +719,7 @@ pub const Rdata = union(Type) {
             .AAAA => {
                 if (rd_length != ipv6_addr_len) return error.InvalidRdLength;
                 const bytes = input.getBytes(ipv6_addr_len)[0..ipv6_addr_len].*;
-                input.advance(ipv6_addr_len);
+                input.skip(ipv6_addr_len);
                 return Rdata{ .AAAA = Ip6Addr{ .bytes = bytes } };
             },
             else => return error.UnsupportedRdType,
@@ -760,7 +760,7 @@ fn decodeDomainName(allocator: mem.Allocator, input: *BytesView) ![]u8 {
     var dest = try allocator.alloc(u8, decoded_len);
     _ = try decodeLabels(input.bytes, input.pos, dest);
     const end_pos = try getLabelsEndPos(input.bytes, input.pos);
-    input.advance(end_pos - input.pos);
+    input.skip(end_pos - input.pos);
     return dest;
 }
 
