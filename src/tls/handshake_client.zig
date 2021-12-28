@@ -1,7 +1,7 @@
 const std = @import("std");
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
-const CipherSuite = @import("handshake_msg.zig").CipherSuite;
+const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suite.zig").CipherSuite12;
@@ -31,8 +31,8 @@ test "ClientHandshakeState" {
     var client_hello: ClientHelloMsg = undefined;
     {
         const cipher_suites = try allocator.dupe(
-            CipherSuite,
-            &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+            CipherSuiteId,
+            &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
         );
         errdefer allocator.free(cipher_suites);
         const compression_methods = try allocator.dupe(

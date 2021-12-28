@@ -18,7 +18,7 @@ pub const ProtocolVersion = enum(u16) {
 // package.
 //
 // See https://www.iana.org/assignments/tls-parameters/tls-parameters.xml
-pub const CipherSuite = enum(u16) {
+pub const CipherSuiteId = enum(u16) {
     // TLS 1.3 cipher suites.
     TLS_AES_128_GCM_SHA256 = 0x1301,
 
@@ -137,7 +137,7 @@ pub const ClientHelloMsg = struct {
     vers: ProtocolVersion = undefined,
     random: []const u8 = undefined,
     session_id: []const u8 = undefined,
-    cipher_suites: []const CipherSuite,
+    cipher_suites: []const CipherSuiteId,
     compression_methods: []const CompressionMethod,
     server_name: ?[]const u8 = null,
     ocsp_stapling: bool = undefined,
@@ -187,9 +187,9 @@ pub const ClientHelloMsg = struct {
             const random = try bv.sliceBytesNoEof(random_length);
             const session_id = try readString(u8, &bv);
 
-            const cipher_suites = try readEnumList(u16, CipherSuite, allocator, &bv);
+            const cipher_suites = try readEnumList(u16, CipherSuiteId, allocator, &bv);
             errdefer allocator.free(cipher_suites);
-            const idx = mem.indexOfScalar(CipherSuite, cipher_suites, .scsvRenegotiation);
+            const idx = mem.indexOfScalar(CipherSuiteId, cipher_suites, .scsvRenegotiation);
             const secure_renegotiation_supported = idx != null;
 
             const compression_methods = try readEnumList(u8, CompressionMethod, allocator, &bv);
@@ -361,7 +361,7 @@ pub const ClientHelloMsg = struct {
         assert(self.random.len == random_length);
         try writeBytes(self.random, writer);
         try writeLenAndBytes(u8, self.session_id, writer);
-        try writeLenAndIntSlice(u16, u16, CipherSuite, self.cipher_suites, writer);
+        try writeLenAndIntSlice(u16, u16, CipherSuiteId, self.cipher_suites, writer);
         try writeLenAndIntSlice(u8, u8, CompressionMethod, self.compression_methods, writer);
 
         const ext_len: usize = try countLength(*const ClientHelloMsg, writeExtensions, self);
@@ -510,7 +510,7 @@ pub const ServerHelloMsg = struct {
     vers: ProtocolVersion = undefined,
     random: []const u8 = undefined,
     session_id: []const u8 = undefined,
-    cipher_suite: CipherSuite,
+    cipher_suite: CipherSuiteId,
     compression_method: CompressionMethod,
     ocsp_stapling: bool = undefined,
     ticket_supported: bool = false,
@@ -545,7 +545,7 @@ pub const ServerHelloMsg = struct {
             const random = try bv.sliceBytesNoEof(random_length);
             const session_id = try readString(u8, &bv);
 
-            const cipher_suite = try readEnum(CipherSuite, &bv);
+            const cipher_suite = try readEnum(CipherSuiteId, &bv);
             const compression_method = try readEnum(CompressionMethod, &bv);
 
             msg = ServerHelloMsg{
@@ -1387,8 +1387,8 @@ test "ClientHelloMsg.unmarshal" {
 
 fn testCreateClientHelloMsg(allocator: mem.Allocator) !ClientHelloMsg {
     const cipher_suites = try allocator.dupe(
-        CipherSuite,
-        &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+        CipherSuiteId,
+        &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
     );
     errdefer allocator.free(cipher_suites);
     const compression_methods = try allocator.dupe(
@@ -1412,14 +1412,14 @@ const test_marshaled_client_hello_msg = "\x01" ++ // ClientHello
     "\x20" ++ // u8 len 32
     "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
     "\x00\x02" ++ // u16 len 2
-    "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
     "\x01" ++ // u8 len 1
     "\x00"; // CompressionMethod.none
 
 fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHelloMsg {
     const cipher_suites = try allocator.dupe(
-        CipherSuite,
-        &[_]CipherSuite{.TLS_AES_128_GCM_SHA256},
+        CipherSuiteId,
+        &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
     );
     errdefer allocator.free(cipher_suites);
     const compression_methods = try allocator.dupe(
@@ -1509,7 +1509,7 @@ const test_marshaled_client_hello_msg_with_extensions = "\x01" ++ // ClientHello
     "\x20" ++ // u8 len 32
     "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
     "\x00\x02" ++ // u16 len 2
-    "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
     "\x01" ++ // u8 len 1
     "\x00" ++ // CompressionMethod.none
     "\x00\xc3" ++ // u16 extensions len
@@ -1669,7 +1669,7 @@ const test_marshaled_server_hello_msg = "\x02" ++ // ServerHello
     "\x00" ** 32 ++ // 32 byte random
     "\x20" ++ // u8 len 32
     "\x00" ** 32 ++ // 32 byte session id
-    "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
     "\x00"; // CompressionMethod.none
 
 fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHelloMsg {
@@ -1708,7 +1708,7 @@ const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
     "\x00" ** 32 ++ // 32 byte random
     "\x20" ++ // u8 len 32
     "\x00" ** 32 ++ // 32 byte session id
-    "\x13\x01" ++ // CipherSuite.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
     "\x00" ++ // CompressionMethod.none
     "\x00\x62" ++ // u16 extensions_len
     "\x00\x05" ++ // ExtensionType.StatusRequest
