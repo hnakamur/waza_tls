@@ -1,7 +1,7 @@
 const std = @import("std");
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-const FinishedHash = struct {
+pub const FinishedHash = struct {
 
     // In TLS 1.2, a full buffer is sadly required.
     buffer: ?[]const u8 = null,
