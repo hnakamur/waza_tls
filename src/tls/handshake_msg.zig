@@ -1,6 +1,7 @@
 const std = @import("std");
-const builtin = std.builtin;
 const assert = std.debug.assert;
+const builtin = std.builtin;
+const crypto = std.crypto;
 const fifo = std.fifo;
 const fmt = std.fmt;
 const io = std.io;
@@ -55,7 +56,7 @@ const MsgType = enum(u8) {
     _,
 };
 
-const random_length = 32;
+pub const random_length = 32;
 
 pub const HandshakeMsg = union(MsgType) {
     HelloRequest: HelloRequestMsg,
@@ -536,6 +537,7 @@ pub const ServerHelloMsg = struct {
     selected_group: ?CurveId = null,
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
+        allocator.free(self.random);
         freeOptionalField(self, allocator, "supported_points");
         freeOptionalField(self, allocator, "scts");
         freeOptionalField(self, allocator, "raw");
@@ -550,7 +552,8 @@ pub const ServerHelloMsg = struct {
             bv = BytesView.init(raw);
             bv.skip(handshake_msg_header_len);
             const vers = try readEnum(ProtocolVersion, &bv);
-            const random = try bv.sliceBytesNoEof(random_length);
+            const random = try allocator.dupe(u8, try bv.sliceBytesNoEof(random_length));
+            errdefer allocator.free(random);
             const session_id = try readString(u8, &bv);
 
             const cipher_suite = try readEnum(CipherSuiteId, &bv);
@@ -1322,7 +1325,32 @@ fn toInt(comptime T: type, val: anytype) T {
     };
 }
 
+pub fn generateRandom(allocator: mem.Allocator) !*[random_length]u8 {
+    var random = try allocator.alloc(u8, random_length);
+    fillRandomBytes(random[0..random_length]);
+    return random[0..random_length];
+}
+
+pub fn fillRandomBytes(out: *[random_length]u8) void {
+    crypto.random.bytes(out[0..random_length]);
+}
+
 const testing = std.testing;
+
+test "generateRandom" {
+    const allocator = testing.allocator;
+
+    const random = try generateRandom(allocator);
+    defer allocator.free(random);
+
+    std.debug.print("random={}\n", .{fmt.fmtSliceHexLower(random[0..random_length])});
+}
+
+test "fillRandomBytes" {
+    var random: [random_length]u8 = undefined;
+    fillRandomBytes(&random);
+    std.debug.print("random={}\n", .{fmt.fmtSliceHexLower(&random)});
+}
 
 test "ClientHelloMsg.marshal" {
     const allocator = testing.allocator;
@@ -1618,7 +1646,7 @@ test "ServerHelloMsg.marshal" {
     };
 
     {
-        var msg = testCreateServerHelloMsg();
+        var msg = try testCreateServerHelloMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(&msg, test_marshaled_server_hello_msg);
     }
@@ -1648,7 +1676,7 @@ test "ServerHelloMsg.unmarshal" {
     };
 
     {
-        var msg = testCreateServerHelloMsg();
+        var msg = try testCreateServerHelloMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(test_marshaled_server_hello_msg, &msg);
     }
@@ -1660,10 +1688,12 @@ test "ServerHelloMsg.unmarshal" {
     }
 }
 
-fn testCreateServerHelloMsg() ServerHelloMsg {
+fn testCreateServerHelloMsg(allocator: mem.Allocator) !ServerHelloMsg {
+    const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(random);
     return ServerHelloMsg{
         .vers = .v1_3,
-        .random = &[_]u8{0} ** 32,
+        .random = random,
         .session_id = &[_]u8{0} ** 32,
         .cipher_suite = .TLS_AES_128_GCM_SHA256,
         .compression_method = .none,
@@ -1681,6 +1711,8 @@ const test_marshaled_server_hello_msg = "\x02" ++ // ServerHello
     "\x00"; // CompressionMethod.none
 
 fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHelloMsg {
+    const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(random);
     const scts = try allocator.dupe(
         []const u8,
         &[_][]const u8{ "sct1", "sct2" },
@@ -1693,7 +1725,7 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
     errdefer allocator.free(supported_points);
     return ServerHelloMsg{
         .vers = .v1_3,
-        .random = &[_]u8{0} ** 32,
+        .random = random,
         .session_id = &[_]u8{0} ** 32,
         .cipher_suite = .TLS_AES_128_GCM_SHA256,
         .compression_method = .none,
