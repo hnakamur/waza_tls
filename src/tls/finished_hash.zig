@@ -56,8 +56,13 @@ pub const FinishedHash = struct {
     }
 
     pub fn deinit(self: *FinishedHash) void {
+        self.discardHandshakeBuffer();
+    }
+
+    pub fn discardHandshakeBuffer(self: *FinishedHash) void {
         if (self.buffer) |*buffer| {
             buffer.deinit();
+            self.buffer = null;
         }
     }
 

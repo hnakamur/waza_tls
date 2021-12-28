@@ -6,9 +6,11 @@ const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
+const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
 
@@ -29,19 +31,55 @@ pub const ServerHandshakeState = struct {
 
     fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
         if (self.hello) |*hello| hello.deinit(allocator);
+        if (self.finished_hash) |*fh| fh.deinit();
     }
 
     fn processClientHello(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
         const random = try generateRandom(allocator);
         // TODO: stop hardcoding field values.
-        self.hello = ServerHelloMsg{
+        var hello = ServerHelloMsg{
             .vers = .v1_2,
             .random = random,
+            .session_id = &[_]u8{0} ** 32,
             .cipher_suite = .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
             .compression_method = .none,
             .ocsp_stapling = false,
             .supported_version = .v1_2,
         };
+        if (self.ecdhe_ok) {
+            // Although omitting the ec_point_formats extension is permitted, some
+            // old OpenSSL version will refuse to handshake if not present.
+            //
+            // Per RFC 4492, section 5.1.2, implementations MUST support the
+            // uncompressed point format. See golang.org/issue/31943.
+            hello.supported_points = try allocator.dupe(
+                EcPointFormat,
+                &[_]EcPointFormat{.uncompressed},
+            );
+        }
+
+        self.hello = hello;
+    }
+
+    fn pickCipherSuite(self: *ServerHandshakeState) !void {
+        // TODO: stop hardcoding.
+        self.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+    }
+
+    fn doFullHandshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
+        self.finished_hash = FinishedHash.new(allocator, .v1_2, self.suite);
+
+        if (true) { // TODO: stop hardcoding
+            // No need to keep a full record of the handshake if client
+            // certificates won't be used.
+            self.finished_hash.discardHandshakeBuffer();
+        }
+
+        try self.finishedHash.write(try self.clientHello.marshal(allocator));
+        try self.finishedHash.write(try self.hello.marshal(allocator));
+        // write record self.hello.marshal()
+
+        // TODO: implement
     }
 };
 
@@ -74,8 +112,11 @@ test "ServerHandshakeState" {
 
     var s = ServerHandshakeState{
         .client_hello = &client_hello,
+        .ecdhe_ok = true,
     };
     defer s.deinit(allocator);
-    std.debug.print("ServerHandshakeState={}\n", .{s});
     try s.processClientHello(allocator);
+    try s.pickCipherSuite();
+    try s.doFullHandshake(allocator);
+    std.debug.print("ServerHandshakeState={}\n", .{s});
 }
