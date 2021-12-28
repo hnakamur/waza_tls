@@ -12,6 +12,8 @@ const KeyShare = hs_msg.KeyShare;
 const PskIdentity = hs_msg.PskIdentity;
 const PskMode = hs_msg.PskMode;
 
+const finished_hash = @import("tls/finished_hash.zig");
+
 comptime {
     std.testing.refAllDecls(@This());
 }
