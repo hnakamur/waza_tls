@@ -12,9 +12,10 @@ const KeyShare = hs_msg.KeyShare;
 const PskIdentity = hs_msg.PskIdentity;
 const PskMode = hs_msg.PskMode;
 
-const cipher_suite = @import("tls/cipher_suite.zig");
+const cipher_suites = @import("tls/cipher_suites.zig");
 const finished_hash = @import("tls/finished_hash.zig");
 const handshake_client = @import("tls/handshake_client.zig");
+const hash = @import("tls/hash.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

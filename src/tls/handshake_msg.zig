@@ -22,8 +22,16 @@ pub const CipherSuiteId = enum(u16) {
     // TLS 1.3 cipher suites.
     TLS_AES_128_GCM_SHA256 = 0x1301,
 
+    // TLS 1.0 - 1.2 cipher suites.
+    TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xc02c,
+    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = 0xc02f,
+    // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xc030,
+    TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca8,
+
     // TLS signaling cipher suite values
     scsvRenegotiation = 0x00ff,
+
+    _,
 };
 
 const MsgType = enum(u8) {

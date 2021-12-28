@@ -4,7 +4,8 @@ const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
-const CipherSuite12 = @import("cipher_suite.zig").CipherSuite12;
+const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
 
 const ClientHandshakeState = struct {
     server_hello: *ServerHelloMsg,
@@ -20,13 +21,13 @@ test "ClientHandshakeState" {
     const allocator = testing.allocator;
 
     var server_hello = ServerHelloMsg{
-            .vers = .v1_3,
-            .random = &[_]u8{0} ** 32,
-            .session_id = &[_]u8{0} ** 32,
-            .cipher_suite = .TLS_AES_128_GCM_SHA256,
-            .compression_method = .none,
-            .ocsp_stapling = false,
-        };
+        .vers = .v1_3,
+        .random = &[_]u8{0} ** 32,
+        .session_id = &[_]u8{0} ** 32,
+        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .compression_method = .none,
+        .ocsp_stapling = false,
+    };
 
     var client_hello: ClientHelloMsg = undefined;
     {
@@ -50,12 +51,14 @@ test "ClientHandshakeState" {
     }
     defer client_hello.deinit(allocator);
 
-    var suite = CipherSuite12{};
-    var finished_hash = FinishedHash{ .version = .v1_3 };
+    var suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
+    var finished_hash = FinishedHash.new(allocator, .v1_2, suite);
+    defer finished_hash.deinit();
+
     var hs = ClientHandshakeState{
         .server_hello = &server_hello,
         .hello = &client_hello,
-        .suite = &suite,
+        .suite = suite,
         .finished_hash = &finished_hash,
     };
 
