@@ -116,3 +116,9 @@ test "String.skip" {
     try s.skip(3);
     try testing.expect(s.empty());
 }
+
+test "std.mem.readIntBig" {
+    const data = "\xff";
+    const got = mem.readIntBig(i8, data);
+    try testing.expectEqual(@as(i8, -1), got);
+}

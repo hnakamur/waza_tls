@@ -23,9 +23,7 @@ const key_schedule = @import("tls/key_schedule.zig");
 const fake_connection = @import("tls/fake_connection.zig");
 const hash = @import("tls/hash.zig");
 const ticket = @import("tls/ticket.zig");
-const asn1 = @import("tls/asn1.zig");
 const x509 = @import("tls/x509.zig");
-const String = @import("tls/String.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

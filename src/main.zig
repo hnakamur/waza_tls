@@ -25,9 +25,12 @@ const lex = parser.lex;
 const ChunkedDecoder = @import("chunk_decoder.zig").ChunkedDecoder;
 const BytesView = @import("BytesView.zig");
 
+const asn1 = @import("asn1.zig");
 const dns = @import("dns.zig");
 const tls = @import("tls.zig");
 const fmtx = @import("fmtx.zig");
+
+const String = @import("String.zig");
 
 pub const config = @import("config.zig");
 
