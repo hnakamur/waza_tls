@@ -247,6 +247,10 @@ pub const der = struct {
             error.EndOfStream => return if (is_optional) null else error.EndOfStream,
             else => |e| return e,
         });
+        std.log.debug(
+            "parse_schema_tag_len_internal tag_literal={}, is_optional={}, tag_byte=0x{x}",
+            .{ tag_literal, is_optional, tag_byte },
+        );
 
         const length = existing_length orelse try parse_length(der_reader);
         if (tag_literal == .sequence_of) {
