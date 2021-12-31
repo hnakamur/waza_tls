@@ -108,12 +108,86 @@ pub const String = struct {
         self.data = self.data[out.len..];
     }
 
-    // Empty reports whether the string does not contain any bytes.
+    // empty reports whether the string does not contain any bytes.
     pub fn empty(self: *const String) bool {
         return self.data.len == 0;
     }
 
-    fn readAsn1(self: *String, out_tag: ?*Tag, skip_header: bool) !String {
+    // readAsn1 reads the contents of a DER-encoded ASN.1 element (not including
+    // tag and length bytes), and advances. The element must match the
+    // given tag.
+    //
+    // Tags greater than 30 are not supported (i.e. low-tag-number format only).
+    pub fn readAsn1(self: *String, tag: Tag) !String {
+        var t: Tag = undefined;
+        const out = try self.readAnyAsn1(&t);
+        return if (t == tag) out else error.TagMismatch;
+    }
+
+    // readAsn1Element reads the contents of a DER-encoded ASN.1 element (including
+    // tag and length bytes), and advances. The element must match the
+    // given tag.
+    //
+    // Tags greater than 30 are not supported (i.e. low-tag-number format only).
+    pub fn readAsn1Element(self: *String, tag: Tag) !String {
+        var t: Tag = undefined;
+        const out = try self.readAnyAsn1Element(&t);
+        return if (t == tag) out else error.TagMismatch;
+    }
+
+    // readAnyAsn1 reads the contents of a DER-encoded ASN.1 element (not including
+    // tag and length bytes), sets out_tag to its tag, and advances.
+    //
+    // Tags greater than 30 are not supported (i.e. low-tag-number format only).
+    pub fn readAnyAsn1(self: *String, out_tag: ?*Tag) !String {
+        return self.doReadAsn1(out_tag, true);
+    }
+
+    // readAnyAsn1Element reads the contents of a DER-encoded ASN.1 element
+    // (including tag and length bytes), sets out_tag to is tag, and advances.
+    //
+    // Tags greater than 30 are not supported (i.e. low-tag-number format only).
+    pub fn readAnyAsn1Element(self: *String, out_tag: ?*Tag) !String {
+        return self.doReadAsn1(out_tag, false);
+    }
+
+    // peekAsn1Tag reports whether the next ASN.1 value on the string starts with
+    // the given tag.
+    pub fn peekAsn1Tag(self: *const String, tag: Tag) bool {
+        return self.data.len > 0 and @intToEnum(Tag, self.data[0]) == tag;
+    }
+
+    // skipAsn1 reads and discards an ASN.1 element with the given tag. It
+    // reports whether the operation was successful.
+    pub fn skipAsn1(self: *String, tag: Tag) !void {
+        _ = try self.readAsn1(tag);
+    }
+
+    // skipOptionalASN1 advances s over an ASN.1 element with the given tag, or
+    // else leaves s unchanged.
+    pub fn skipOptionalAsn1(self: *String, tag: Tag) !void {
+        if (peekAsn1Tag(tag)) try self.skipAsn1(tag);
+    }
+
+    // readOptionalAsn1 attempts to read the contents of a DER-encoded ASN.1
+    // element (not including tag and length bytes) tagged with the given tag.
+    pub fn readOptionalAsn1(self: *String, tag: Tag) !?String {
+        return if (self.peekAsn1Tag(tag)) try self.readAsn1(tag) else null;
+    }
+
+    fn readAsn1Int64(self: *String) !i64 {
+        var bytes = try self.readAsn1(.integer);
+        try checkAsn1Integer(bytes.data);
+        return try asn1Signed(bytes.data);
+    }
+
+    fn readAsn1Uint64(self: *String) !u64 {
+        var bytes = try self.readAsn1(.integer);
+        try checkAsn1Integer(bytes.data);
+        return try asn1Unsigned(bytes.data);
+    }
+
+    fn doReadAsn1(self: *String, out_tag: ?*Tag, skip_header: bool) !String {
         if (self.data.len < 2) {
             return error.EndOfStream;
         }
@@ -161,7 +235,7 @@ pub const String = struct {
                 // Length should have used short-form encoding.
                 return error.InvalidLength;
             }
-            if (len32 >> (len_len - 1) * 8 == 0) {
+            if (len32 >> @intCast(u5, (len_len - 1) * 8) == 0) {
                 // Leading octet is 0. Length should have been at least one byte shorter.
                 return error.InvalidLength;
             }
@@ -177,7 +251,7 @@ pub const String = struct {
         if (@bitCast(i32, length) < 0) {
             return error.InvalidLength;
         }
-        var out = try self.readBytes(length);
+        var out = String.init(try self.readBytes(length));
         if (skip_header) {
             try out.skip(header_len);
         }
@@ -185,7 +259,120 @@ pub const String = struct {
     }
 };
 
+fn checkAsn1Integer(bytes: []const u8) !void {
+    switch (bytes.len) {
+        0 => {
+            // An INTEGER is encoded with at least one octet.
+            return error.InvalidInteger;
+        },
+        1 => {},
+        else => {
+            if (bytes[0] == 0 and bytes[1] & 0x80 == 0 or bytes[0] == 0xff and bytes[1] & 0x80 == 0x80) {
+                // Value is not minimally encoded.
+                return error.InvalidInteger;
+            }
+        },
+    }
+}
+
+fn asn1Signed(bytes: []const u8) !i64 {
+    const len = bytes.len;
+    if (len > 8) {
+        return error.TooLargeInteger;
+    }
+    var out: i64 = 0;
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        out = out << 8 | bytes[i];
+    }
+    // Shift up and down in order to sign extend the result.
+    const n = @intCast(u6, 64 - len * 8);
+    _ = @shlWithOverflow(i64, out, n, &out);
+    out = @shrExact(out, n);
+    return out;
+}
+
+fn asn1Unsigned(bytes: []const u8) !u64 {
+    const len = bytes.len;
+    if (len > 9 or len == 9 and bytes[0] != 0) {
+        return error.TooLargeInteger;
+    }
+    if (bytes[0] & 0x80 != 0) {
+        return error.NegativeInteger;
+    }
+    var out: u64 = 0;
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        out = out << 8 | bytes[i];
+    }
+    return out;
+}
+
 const testing = std.testing;
+
+test "readAsn1Int64" {
+    const f = struct {
+        fn f(want: anyerror!i64, input: []const u8) !void {
+            var s = String.init(input);
+            if (want) |v| {
+                try testing.expectEqual(v, try s.readAsn1Int64());
+            } else |err| {
+                try testing.expectError(err, s.readAsn1Int64());
+            }
+        }
+    }.f;
+
+    try f(127, "\x02\x01\x7f");
+    try f(-128, "\x02\x01\x80");
+    try f(std.math.maxInt(i64), "\x02\x08\x7f" ++ "\xff" ** 7);
+    try f(error.EndOfStream, "\x02\x01");
+}
+
+test "readAsn1Uint64" {
+    const f = struct {
+        fn f(want: anyerror!u64, input: []const u8) !void {
+            var s = String.init(input);
+            if (want) |v| {
+                try testing.expectEqual(v, try s.readAsn1Uint64());
+            } else |err| {
+                try testing.expectError(err, s.readAsn1Uint64());
+            }
+        }
+    }.f;
+
+    try f(255, "\x02\x02\x00\xff");
+    try f(std.math.maxInt(u64), "\x02\x09\x00" ++ "\xff" ** 8);
+    try f(error.EndOfStream, "\x02\x01");
+}
+
+test "asn1Signed" {
+    try testing.expectEqual(@as(i64, 127), try asn1Signed("\x7f"));
+    try testing.expectEqual(@as(i64, -128), try asn1Signed("\x80"));
+    try testing.expectEqual(@as(i64, -127), try asn1Signed("\x81"));
+    try testing.expectEqual(@as(i64, -2), try asn1Signed("\xfe"));
+    try testing.expectEqual(@as(i64, -1), try asn1Signed("\xff"));
+
+    try testing.expectEqual(@as(i64, 32767), try asn1Signed("\x7f\xff"));
+    try testing.expectEqual(@as(i64, -32768), try asn1Signed("\x80\x00"));
+    try testing.expectEqual(@as(i64, -32767), try asn1Signed("\x80\x01"));
+    try testing.expectEqual(@as(i64, -2), try asn1Signed("\xff\xfe"));
+    try testing.expectEqual(@as(i64, -1), try asn1Signed("\xff\xff"));
+
+    try testing.expectEqual(@as(i64, std.math.maxInt(i64)), try asn1Signed("\x7f" ++ "\xff" ** 7));
+    try testing.expectEqual(@as(i64, -1), try asn1Signed("\xff" ** 8));
+    try testing.expectError(error.TooLargeInteger, asn1Signed("\xff" ** 9));
+}
+
+test "asn1Unsigned" {
+    try testing.expectEqual(@as(u64, 127), try asn1Unsigned("\x7f"));
+    try testing.expectError(error.NegativeInteger, asn1Unsigned("\x80"));
+    try testing.expectError(error.NegativeInteger, asn1Unsigned("\xff"));
+    try testing.expectEqual(@as(u64, 128), try asn1Unsigned("\x00\x80"));
+    try testing.expectEqual(@as(u64, 0), try asn1Unsigned("\x00" ** 9));
+    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), try asn1Unsigned("\x00" ++ "\xff" ** 8));
+    try testing.expectError(error.TooLargeInteger, asn1Unsigned("\x01" ++ "\xff" ** 8));
+    try testing.expectError(error.TooLargeInteger, asn1Unsigned("\x00" ** 10));
+}
 
 test "asn1.Tag" {
     try testing.expectEqual(@intToEnum(Tag, 0x2c), Tag.utf8_string.constructed());
