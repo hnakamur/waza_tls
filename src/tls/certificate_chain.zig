@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 
 pub const CertificateChain = struct {
@@ -21,13 +22,19 @@ pub const CertificateChain = struct {
     // using x509.ParseCertificate to reduce per-handshake processing. If nil,
     // the leaf certificate will be parsed as needed.
     leaf: ?*Certificate = null,
+
+    pub fn deinit(self: *CertificateChain, allocator: mem.Allocator) void {
+        allocator.free(self.certificate_chain);
+    }
 };
 
 pub const Certificate = struct {
     raw: []const u8, // Complete ASN.1 DER content (certificate, signature algorithm and signature).
 };
 
-pub const PrivateKey = struct {};
+pub const PrivateKey = struct {
+    raw: []const u8,
+};
 
 test "CertificateChain" {
     var cert = CertificateChain{

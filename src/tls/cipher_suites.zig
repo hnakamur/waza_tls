@@ -1,5 +1,9 @@
 const std = @import("std");
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
+const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
+const RsaKeyAgreement = @import("key_agreement.zig").RsaKeyAgreement;
+const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
 
 pub const CipherSuite12 = struct {
     pub const Flags = packed struct {
@@ -11,22 +15,38 @@ pub const CipherSuite12 = struct {
 
     id: CipherSuiteId,
     flags: Flags = .{},
+    ka: fn (version: ProtocolVersion) KeyAgreement,
 };
 
 pub const cipher_suites12 = [_]CipherSuite12{
     .{
         .id = .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         .flags = .{ .ecdhe = true, .tls12 = true },
+        .ka = ecdheRsaKa,
     },
     .{
         .id = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
         .flags = .{ .ecdhe = true, .tls12 = true },
+        .ka = ecdheRsaKa,
     },
     .{
         .id = .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
         .flags = .{ .ecdhe = true, .ec_sign = true, .tls12 = true, .sha384 = true },
+        .ka = ecdheEcdsaKa,
     },
 };
+
+fn rsaKa(_: ProtocolVersion) KeyAgreement {
+    return .{ .rsa = RsaKeyAgreement{} };
+}
+
+fn ecdheEcdsaKa(version: ProtocolVersion) KeyAgreement {
+    return .{ .ecdhe = EcdheKeyAgreement{ .is_rsa = false, .version = version } };
+}
+
+fn ecdheRsaKa(version: ProtocolVersion) KeyAgreement {
+    return .{ .ecdhe = EcdheKeyAgreement{ .is_rsa = true, .version = version } };
+}
 
 pub fn mutualCipherSuite(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuite12 {
     for (have) |id| {

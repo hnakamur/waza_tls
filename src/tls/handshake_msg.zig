@@ -753,7 +753,7 @@ pub const ServerHelloMsg = struct {
     }
 };
 
-const CertificateMsg = struct {
+pub const CertificateMsg = struct {
     raw: ?[]const u8 = null,
     certificates: []const []const u8 = undefined,
 
@@ -804,11 +804,12 @@ const CertificateMsg = struct {
     }
 };
 
-const ServerKeyExchangeMsg = struct {
+pub const ServerKeyExchangeMsg = struct {
     raw: ?[]const u8 = null,
-    key: []const u8 = undefined,
+    key: []const u8,
 
     pub fn deinit(self: *ServerKeyExchangeMsg, allocator: mem.Allocator) void {
+        allocator.free(self.key);
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -843,7 +844,7 @@ const ServerKeyExchangeMsg = struct {
     }
 };
 
-const ServerHelloDoneMsg = struct {
+pub const ServerHelloDoneMsg = struct {
     raw: ?[]const u8 = null,
 
     pub fn deinit(self: *ServerHelloDoneMsg, allocator: mem.Allocator) void {
@@ -981,6 +982,9 @@ const CertificateStatusType = enum(u8) {
 pub const SignatureScheme = enum(u16) {
     // RSASSA-PKCS1-v1_5 algorithms.
     Pkcs1WithSha256 = 0x0401,
+
+    // EdDSA algorithms.
+    Ed25519 = 0x0807,
 };
 
 pub const CurveId = enum(u16) {
@@ -1873,7 +1877,7 @@ test "ServerKeyExchangeMsg.marshal" {
     };
 
     {
-        var msg = testCreateServerKeyExchangeMsg();
+        var msg = try testCreateServerKeyExchangeMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(&msg, test_marshaled_server_key_exchange_msg);
     }
@@ -1897,15 +1901,16 @@ test "ServerKeyExchangeMsg.unmarshal" {
     };
 
     {
-        var msg = testCreateServerKeyExchangeMsg();
+        var msg = try testCreateServerKeyExchangeMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(test_marshaled_server_key_exchange_msg, &msg);
     }
 }
 
-fn testCreateServerKeyExchangeMsg() ServerKeyExchangeMsg {
+fn testCreateServerKeyExchangeMsg(allocator: mem.Allocator) !ServerKeyExchangeMsg {
+    const key = try allocator.dupe(u8, "server key");
     return ServerKeyExchangeMsg{
-        .key = "server key",
+        .key = key,
     };
 }
 
