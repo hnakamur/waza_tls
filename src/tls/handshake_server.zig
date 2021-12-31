@@ -15,6 +15,8 @@ const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
 const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
+const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
+const FakeConnection = @import("fake_connection.zig").FakeConnection;
 
 // ServerHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
@@ -30,6 +32,7 @@ pub const ServerHandshakeState = struct {
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
     cert_chain: ?CertificateChain = null,
+    fake_con: ?*FakeConnection = null,
 
     fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
         if (self.hello) |*hello| hello.deinit(allocator);
@@ -91,19 +94,25 @@ pub const ServerHandshakeState = struct {
         try finished_hash.write(try self.client_hello.marshal(allocator));
         try finished_hash.write(try self.hello.?.marshal(allocator));
         // TODO: implement write record self.hello.marshal()
+        if (self.fake_con) |con| {
+            con.server_hello_msg = self.hello.?;
+        }
 
         {
             const certificates = try allocator.dupe(
                 []const u8,
                 &[_][]const u8{testEd25519Certificate},
             );
-            var certMsg = CertificateMsg{
+            var cert_msg = CertificateMsg{
                 .certificates = certificates,
             };
-            defer certMsg.deinit(allocator);
+            defer cert_msg.deinit(allocator);
 
-            try finished_hash.write(try certMsg.marshal(allocator));
-            // TODO: implement write record certMsg.marshal()
+            try finished_hash.write(try cert_msg.marshal(allocator));
+            // TODO: implement write record cert_msg.marshal()
+            if (self.fake_con) |con| {
+                con.cert_msg = cert_msg;
+            }
         }
 
         if (self.hello.?.ocsp_stapling) {
@@ -118,14 +127,20 @@ pub const ServerHandshakeState = struct {
             &self.hello.?,
         );
         defer skx.deinit(allocator);
-        std.log.debug("skx={}", .{skx});
+        // std.log.debug("skx={}", .{skx});
         try finished_hash.write(try skx.marshal(allocator));
         // TODO: implement write record skx.marshal()
+        if (self.fake_con) |con| {
+            con.skx_msg = skx;
+        }
 
         var hello_done = ServerHelloDoneMsg{};
         defer hello_done.deinit(allocator);
         try finished_hash.write(try hello_done.marshal(allocator));
         // TODO: implement write record hello_done.marshal()
+        if (self.fake_con) |con| {
+            con.hello_done_msg = hello_done;
+        }
 
         // TODO: implement
         self.finished_hash = finished_hash;
@@ -174,13 +189,23 @@ test "ServerHandshakeState" {
     }
     defer client_hello.deinit(allocator);
 
-    var s = ServerHandshakeState{
+    var fake_con = FakeConnection{};
+    var srv_hs = ServerHandshakeState{
         .client_hello = &client_hello,
         .ecdhe_ok = true,
+        .fake_con = &fake_con,
     };
-    defer s.deinit(allocator);
-    try s.processClientHello(allocator);
-    try s.pickCipherSuite();
-    try s.doFullHandshake(allocator);
-    std.debug.print("ServerHandshakeState={}\n", .{s});
+    defer srv_hs.deinit(allocator);
+    try srv_hs.processClientHello(allocator);
+    try srv_hs.pickCipherSuite();
+    try srv_hs.doFullHandshake(allocator);
+
+    var cli_hs = ClientHandshakeState{
+        .server_hello = &fake_con.server_hello_msg.?,
+        .hello = &client_hello,
+    };
+    defer cli_hs.deinit(allocator);
+
+    std.log.debug("ClientHandshakeState={}\n", .{cli_hs});
+    std.log.debug("ServerHandshakeState={}\n", .{srv_hs});
 }

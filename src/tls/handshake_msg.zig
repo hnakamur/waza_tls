@@ -961,7 +961,7 @@ const FinishedMsg = struct {
     }
 };
 
-fn freeOptionalField(
+pub fn freeOptionalField(
     lhs: anytype,
     allocator: mem.Allocator,
     comptime field_name: []const u8,

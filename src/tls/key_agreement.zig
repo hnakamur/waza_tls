@@ -41,6 +41,7 @@ pub const EcdheKeyAgreement = struct {
     is_rsa: bool,
     version: ProtocolVersion,
     params: ?EcdheParameters = null,
+    pre_master_secret: ?[]const u8 = null,
 
     pub fn generateServerKeyExchange(
         self: *EcdheKeyAgreement,
@@ -63,7 +64,7 @@ pub const EcdheKeyAgreement = struct {
         server_ecdhe_params[2] = @truncate(u8, @enumToInt(curve_id));
         server_ecdhe_params[3] = @intCast(u8, ecdhe_public.len);
 
-        std.log.debug("ecdhe_public={}", .{std.fmt.fmtSliceHexLower(ecdhe_public)});
+        // std.log.debug("ecdhe_public={}", .{std.fmt.fmtSliceHexLower(ecdhe_public)});
 
         const sig_scheme = SignatureScheme.Ed25519; // FIX: stop hardcoding;
         var sig_type: SignatureType = undefined;
@@ -88,13 +89,13 @@ pub const EcdheKeyAgreement = struct {
             },
         );
         defer allocator.free(signed);
-        std.log.debug("signed={}", .{std.fmt.fmtSliceHexLower(signed)});
+        // std.log.debug("signed={}", .{std.fmt.fmtSliceHexLower(signed)});
 
         const private_key = cert_chain.private_key.?;
         const private_key_bytes = private_key.raw[0..crypto.sign.Ed25519.secret_length];
         const key_pair = crypto.sign.Ed25519.KeyPair.fromSecretKey(private_key_bytes.*);
         const sig = try crypto.sign.Ed25519.sign(signed, key_pair, null);
-        std.log.debug("sig={}", .{std.fmt.fmtSliceHexLower(&sig)});
+        // std.log.debug("sig={}", .{std.fmt.fmtSliceHexLower(&sig)});
 
         const sig_and_hash_len: usize = if (v1_2_or_later) 2 else 0;
         var key = try allocator.alloc(u8, server_ecdhe_params.len + sig_and_hash_len + 2 + sig.len);
