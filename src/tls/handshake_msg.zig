@@ -817,7 +817,7 @@ pub const ServerKeyExchangeMsg = struct {
         const raw = try allocator.dupe(u8, msg_data);
         var bv = BytesView.init(raw);
         bv.skip(enumTypeLen(MsgType));
-        const key = try readString(u24, &bv);
+        const key = try allocator.dupe(u8, try readString(u24, &bv));
 
         return ServerKeyExchangeMsg{
             .raw = raw,
@@ -1298,7 +1298,7 @@ fn writeLenAndIntSlice(
 }
 
 fn intTypeLen(comptime IntType: type) usize {
-    return (@typeInfo(IntType).Int.bits + 7) / 8;
+    return @divExact(@typeInfo(IntType).Int.bits, 8);
 }
 
 fn enumTypeLen(comptime EnumType: type) usize {

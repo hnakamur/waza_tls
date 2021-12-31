@@ -12,7 +12,7 @@ pub const EcdheParameters = union(enum) {
             .x25519 => return EcdheParameters{
                 .x25519 = try X25519Parameters.generate(),
             },
-            // else => @panic("not implemented yet"),
+            else => @panic("not implemented yet"),
         }
     }
 
