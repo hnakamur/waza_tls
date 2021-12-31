@@ -37,11 +37,13 @@ pub const Tag = enum(u8) {
     pub fn contextSpecific(self: Tag) Tag {
         return @intToEnum(Tag, @enumToInt(self) | class_context_specific);
     }
+
+    pub fn isHighTag(self: Tag) bool {
+        return @enumToInt(self) & 0x1f == 0x1f;
+    }
 };
 
 pub const String = struct {
-    pub const Error = error{EndOfStream};
-
     data: []const u8,
 
     pub fn init(data: []const u8) String {
@@ -49,11 +51,11 @@ pub const String = struct {
     }
 
     // skip advances the String by n bytes.
-    pub fn skip(self: *String, n: usize) Error!void {
+    pub fn skip(self: *String, n: usize) !void {
         _ = try self.readBytes(n);
     }
 
-    pub fn readInt(self: *String, comptime T: type) Error!T {
+    pub fn readIntOfType(self: *String, comptime T: type) !T {
         const n = @divExact(@typeInfo(T).Int.bits, 8);
         if (self.data.len < n) {
             return error.EndOfStream;
@@ -63,15 +65,32 @@ pub const String = struct {
         return v;
     }
 
-    // readLengthPrefixed reads the content of a type T length-prefixed value
+    pub fn readUnsigned(self: *String, len: usize) !u32 {
+        return switch (len) {
+            1 => try self.readIntOfType(u8),
+            2 => try self.readIntOfType(u16),
+            3 => try self.readIntOfType(u24),
+            4 => try self.readIntOfType(u32),
+            else => error.UnsupportedIntLength,
+        };
+    }
+
+    // readLengthOfTypePrefixed reads the content of a type T length-prefixed value
     // into out and advances over it.
-    pub fn readLengthPrefixed(self: *String, comptime T: type) Error![]const u8 {
-        const len = try self.readInt(T);
+    pub fn readLengthOfTypePrefixed(self: *String, comptime T: type) ![]const u8 {
+        const len = try self.readIntOfType(T);
+        return try self.readBytes(len);
+    }
+
+    // readLengthPrefixed reads the content of a length-prefixed value
+    // into out and advances over it.
+    pub fn readLengthPrefixed(self: *String, len_len: usize) ![]const u8 {
+        const len = try self.readUnsigned(len_len);
         return try self.readBytes(len);
     }
 
     // readBytes reads n bytes and advances over them.
-    pub fn readBytes(self: *String, n: usize) Error![]const u8 {
+    pub fn readBytes(self: *String, n: usize) ![]const u8 {
         if (self.data.len < n) {
             return error.EndOfStream;
         }
@@ -81,7 +100,7 @@ pub const String = struct {
     }
 
     // copyBytes copies out.len bytes into out and advances over them.
-    pub fn copyBytes(self: *String, out: []u8) Error!void {
+    pub fn copyBytes(self: *String, out: []u8) !void {
         if (self.data.len < out.len) {
             return error.EndOfStream;
         }
@@ -92,6 +111,77 @@ pub const String = struct {
     // Empty reports whether the string does not contain any bytes.
     pub fn empty(self: *const String) bool {
         return self.data.len == 0;
+    }
+
+    fn readAsn1(self: *String, out_tag: ?*Tag, skip_header: bool) !String {
+        if (self.data.len < 2) {
+            return error.EndOfStream;
+        }
+
+        const tag = @intToEnum(Tag, self.data[0]);
+        if (tag.isHighTag()) {
+            // ITU-T X.690 section 8.1.2
+            //
+            // An identifier octet with a tag part of 0x1f indicates a high-tag-number
+            // form identifier with two or more octets. We only support tags less than
+            // 31 (i.e. low-tag-number form, single octet identifier).
+            return error.HighTagNotSupported;
+        }
+
+        if (out_tag) |t| {
+            t.* = tag;
+        }
+
+        const len_byte = self.data[1];
+
+        // ITU-T X.690 section 8.1.3
+        //
+        // Bit 8 of the first length byte indicates whether the length is short- or
+        // long-form.
+        var length: u32 = undefined;
+        var header_len: u32 = undefined; // length includes header_len
+        if (len_byte & 0x80 == 0) {
+            // Short-form length (section 8.1.3.4), encoded in bits 1-7.
+            length = len_byte + 2;
+            header_len = 2;
+        } else {
+            // Long-form length (section 8.1.3.5). Bits 1-7 encode the number of octets
+            // used to encode the length.
+            const len_len = len_byte & 0x7f;
+            if (len_len == 0 or len_len > 4 or self.data.len < 2 + len_len) {
+                return error.InvalidLength;
+            }
+
+            var len_bytes = String.init(self.data[2 .. 2 + len_len]);
+            const len32 = try len_bytes.readUnsigned(len_len);
+
+            // ITU-T X.690 section 10.1 (DER length forms) requires encoding the length
+            // with the minimum number of octets.
+            if (len32 < 128) {
+                // Length should have used short-form encoding.
+                return error.InvalidLength;
+            }
+            if (len32 >> (len_len - 1) * 8 == 0) {
+                // Leading octet is 0. Length should have been at least one byte shorter.
+                return error.InvalidLength;
+            }
+
+            header_len = 2 + len_len;
+            length = header_len +% len32;
+            if (length < len32) {
+                // Overflow.
+                return error.InvalidLength;
+            }
+        }
+
+        if (@bitCast(i32, length) < 0) {
+            return error.InvalidLength;
+        }
+        var out = try self.readBytes(length);
+        if (skip_header) {
+            try out.skip(header_len);
+        }
+        return out;
     }
 };
 
@@ -131,20 +221,20 @@ test "String.copyBytes" {
     try testing.expectError(error.EndOfStream, s.copyBytes(&out));
 }
 
-test "String.readInt" {
+test "String.readUnsigned" {
     var s = String.init("\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a");
-    try testing.expectEqual(@as(u8, 0x01), try s.readInt(u8));
-    try testing.expectEqual(@as(u16, 0x0203), try s.readInt(u16));
-    try testing.expectEqual(@as(u24, 0x040506), try s.readInt(u24));
-    try testing.expectEqual(@as(u32, 0x0708090a), try s.readInt(u32));
+    try testing.expectEqual(@as(u32, 0x01), try s.readUnsigned(1));
+    try testing.expectEqual(@as(u32, 0x0203), try s.readUnsigned(2));
+    try testing.expectEqual(@as(u32, 0x040506), try s.readUnsigned(3));
+    try testing.expectEqual(@as(u32, 0x0708090a), try s.readUnsigned(4));
 }
 
 test "String.readLengthPrefixed" {
     var s = String.init("\x03abc\x00\x03def\x00\x00\x03ghi\x00\x00\x00\x03jkl");
-    try testing.expectEqualStrings("abc", try s.readLengthPrefixed(u8));
-    try testing.expectEqualStrings("def", try s.readLengthPrefixed(u16));
-    try testing.expectEqualStrings("ghi", try s.readLengthPrefixed(u24));
-    try testing.expectEqualStrings("jkl", try s.readLengthPrefixed(u32));
+    try testing.expectEqualStrings("abc", try s.readLengthPrefixed(1));
+    try testing.expectEqualStrings("def", try s.readLengthPrefixed(2));
+    try testing.expectEqualStrings("ghi", try s.readLengthPrefixed(3));
+    try testing.expectEqualStrings("jkl", try s.readLengthPrefixed(4));
     try testing.expect(s.empty());
 }
 
@@ -165,4 +255,9 @@ test "std.mem.readIntBig" {
     const data = "\xff";
     const got = mem.readIntBig(i8, data);
     try testing.expectEqual(@as(i8, -1), got);
+}
+
+test "u32/i32" {
+    const a: u32 = 0xffffffff;
+    try testing.expectEqual(@as(i32, -1), @bitCast(i32, a));
 }
