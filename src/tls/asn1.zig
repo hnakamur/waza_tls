@@ -176,6 +176,20 @@ pub const String = struct {
         return if (self.peekAsn1Tag(tag)) try self.readAsn1(tag) else null;
     }
 
+    // readASN1Integer decodes an ASN.1 INTEGER and advances.
+    // Supported types are i8, i16, i24, i32, i64, u8, u16, u24, u32, u64, and
+    // std.math.big.int.Managed. It panics for other types.
+    // For std.math.big.int.Managed, deinit method must be called after use of the
+    // returned value.
+    pub fn readAsn1Integer(self: *String, comptime T: type, allocator: mem.Allocator) !T {
+        return switch (T) {
+            i8, i16, i24, i32, i64 => @intCast(T, try self.readAsn1Int64()),
+            u8, u16, u24, u32, u64 => @intCast(T, try self.readAsn1Uint64()),
+            math.big.int.Managed => try self.readAsn1BigInt(allocator),
+            else => @panic("unsupported type for readAsn1Integer"),
+        };
+    }
+
     fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Managed {
         var bytes = try self.readAsn1(.integer);
         var data = bytes.data;
@@ -355,13 +369,71 @@ fn asn1Unsigned(bytes: []const u8) !u64 {
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
 
+test "readAsn1Integer" {
+    testing.log_level = .debug;
+
+    const f = struct {
+        fn f(comptime T: type, want_str: []const u8, input: []const u8) !void {
+            const allocator = testing.allocator;
+            var s = String.init(input);
+            var got = try s.readAsn1Integer(T, allocator);
+            defer if (T == math.big.int.Managed) got.deinit();
+
+            const got_str =
+                switch (T) {
+                i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
+                    break :blk try std.fmt.allocPrint(allocator, "{}", .{got});
+                },
+                math.big.int.Managed => blk: {
+                    break :blk try got.toString(allocator, 10, .lower);
+                },
+                else => @panic("unsupported type"),
+            };
+            defer allocator.free(got_str);
+
+            if (!mem.eql(u8, got_str, want_str)) {
+                std.debug.print("T={}, input={}\n", .{ T, fmtx.fmtSliceHexEscapeLower(input) });
+            }
+            try testing.expectEqualStrings(got_str, want_str);
+        }
+    }.f;
+
+    try f(u64, "0", "\x02\x01\x00");
+    try f(u8, "0", "\x02\x01\x00");
+    try f(i8, "0", "\x02\x01\x00");
+    try f(math.big.int.Managed, "0", "\x02\x01\x00");
+    try f(math.big.int.Managed, "18446744073709551615", "\x02\x09\x00" ++ "\xff" ** 8);
+}
+
+test "switchType" {
+    const f = struct {
+        fn f(comptime T: type) void {
+            switch (T) {
+                u64 => std.debug.print("T is u64\n", .{}),
+                u32 => std.debug.print("T is u32\n", .{}),
+                math.big.int.Managed => std.debug.print("T is bigint\n", .{}),
+                else => std.debug.print("T is other type\n", .{}),
+            }
+        }
+    }.f;
+
+    f(u64);
+    f(u32);
+    f(math.big.int.Managed);
+}
+
 test "bigInt" {
     const allocator = testing.allocator;
-    var i = try std.math.big.int.Managed.initSet(allocator, 0x1234_5678_9ABC_DEF0);
+    // var i = try std.math.big.int.Managed.initSet(allocator, 0x1234_5678_9ABC_DEF0);
+    var i = try std.math.big.int.Managed.initSet(allocator, 0);
     defer i.deinit();
-    var m = i.toMutable();
+    // var m = i.toMutable();
+    var got_s = try i.toString(allocator, 10, .lower);
+    std.debug.print("got_s={s}\n", .{got_s});
+    defer allocator.free(got_s);
+
     // m.addScalar(m.toConst(), 257);
-    i = m.toManaged(allocator);
+    // i = m.toManaged(allocator);
     const b = @ptrCast([*]const u8, i.limbs.ptr);
     std.debug.print(
         "limbs.len={}, metadata={x}, limbs={any}\n",
@@ -369,7 +441,6 @@ test "bigInt" {
     );
 }
 
-// fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Managed {
 test "readAsn1BigInt" {
     testing.log_level = .debug;
     const f = struct {
@@ -385,17 +456,6 @@ test "readAsn1BigInt" {
                     std.debug.print("input={}, want_str={s}, want={}, got={}\n", .{
                         fmtx.fmtSliceHexEscapeLower(input), str, want, got,
                     });
-                    const b = @ptrCast([*]const u8, got.limbs.ptr);
-                    std.debug.print(
-                        "got.limbs.len={}, got.metadata={x}, got.limbs={any}\n",
-                        .{ got.limbs.len, got.metadata, fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * got.limbs.len]) },
-                    );
-
-                    const b_want = @ptrCast([*]const u8, want.limbs.ptr);
-                    std.debug.print(
-                        "want.limbs.len={}, want.metadata={x}, want.limbs={any}\n",
-                        .{ want.limbs.len, want.metadata, fmtx.fmtSliceHexEscapeLower(b_want[0 .. 8 * want.limbs.len]) },
-                    );
                 }
                 try testing.expect(want.eq(got));
             } else |err| {
@@ -452,6 +512,7 @@ test "readAsn1Uint64" {
         }
     }.f;
 
+    try f(0, "\x02\x01\x00");
     try f(255, "\x02\x02\x00\xff");
     try f(std.math.maxInt(u64), "\x02\x09\x00" ++ "\xff" ** 8);
     try f(error.EndOfStream, "\x02\x01");
