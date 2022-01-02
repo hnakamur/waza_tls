@@ -191,13 +191,11 @@ pub const String = struct {
         default_value: T,
     ) !T {
         return if (try self.readOptionalAsn1(tag)) |*i| blk: {
-            std.log.debug("i.data={s}", .{i.data});
             break :blk try i.readAsn1Integer(T, allocator);
-        } else default_value;
-        // return if (try self.readOptionalAsn1(tag)) |*i|
-        //     try i.readAsn1Integer(T, allocator)
-        // else
-        //     default_value;
+        } else switch (T) {
+            math.big.int.Managed => try default_value.cloneWithDifferentAllocator(allocator),
+            else => default_value,
+        };
     }
 
     // readAsn1Integer decodes an ASN.1 INTEGER and advances.
@@ -434,39 +432,107 @@ test "readOptionalAsn1" {
         }
     }.f;
 
-    try f(String.init("\x02\x01\x00"), "\x02\x01\x00", .integer);
+    try f(String.init("\x00"), "\x02\x01\x00", .integer);
 }
 
-// test "readOptionalAsn1Integer" {
-//     testing.log_level = .debug;
-//     const f = struct {
-//         fn f(comptime T: type, want_str: []const u8, input: []const u8, default_value: T) !void {
-//             const allocator = testing.allocator;
-//             var s = String.init(input);
-//             var got = try s.readOptionalAsn1Integer(T, .integer, allocator, default_value);
-//             defer if (T == math.big.int.Managed) got.deinit();
-//             const got_str =
-//                 switch (T) {
-//                 i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
-//                     break :blk try std.fmt.allocPrint(allocator, "{}", .{got});
-//                 },
-//                 math.big.int.Managed => blk: {
-//                     break :blk try got.toString(allocator, 10, .lower);
-//                 },
-//                 else => @panic("unsupported type"),
-//             };
-//             defer allocator.free(got_str);
+fn allocDebugPrintBigIntManaged(
+    i: math.big.int.Managed,
+    allocator: mem.Allocator,
+) error{OutOfMemory}![]u8 {
+    var counting_writer = std.io.countingWriter(std.io.null_writer);
+    debugFormatBigIntManaged(i, counting_writer.writer()) catch unreachable;
+    const size = math.cast(usize, counting_writer.bytes_written) catch |err| switch (err) {
+        // Output too long. Can't possibly allocate enough memory to display it.
+        error.Overflow => return error.OutOfMemory,
+    };
+    const buf = try allocator.alloc(u8, size);
+    var fbs = std.io.fixedBufferStream(buf);
+    debugFormatBigIntManaged(i, fbs.writer()) catch |err| switch (err) {
+        error.NoSpaceLeft => unreachable, // we just counted the size above
+    };
+    return fbs.getWritten();
+}
 
-//             if (!mem.eql(u8, got_str, want_str)) {
-//                 std.debug.print("T={}, input={}\n", .{ T, fmtx.fmtSliceHexEscapeLower(input) });
-//             }
-//             try testing.expectEqualStrings(got_str, want_str);
-//         }
-//     }.f;
+fn debugFormatBigIntManaged(
+    i: math.big.int.Managed,
+    out_stream: anytype,
+) !void {
+    const b = @ptrCast([*]const u8, i.limbs.ptr);
+    try std.fmt.format(
+        out_stream,
+        "limbs.ptr=0x{x}, limbs.len={}, metadata={x}, limbs={}",
+        .{
+            @ptrToInt(i.limbs.ptr),
+            i.limbs.len,
+            i.metadata,
+            fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * i.limbs.len]),
+        },
+    );
+}
 
-//     try f(u64, "0", "\x02\x01\x00", 1);
-//     // try f(math.big.int.Managed, "0", "\x02\x01\x00");
-// }
+test "readOptionalAsn1Integer" {
+    testing.log_level = .debug;
+    const f = struct {
+        fn f(comptime T: type, want_str: []const u8, input: []const u8, tag: Tag, default_value: T) !void {
+            const allocator = testing.allocator;
+            var s = String.init(input);
+            var got = try s.readOptionalAsn1Integer(T, tag, allocator, default_value);
+            defer if (T == math.big.int.Managed) got.deinit();
+            const got_str =
+                switch (T) {
+                i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
+                    break :blk try std.fmt.allocPrint(allocator, "{}", .{got});
+                },
+                math.big.int.Managed => blk: {
+                    break :blk try got.toString(allocator, 10, .lower);
+                },
+                else => @panic("unsupported type"),
+            };
+            defer allocator.free(got_str);
+
+            if (!mem.eql(u8, got_str, want_str)) {
+                std.debug.print("T={}, input={}\n", .{ T, fmtx.fmtSliceHexEscapeLower(input) });
+            }
+            try testing.expectEqualStrings(got_str, want_str);
+        }
+    }.f;
+
+    try f(u64, "2", "\xa0\x03\x02\x01\x02", @intToEnum(Tag, 0).constructed().contextSpecific(), 0);
+    {
+        const allocator = testing.allocator;
+        var default_value = try math.big.int.Managed.initSet(allocator, 0);
+        defer default_value.deinit();
+
+        // var default_value_debug_str = try allocDebugPrintBigIntManaged(default_value, allocator);
+        // std.debug.print("default_value: {s}\n", .{default_value_debug_str});
+        // defer allocator.free(default_value_debug_str);
+
+        try f(
+            math.big.int.Managed,
+            "2",
+            "\xa0\x03\x02\x01\x02",
+            @intToEnum(Tag, 0).constructed().contextSpecific(),
+            default_value,
+        );
+    }
+    {
+        const allocator = testing.allocator;
+        var default_value = try math.big.int.Managed.initSet(allocator, 0);
+        defer default_value.deinit();
+
+        // var default_value_debug_str = try allocDebugPrintBigIntManaged(default_value, allocator);
+        // std.debug.print("default_value: {s}\n", .{default_value_debug_str});
+        // defer allocator.free(default_value_debug_str);
+
+        try f(
+            math.big.int.Managed,
+            "0",
+            "\x02\x01\x00",
+            @intToEnum(Tag, 0).constructed().contextSpecific(),
+            default_value,
+        );
+    }
+}
 
 test "readAsn1Integer" {
     testing.log_level = .debug;
@@ -719,4 +785,24 @@ test "std.mem.readIntBig" {
 test "u32/i32" {
     const a: u32 = 0xffffffff;
     try testing.expectEqual(@as(i32, -1), @bitCast(i32, a));
+}
+
+test "parseCertificate" {
+    const allocator = testing.allocator;
+    const test_rsa_pss_certificate = "\x30\x82\x02\x58\x30\x82\x01\x8d\xa0\x03\x02\x01\x02\x02\x11\x00\xf2\x99\x26\xeb\x87\xea\x8a\x0d\xb9\xfc\xc2\x47\x34\x7c\x11\xb0\x30\x41\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0a\x30\x34\xa0\x0f\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa1\x1c\x30\x1a\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x08\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa2\x03\x02\x01\x20\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x1e\x17\x0d\x31\x37\x31\x31\x32\x33\x31\x36\x31\x36\x31\x30\x5a\x17\x0d\x31\x38\x31\x31\x32\x33\x31\x36\x31\x36\x31\x30\x5a\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x81\x9f\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00\x03\x81\x8d\x00\x30\x81\x89\x02\x81\x81\x00\xdb\x46\x7d\x93\x2e\x12\x27\x06\x48\xbc\x06\x28\x21\xab\x7e\xc4\xb6\xa2\x5d\xfe\x1e\x52\x45\x88\x7a\x36\x47\xa5\x08\x0d\x92\x42\x5b\xc2\x81\xc0\xbe\x97\x79\x98\x40\xfb\x4f\x6d\x14\xfd\x2b\x13\x8b\xc2\xa5\x2e\x67\xd8\xd4\x09\x9e\xd6\x22\x38\xb7\x4a\x0b\x74\x73\x2b\xc2\x34\xf1\xd1\x93\xe5\x96\xd9\x74\x7b\xf3\x58\x9f\x6c\x61\x3c\xc0\xb0\x41\xd4\xd9\x2b\x2b\x24\x23\x77\x5b\x1c\x3b\xbd\x75\x5d\xce\x20\x54\xcf\xa1\x63\x87\x1d\x1e\x24\xc4\xf3\x1d\x1a\x50\x8b\xaa\xb6\x14\x43\xed\x97\xa7\x75\x62\xf4\x14\xc8\x52\xd7\x02\x03\x01\x00\x01\xa3\x46\x30\x44\x30\x0e\x06\x03\x55\x1d\x0f\x01\x01\xff\x04\x04\x03\x02\x05\xa0\x30\x13\x06\x03\x55\x1d\x25\x04\x0c\x30\x0a\x06\x08\x2b\x06\x01\x05\x05\x07\x03\x01\x30\x0c\x06\x03\x55\x1d\x13\x01\x01\xff\x04\x02\x30\x00\x30\x0f\x06\x03\x55\x1d\x11\x04\x08\x30\x06\x87\x04\x7f\x00\x00\x01\x30\x41\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0a\x30\x34\xa0\x0f\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa1\x1c\x30\x1a\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x08\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa2\x03\x02\x01\x20\x03\x81\x81\x00\xcd\xac\x4e\xf2\xce\x5f\x8d\x79\x88\x10\x42\x70\x7f\x7c\xbf\x1b\x5a\x8a\x00\xef\x19\x15\x4b\x40\x15\x17\x71\x00\x6c\xd4\x16\x26\xe5\x49\x6d\x56\xda\x0c\x1a\x13\x9f\xd8\x46\x95\x59\x3c\xb6\x7f\x87\x76\x5e\x18\xaa\x03\xea\x06\x75\x22\xdd\x78\xd2\xa5\x89\xb8\xc9\x23\x64\xe1\x28\x38\xce\x34\x6c\x6e\x06\x7b\x51\xf1\xa7\xe6\xf4\xb3\x7f\xfa\xb1\x3f\x14\x11\x89\x66\x79\xd1\x8e\x88\x0e\x0b\xa0\x9e\x30\x2a\xc0\x67\xef\xca\x46\x02\x88\xe9\x53\x81\x22\x69\x22\x97\xad\x80\x93\xd4\xf7\xdd\x70\x14\x24\xd7\x70\x0a\x46\xa1";
+    // const test_ecdsa_certificate = "\x30\x82\x02\x00\x30\x82\x01\x62\x02\x09\x00\xb8\xbf\x2d\x47\xa0\xd2\xeb\xf4\x30\x09\x06\x07\x2a\x86\x48\xce\x3d\x04\x01\x30\x45\x31\x0b\x30\x09\x06\x03\x55\x04\x06\x13\x02\x41\x55\x31\x13\x30\x11\x06\x03\x55\x04\x08\x13\x0a\x53\x6f\x6d\x65\x2d\x53\x74\x61\x74\x65\x31\x21\x30\x1f\x06\x03\x55\x04\x0a\x13\x18\x49\x6e\x74\x65\x72\x6e\x65\x74\x20\x57\x69\x64\x67\x69\x74\x73\x20\x50\x74\x79\x20\x4c\x74\x64\x30\x1e\x17\x0d\x31\x32\x31\x31\x32\x32\x31\x35\x30\x36\x33\x32\x5a\x17\x0d\x32\x32\x31\x31\x32\x30\x31\x35\x30\x36\x33\x32\x5a\x30\x45\x31\x0b\x30\x09\x06\x03\x55\x04\x06\x13\x02\x41\x55\x31\x13\x30\x11\x06\x03\x55\x04\x08\x13\x0a\x53\x6f\x6d\x65\x2d\x53\x74\x61\x74\x65\x31\x21\x30\x1f\x06\x03\x55\x04\x0a\x13\x18\x49\x6e\x74\x65\x72\x6e\x65\x74\x20\x57\x69\x64\x67\x69\x74\x73\x20\x50\x74\x79\x20\x4c\x74\x64\x30\x81\x9b\x30\x10\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x05\x2b\x81\x04\x00\x23\x03\x81\x86\x00\x04\x00\xc4\xa1\xed\xbe\x98\xf9\x0b\x48\x73\x36\x7e\xc3\x16\x56\x11\x22\xf2\x3d\x53\xc3\x3b\x4d\x21\x3d\xcd\x6b\x75\xe6\xf6\xb0\xdc\x9a\xdf\x26\xc1\xbc\xb2\x87\xf0\x72\x32\x7c\xb3\x64\x2f\x1c\x90\xbc\xea\x68\x23\x10\x7e\xfe\xe3\x25\xc0\x48\x3a\x69\xe0\x28\x6d\xd3\x37\x00\xef\x04\x62\xdd\x0d\xa0\x9c\x70\x62\x83\xd8\x81\xd3\x64\x31\xaa\x9e\x97\x31\xbd\x96\xb0\x68\xc0\x9b\x23\xde\x76\x64\x3f\x1a\x5c\x7f\xe9\x12\x0e\x58\x58\xb6\x5f\x70\xdd\x9b\xd8\xea\xd5\xd7\xf5\xd5\xcc\xb9\xb6\x9f\x30\x66\x5b\x66\x9a\x20\xe2\x27\xe5\xbf\xfe\x3b\x30\x09\x06\x07\x2a\x86\x48\xce\x3d\x04\x01\x03\x81\x8c\x00\x30\x81\x88\x02\x42\x01\x88\xa2\x4f\xeb\xe2\x45\xc5\x48\x7d\x1b\xac\xf5\xed\x98\x9d\xae\x47\x70\xc0\x5e\x1b\xb6\x2f\xbd\xf1\xb6\x4d\xb7\x61\x40\xd3\x11\xa2\xce\xee\x0b\x7e\x92\x7e\xff\x76\x9d\xc3\x3b\x7e\xa5\x3f\xce\xfa\x10\xe2\x59\xec\x47\x2d\x7c\xac\xda\x4e\x97\x0e\x15\xa0\x6f\xd0\x02\x42\x01\x4d\xfc\xbe\x67\x13\x9c\x2d\x05\x0e\xbd\x3f\xa3\x8c\x25\xc1\x33\x13\x83\x0d\x94\x06\xbb\xd4\x37\x7a\xf6\xec\x7a\xc9\x86\x2e\xdd\xd7\x11\x69\x7f\x85\x7c\x56\xde\xfb\x31\x78\x2b\xe4\xc7\x78\x0d\xae\xcb\xbe\x9e\x4e\x36\x24\x31\x7b\x6a\x0f\x39\x95\x12\x07\x8f\x2a";
+    var input = String.init(test_rsa_pss_certificate);
+    input = try input.readAsn1Element(.sequence);
+    input = try input.readAsn1(.sequence);
+    var tbs = try input.readAsn1Element(.sequence);
+    tbs = try tbs.readAsn1(.sequence);
+    std.debug.print("tbs.data#1={}\n", .{fmtx.fmtSliceHexEscapeLower(tbs.data)});
+    var cert_version = try tbs.readOptionalAsn1Integer(
+        u64,
+        @intToEnum(Tag, 0).constructed().contextSpecific(),
+        allocator,
+        0,
+    );
+    std.debug.print("cert_version=0x{x}\n", .{cert_version});
+    std.debug.print("tbs.data#2={}\n", .{fmtx.fmtSliceHexEscapeLower(tbs.data)});
 }
