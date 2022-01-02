@@ -431,8 +431,11 @@ test "readAsn1Int64" {
         }
     }.f;
 
+    try f(0, "\x02\x01\x00");
     try f(127, "\x02\x01\x7f");
     try f(-128, "\x02\x01\x80");
+    try f(-129, "\x02\x02\xff\x7f");
+    try f(-130, "\x02\x02\xff\x7e");
     try f(std.math.maxInt(i64), "\x02\x08\x7f" ++ "\xff" ** 7);
     try f(error.EndOfStream, "\x02\x01");
 }
