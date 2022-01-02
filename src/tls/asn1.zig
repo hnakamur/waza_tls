@@ -1,4 +1,5 @@
 const std = @import("std");
+const math = std.math;
 const mem = std.mem;
 
 // Tag represents an ASN.1 identifier octet, consisting of a tag number
@@ -175,6 +176,56 @@ pub const String = struct {
         return if (self.peekAsn1Tag(tag)) try self.readAsn1(tag) else null;
     }
 
+    fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Managed {
+        var bytes = try self.readAsn1(.integer);
+        var data = bytes.data;
+        try checkAsn1Integer(data);
+        const limb_byte_len = @divExact(@typeInfo(usize).Int.bits, 8);
+        if (data[0] & 0x80 == 0x80) {
+            // Negative number.
+            std.log.debug("data.len={}, data={}", .{ data.len, fmtx.fmtSliceHexEscapeLower(data) });
+            const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * data.len);
+            var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
+            var b = @ptrCast([*]u8, ret.limbs.ptr);
+            std.log.debug("data[0]={x}, ~data[0]={x}", .{ data[0], ~data[0] });
+            var i: usize = 0;
+            while (i < data.len) : (i += 1) {
+                b[i] = ~data[i];
+                std.log.debug("i={}, b[data.len-i]={x}", .{ i, b[data.len - i] });
+            }
+            std.log.debug("b#1={}", .{fmtx.fmtSliceHexEscapeLower(b[0..data.len])});
+            mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
+            mem.reverse(u8, b[0..data.len]);
+            ret.metadata = capacity;
+            std.log.debug("b={}", .{fmtx.fmtSliceHexEscapeLower(b[0 .. limb_byte_len * capacity])});
+            std.log.debug("readAsn1BigInt ret#1={}", .{&ret});
+            std.log.debug(
+                "ret.limbs.len={}, ret.metadata={x}, ret.limbs={}\n",
+                .{ ret.limbs.len, ret.metadata, fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * ret.limbs.len]) },
+            );
+
+            var one_limbs_buf: [1]usize = undefined;
+            const one = math.big.int.Mutable.init(&one_limbs_buf, 1).toConst();
+            try ret.add(ret.toConst(), one);
+            std.log.debug("readAsn1BigInt ret#2={}", .{&ret});
+            ret.negate();
+            std.log.debug("readAsn1BigInt ret#3={}", .{&ret});
+            return ret;
+        } else {
+            if (data[0] == 0 and data.len > 1) {
+                data = data[1..];
+            }
+            const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * data.len);
+            var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
+            var b = @ptrCast([*]u8, ret.limbs.ptr);
+            mem.copy(u8, b[0..data.len], data);
+            mem.reverse(u8, b[0..data.len]);
+            mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
+            ret.metadata = capacity;
+            return ret;
+        }
+    }
+
     fn readAsn1Int64(self: *String) !i64 {
         var bytes = try self.readAsn1(.integer);
         try checkAsn1Integer(bytes.data);
@@ -309,6 +360,71 @@ fn asn1Unsigned(bytes: []const u8) !u64 {
 }
 
 const testing = std.testing;
+const fmtx = @import("../fmtx.zig");
+
+test "bigInt" {
+    const allocator = testing.allocator;
+    var i = try std.math.big.int.Managed.initSet(allocator, 0x1234_5678_9ABC_DEF0);
+    defer i.deinit();
+    var m = i.toMutable();
+    // m.addScalar(m.toConst(), 257);
+    i = m.toManaged(allocator);
+    const b = @ptrCast([*]const u8, i.limbs.ptr);
+    std.debug.print(
+        "limbs.len={}, metadata={x}, limbs={any}\n",
+        .{ i.limbs.len, i.metadata, fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * i.limbs.len]) },
+    );
+}
+
+// fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Managed {
+test "readAsn1BigInt" {
+    testing.log_level = .debug;
+    const f = struct {
+        fn f(want_str: anyerror![]const u8, input: []const u8) !void {
+            var s = String.init(input);
+            if (want_str) |str| {
+                var want = try math.big.int.Managed.init(testing.allocator);
+                defer want.deinit();
+                try want.setString(10, str);
+                var got = try s.readAsn1BigInt(testing.allocator);
+                defer got.deinit();
+                if (!want.eq(got)) {
+                    std.debug.print("input={}, want_str={s}, want={}, got={}\n", .{
+                        fmtx.fmtSliceHexEscapeLower(input), str, want, got,
+                    });
+                    const b = @ptrCast([*]const u8, got.limbs.ptr);
+                    std.debug.print(
+                        "got.limbs.len={}, got.metadata={x}, got.limbs={any}\n",
+                        .{ got.limbs.len, got.metadata, fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * got.limbs.len]) },
+                    );
+
+                    const b_want = @ptrCast([*]const u8, want.limbs.ptr);
+                    std.debug.print(
+                        "want.limbs.len={}, want.metadata={x}, want.limbs={any}\n",
+                        .{ want.limbs.len, want.metadata, fmtx.fmtSliceHexEscapeLower(b_want[0 .. 8 * want.limbs.len]) },
+                    );
+                }
+                try testing.expect(want.eq(got));
+            } else |err| {
+                try testing.expectError(err, s.readAsn1Int64());
+            }
+        }
+    }.f;
+
+    try f("0", "\x02\x01\x00");
+    try f("1", "\x02\x01\x01");
+    try f("127", "\x02\x01\x7f");
+    try f("128", "\x02\x02\x00\x80");
+    try f("255", "\x02\x02\x00\xff");
+    try f("256", "\x02\x02\x01\x00");
+    try f("72057594037927935", "\x02\x08\x00" ++ "\xff" ** 7);
+    try f("18446744073709551615", "\x02\x09\x00" ++ "\xff" ** 8);
+    try f("-1", "\x02\x01\xff");
+    try f("-2", "\x02\x01\xfe");
+    try f("-128", "\x02\x01\x80");
+    try f("-129", "\x02\x02\xff\x7f");
+    try f("-130", "\x02\x02\xff\x7e");
+}
 
 test "readAsn1Int64" {
     const f = struct {

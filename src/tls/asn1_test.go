@@ -2,9 +2,81 @@ package main
 
 import (
 	"math"
+	"math/big"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/cryptobyte"
 )
+
+func TestReadASN1Integer(t *testing.T) {
+	t.Run("BuildBigInt", func(t *testing.T) {
+		testCases := []struct {
+			input string
+			want  string
+		}{
+			{input: "0", want: "\x02\x01\x00"},
+			{input: "127", want: "\x02\x01\x7f"},
+			{input: "128", want: "\x02\x02\x00\x80"},
+			{input: "255", want: "\x02\x02\x00\xff"},
+			{input: "256", want: "\x02\x02\x01\x00"},
+			{input: "-1", want: "\x02\x01\xff"},
+			{input: "-2", want: "\x02\x01\xfe"},
+			{input: "-128", want: "\x02\x01\x80"},
+			{input: "-129", want: "\x02\x02\xff\x7f"},
+			{input: "-130", want: "\x02\x02\xff\x7e"},
+		}
+		for _, c := range testCases {
+			bi, ok := big.NewInt(0).SetString(c.input, 10)
+			if !ok {
+				t.Fatalf("invalid input=%s", c.input)
+			}
+			b := cryptobyte.NewBuilder(nil)
+			b.AddASN1BigInt(bi)
+			got := string(b.BytesOrPanic())
+			if got != c.want {
+				t.Errorf("result mismatch, input=%s, got=%x, want=%x",
+					c.input, got, c.want)
+			}
+		}
+	})
+	t.Run("BigInt", func(t *testing.T) {
+		testCases := []struct {
+			input       string
+			wantSuccess bool
+			wantStr     string
+		}{
+			{input: "\x02\x01\x00", wantSuccess: true, wantStr: "0"},
+			{input: "\x02\x01\x01", wantSuccess: true, wantStr: "1"},
+			{input: "\x02\x01\x7f", wantSuccess: true, wantStr: "127"},
+			{input: "\x02\x01\x80", wantSuccess: true, wantStr: "-128"},
+			{input: "\x02\x01\xff", wantSuccess: true, wantStr: "-1"},
+			{input: "\x02\x02\x01\x00", wantSuccess: true, wantStr: "256"},
+			{input: "\x02\x08\x00" + strings.Repeat("\xff", 7), wantSuccess: true,
+				wantStr: "72057594037927935"},
+			{input: "\x02\x09\x00" + strings.Repeat("\xff", 8), wantSuccess: true,
+				wantStr: "18446744073709551615"},
+		}
+		for _, c := range testCases {
+			var gotInt big.Int
+			s := cryptobyte.String([]byte(c.input))
+			gotSuccess := s.ReadASN1Integer(&gotInt)
+			if gotSuccess != c.wantSuccess {
+				t.Errorf("success mismatched, input=%q, got=%v, want=%v",
+					c.input, gotSuccess, c.wantSuccess)
+			} else {
+				wantInt, ok := big.NewInt(0).SetString(c.wantStr, 10)
+				if !ok {
+					t.Fatalf("bad wantStr %s for input=%q", c.wantStr, c.input)
+				}
+				if gotInt.Cmp(wantInt) != 0 {
+					t.Errorf("int value mismatched, input=%q, got=%v, want=%v",
+						c.input, &gotInt, wantInt)
+				}
+			}
+		}
+	})
+}
 
 func TestAsn1Signed(t *testing.T) {
 	testCases := []struct {
