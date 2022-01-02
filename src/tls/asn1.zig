@@ -164,7 +164,7 @@ pub const String = struct {
         _ = try self.readAsn1(tag);
     }
 
-    // skipOptionalASN1 advances s over an ASN.1 element with the given tag, or
+    // skipOptionalAsn1 advances s over an ASN.1 element with the given tag, or
     // else leaves s unchanged.
     pub fn skipOptionalAsn1(self: *String, tag: Tag) !void {
         if (peekAsn1Tag(tag)) try self.skipAsn1(tag);
@@ -176,7 +176,31 @@ pub const String = struct {
         return if (self.peekAsn1Tag(tag)) try self.readAsn1(tag) else null;
     }
 
-    // readASN1Integer decodes an ASN.1 INTEGER and advances.
+    // readOptionalAsn1Integer attempts to read an optional ASN.1 INTEGER
+    // explicitly tagged with tag and advances. If no element with a
+    // matching tag is present, it returns defaultValue instead.
+    // Supported types are i8, i16, i24, i32, i64, u8, u16, u24, u32, u64, and
+    // std.math.big.int.Managed. It panics for other types.
+    // For std.math.big.int.Managed, deinit method must be called after use of the
+    // returned value.
+    pub fn readOptionalAsn1Integer(
+        self: *String,
+        comptime T: type,
+        tag: Tag,
+        allocator: mem.Allocator,
+        default_value: T,
+    ) !T {
+        return if (try self.readOptionalAsn1(tag)) |*i| blk: {
+            std.log.debug("i.data={s}", .{i.data});
+            break :blk try i.readAsn1Integer(T, allocator);
+        } else default_value;
+        // return if (try self.readOptionalAsn1(tag)) |*i|
+        //     try i.readAsn1Integer(T, allocator)
+        // else
+        //     default_value;
+    }
+
+    // readAsn1Integer decodes an ASN.1 INTEGER and advances.
     // Supported types are i8, i16, i24, i32, i64, u8, u16, u24, u32, u64, and
     // std.math.big.int.Managed. It panics for other types.
     // For std.math.big.int.Managed, deinit method must be called after use of the
@@ -368,6 +392,81 @@ fn asn1Unsigned(bytes: []const u8) !u64 {
 
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
+
+test "readOptionalAsn1" {
+    testing.log_level = .debug;
+    const f = struct {
+        fn f(want: ?String, input: []const u8, tag: Tag) !void {
+            var s = String.init(input);
+            if (try s.readOptionalAsn1(tag)) |got| {
+                if (want) |w| {
+                    if (!mem.eql(u8, w.data, got.data)) {
+                        std.debug.print(
+                            "input={}, got {}, want {}\n",
+                            .{
+                                fmtx.fmtSliceHexEscapeLower(input),
+                                fmtx.fmtSliceHexEscapeLower(got.data),
+                                fmtx.fmtSliceHexEscapeLower(w.data),
+                            },
+                        );
+                    }
+                    try testing.expectEqualSlices(u8, w.data, got.data);
+                } else {
+                    std.debug.print(
+                        "input={}, got {}, want null\n",
+                        .{
+                            fmtx.fmtSliceHexEscapeLower(input),
+                            fmtx.fmtSliceHexEscapeLower(got.data),
+                        },
+                    );
+                }
+            } else {
+                if (want) |w| {
+                    std.debug.print(
+                        "input={}, got null, want {}\n",
+                        .{
+                            fmtx.fmtSliceHexEscapeLower(input),
+                            fmtx.fmtSliceHexEscapeLower(w.data),
+                        },
+                    );
+                }
+            }
+        }
+    }.f;
+
+    try f(String.init("\x02\x01\x00"), "\x02\x01\x00", .integer);
+}
+
+// test "readOptionalAsn1Integer" {
+//     testing.log_level = .debug;
+//     const f = struct {
+//         fn f(comptime T: type, want_str: []const u8, input: []const u8, default_value: T) !void {
+//             const allocator = testing.allocator;
+//             var s = String.init(input);
+//             var got = try s.readOptionalAsn1Integer(T, .integer, allocator, default_value);
+//             defer if (T == math.big.int.Managed) got.deinit();
+//             const got_str =
+//                 switch (T) {
+//                 i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
+//                     break :blk try std.fmt.allocPrint(allocator, "{}", .{got});
+//                 },
+//                 math.big.int.Managed => blk: {
+//                     break :blk try got.toString(allocator, 10, .lower);
+//                 },
+//                 else => @panic("unsupported type"),
+//             };
+//             defer allocator.free(got_str);
+
+//             if (!mem.eql(u8, got_str, want_str)) {
+//                 std.debug.print("T={}, input={}\n", .{ T, fmtx.fmtSliceHexEscapeLower(input) });
+//             }
+//             try testing.expectEqualStrings(got_str, want_str);
+//         }
+//     }.f;
+
+//     try f(u64, "0", "\x02\x01\x00", 1);
+//     // try f(math.big.int.Managed, "0", "\x02\x01\x00");
+// }
 
 test "readAsn1Integer" {
     testing.log_level = .debug;

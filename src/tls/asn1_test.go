@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/asn1"
+	"log"
 	"math"
 	"math/big"
 	"strings"
@@ -8,6 +10,17 @@ import (
 
 	"golang.org/x/crypto/cryptobyte"
 )
+
+func TestReadOptionalASN1(t *testing.T) {
+	s := cryptobyte.String([]byte("\x02\x01\x00"))
+	var child cryptobyte.String
+	var present bool
+	ok := s.ReadOptionalASN1(&child, &present, asn1.TagInteger)
+	if !ok {
+		t.Fatalf("read failed")
+	}
+	log.Printf("child=%+v, present=%v", child, present)
+}
 
 func TestReadASN1Integer(t *testing.T) {
 	t.Run("BuildBigInt", func(t *testing.T) {
