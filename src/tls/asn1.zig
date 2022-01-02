@@ -183,33 +183,21 @@ pub const String = struct {
         const limb_byte_len = @divExact(@typeInfo(usize).Int.bits, 8);
         if (data[0] & 0x80 == 0x80) {
             // Negative number.
-            std.log.debug("data.len={}, data={}", .{ data.len, fmtx.fmtSliceHexEscapeLower(data) });
             const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * data.len);
             var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
             var b = @ptrCast([*]u8, ret.limbs.ptr);
-            std.log.debug("data[0]={x}, ~data[0]={x}", .{ data[0], ~data[0] });
             var i: usize = 0;
             while (i < data.len) : (i += 1) {
                 b[i] = ~data[i];
-                std.log.debug("i={}, b[data.len-i]={x}", .{ i, b[data.len - i] });
             }
-            std.log.debug("b#1={}", .{fmtx.fmtSliceHexEscapeLower(b[0..data.len])});
             mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
             mem.reverse(u8, b[0..data.len]);
             ret.metadata = capacity;
-            std.log.debug("b={}", .{fmtx.fmtSliceHexEscapeLower(b[0 .. limb_byte_len * capacity])});
-            std.log.debug("readAsn1BigInt ret#1={}", .{&ret});
-            std.log.debug(
-                "ret.limbs.len={}, ret.metadata={x}, ret.limbs={}\n",
-                .{ ret.limbs.len, ret.metadata, fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * ret.limbs.len]) },
-            );
 
             var one_limbs_buf: [1]usize = undefined;
             const one = math.big.int.Mutable.init(&one_limbs_buf, 1).toConst();
             try ret.add(ret.toConst(), one);
-            std.log.debug("readAsn1BigInt ret#2={}", .{&ret});
             ret.negate();
-            std.log.debug("readAsn1BigInt ret#3={}", .{&ret});
             return ret;
         } else {
             if (data[0] == 0 and data.len > 1) {
@@ -219,8 +207,8 @@ pub const String = struct {
             var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
             var b = @ptrCast([*]u8, ret.limbs.ptr);
             mem.copy(u8, b[0..data.len], data);
-            mem.reverse(u8, b[0..data.len]);
             mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
+            mem.reverse(u8, b[0..data.len]);
             ret.metadata = capacity;
             return ret;
         }
