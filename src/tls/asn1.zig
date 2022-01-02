@@ -188,12 +188,14 @@ pub const String = struct {
             var b = @ptrCast([*]u8, ret.limbs.ptr);
             var i: usize = 0;
             while (i < data.len) : (i += 1) {
-                b[i] = ~data[i];
+                // Use bitwise NOT here since encoded bytes are encoded in two's-complement form.
+                // Also note bytes in zig's big integer are little-endian ordered.
+                b[data.len - 1 - i] = ~data[i];
             }
             mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
-            mem.reverse(u8, b[0..data.len]);
             ret.metadata = capacity;
 
+            // ret = -(ret + 1)
             var one_limbs_buf: [1]usize = undefined;
             const one = math.big.int.Mutable.init(&one_limbs_buf, 1).toConst();
             try ret.add(ret.toConst(), one);
@@ -206,9 +208,12 @@ pub const String = struct {
             const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * data.len);
             var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
             var b = @ptrCast([*]u8, ret.limbs.ptr);
-            mem.copy(u8, b[0..data.len], data);
+            var i: usize = 0;
+            while (i < data.len) : (i += 1) {
+                // Note bytes in zig's big integer are little-endian ordered.
+                b[data.len - 1 - i] = data[i];
+            }
             mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
-            mem.reverse(u8, b[0..data.len]);
             ret.metadata = capacity;
             return ret;
         }
