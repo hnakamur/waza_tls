@@ -93,6 +93,31 @@ pub const PrivateKey = union(KeyType) {
     }
 };
 
+pub const SignatureAlgorithm = enum {
+    MD2WithRSA = 1, // Unsupported.
+    MD5WithRSA, // Only supported for signing, not verification.
+    SHA1WithRSA, // Only supported for signing, not verification.
+    SHA256WithRSA,
+    SHA384WithRSA,
+    SHA512WithRSA,
+    DSAWithSHA1, // Unsupported.
+    DSAWithSHA256, // Unsupported.
+    ECDSAWithSHA1, // Only supported for signing, not verification.
+    ECDSAWithSHA256,
+    ECDSAWithSHA384,
+    ECDSAWithSHA512,
+    SHA256WithRSAPSS,
+    SHA384WithRSAPSS,
+    SHA512WithRSAPSS,
+    PureEd25519,
+};
+
+const testing = std.testing;
+
+test "SignatureAlgorithm" {
+    try testing.expectEqual(1, @enumToInt(SignatureAlgorithm.MD5WithRSA));
+}
+
 test "PublicKey/PrivateKey" {
     std.debug.print("PublicKey.empty={}\n", .{PublicKey.empty});
     std.debug.print("PrivateKey.empty={}\n", .{PrivateKey.empty});
