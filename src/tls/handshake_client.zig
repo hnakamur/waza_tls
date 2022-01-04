@@ -15,6 +15,7 @@ const x509 = @import("x509.zig");
 const prfForVersion = @import("prf.zig").prfForVersion;
 const master_secret_length = @import("prf.zig").master_secret_length;
 const master_secret_label = @import("prf.zig").master_secret_label;
+const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const ServerHandshakeState = @import("handshake_server.zig").ServerHandshakeState;
 
@@ -74,7 +75,7 @@ pub const ClientHandshakeState = struct {
             try self.finished_hash.?.write(try con.hello_done_msg.?.marshal(allocator));
 
             var pre_master_secret: []const u8 = undefined;
-            var ckx: *const ClientKeyExchangeMsg = undefined;
+            var ckx: ClientKeyExchangeMsg = undefined;
             try key_agreement.generateClientKeyExchange(
                 allocator,
                 self.hello,
@@ -82,6 +83,8 @@ pub const ClientHandshakeState = struct {
                 &pre_master_secret,
                 &ckx,
             );
+            defer allocator.free(pre_master_secret);
+            con.ckx_msg = ckx;
 
             self.master_secret = try masterFromPreMasterSecret(
                 allocator,
@@ -96,25 +99,6 @@ pub const ClientHandshakeState = struct {
         }
     }
 };
-
-fn masterFromPreMasterSecret(
-    allocator: mem.Allocator,
-    version: ProtocolVersion,
-    suite: *const CipherSuite12,
-    pre_master_secret: []const u8,
-    client_random: []const u8,
-    server_random: []const u8,
-) ![]const u8 {
-    var seed = try allocator.alloc(u8, client_random.len + server_random.len);
-    defer allocator.free(seed);
-    mem.copy(u8, seed, client_random);
-    mem.copy(u8, seed[client_random.len..], server_random);
-
-    var master_secret = try allocator.alloc(u8, master_secret_length);
-    const prf = prfForVersion(version, suite);
-    try prf(allocator, pre_master_secret, master_secret_label, seed, master_secret);
-    return master_secret;
-}
 
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
@@ -158,15 +142,18 @@ test "ClientHandshakeState" {
     try srv_hs.pickCipherSuite();
     try srv_hs.doFullHandshake(allocator);
 
-    var hs = ClientHandshakeState{
+    var cli_hs = ClientHandshakeState{
         .server_hello = &srv_hs.hello.?,
         .hello = &client_hello,
         .fake_con = &fake_con,
     };
-    defer hs.deinit(allocator);
+    defer cli_hs.deinit(allocator);
 
-    try hs.handshake(allocator);
+    try cli_hs.handshake(allocator);
 
-    std.debug.print("hs={}\n", .{hs});
-    std.log.debug("hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(hs.master_secret.?)});
+    std.debug.print("cli_hs={}\n", .{cli_hs});
+    std.log.debug("cli_hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(cli_hs.master_secret.?)});
+
+    try srv_hs.doFullHandshake2(allocator, &fake_con.server_key_agreement.?, .v1_2);
+    std.log.debug("srv_hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(srv_hs.master_secret.?)});
 }

@@ -10,6 +10,7 @@ const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
+const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
 const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
@@ -17,6 +18,8 @@ const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
 const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
+const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
+const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 
 // ServerHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
@@ -38,6 +41,7 @@ pub const ServerHandshakeState = struct {
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.cert_chain) |*cc| cc.deinit(allocator);
+        if (self.master_secret) |s| allocator.free(s);
     }
 
     pub fn processClientHello(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
@@ -142,9 +146,42 @@ pub const ServerHandshakeState = struct {
         };
         try finished_hash.write(try hello_done.marshal(allocator));
         // TODO: implement write record hello_done.marshal()
-        
+
         // TODO: implement
         self.finished_hash = finished_hash;
+
+        if (self.fake_con) |con| {
+            con.server_key_agreement = key_agreement;
+        } else {
+            try self.doFullHandshake2(allocator, &key_agreement, conn_protocol_vers);
+        }
+    }
+
+    pub fn doFullHandshake2(
+        self: *ServerHandshakeState,
+        allocator: mem.Allocator,
+        key_agreement: *KeyAgreement,
+        conn_protocol_vers: ProtocolVersion,
+    ) !void {
+        defer key_agreement.deinit(allocator);
+
+        const ckx = if (self.fake_con) |con| &con.ckx_msg.? else @panic("not implemented yet");
+        const pre_master_secret = try key_agreement.processClientKeyExchange(
+            allocator,
+            &self.cert_chain.?,
+            ckx,
+            conn_protocol_vers,
+        );
+        defer allocator.free(pre_master_secret);
+
+        self.master_secret = try masterFromPreMasterSecret(
+            allocator,
+            conn_protocol_vers,
+            self.suite.?,
+            pre_master_secret,
+            self.client_hello.random,
+            self.hello.?.random,
+        );
     }
 };
 

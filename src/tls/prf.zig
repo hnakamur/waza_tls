@@ -74,6 +74,25 @@ fn pHash(comptime HashType: type, secret: []const u8, seed: []const u8, out: []u
     }
 }
 
+pub fn masterFromPreMasterSecret(
+    allocator: mem.Allocator,
+    version: ProtocolVersion,
+    suite: *const CipherSuite12,
+    pre_master_secret: []const u8,
+    client_random: []const u8,
+    server_random: []const u8,
+) ![]const u8 {
+    var seed = try allocator.alloc(u8, client_random.len + server_random.len);
+    defer allocator.free(seed);
+    mem.copy(u8, seed, client_random);
+    mem.copy(u8, seed[client_random.len..], server_random);
+
+    var master_secret = try allocator.alloc(u8, master_secret_length);
+    const prf = prfForVersion(version, suite);
+    try prf(allocator, pre_master_secret, master_secret_label, seed, master_secret);
+    return master_secret;
+}
+
 const testing = std.testing;
 const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
 

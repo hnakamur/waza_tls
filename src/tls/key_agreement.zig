@@ -70,7 +70,7 @@ pub const KeyAgreement = union(enum) {
         client_hello: *const ClientHelloMsg,
         cert_chain: *const CertificateChain,
         out_pre_master_secret: *[]const u8,
-        out_ckx: **const ClientKeyExchangeMsg,
+        out_ckx: *ClientKeyExchangeMsg,
     ) !void {
         switch (self.*) {
             .rsa => @panic("not imeplmented yet"),
@@ -80,6 +80,24 @@ pub const KeyAgreement = union(enum) {
                 cert_chain,
                 out_pre_master_secret,
                 out_ckx,
+            ),
+        }
+    }
+
+    pub fn processClientKeyExchange(
+        self: *KeyAgreement,
+        allocator: mem.Allocator,
+        cert_chain: *const CertificateChain,
+        ckx: *const ClientKeyExchangeMsg,
+        version: ProtocolVersion,
+    ) ![]const u8 {
+        switch (self.*) {
+            .rsa => @panic("not imeplmented yet"),
+            .ecdhe => |*ka| return try ka.processClientKeyExchange(
+                allocator,
+                cert_chain,
+                ckx,
+                version,
             ),
         }
     }
@@ -243,14 +261,32 @@ pub const EcdheKeyAgreement = struct {
         client_hello: *const ClientHelloMsg,
         cert_chain: *const CertificateChain,
         out_pre_master_secret: *[]const u8,
-        out_ckx: **const ClientKeyExchangeMsg,
+        out_ckx: *ClientKeyExchangeMsg,
     ) !void {
         _ = allocator;
         _ = client_hello;
         _ = cert_chain;
 
         out_pre_master_secret.* = self.pre_master_secret.?;
-        out_ckx.* = &self.ckx.?;
+        self.pre_master_secret = null;
+
+        out_ckx.* = self.ckx.?;
+        self.ckx = null;
+    }
+
+    pub fn processClientKeyExchange(
+        self: *EcdheKeyAgreement,
+        allocator: mem.Allocator,
+        cert_chain: *const CertificateChain,
+        ckx: *const ClientKeyExchangeMsg,
+        version: ProtocolVersion,
+    ) ![]const u8 {
+        _ = cert_chain;
+        _ = version;
+        if (ckx.ciphertext.len == 0 or ckx.ciphertext[0] != ckx.ciphertext.len - 1) {
+            return error.InvalidClientKeyExchangeMessage;
+        }
+        return try self.params.?.sharedKey(allocator, ckx.ciphertext[1..]);
     }
 };
 
