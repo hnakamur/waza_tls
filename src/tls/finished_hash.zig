@@ -7,6 +7,11 @@ const Hash = @import("hash.zig").Hash;
 const Sha256Hash = @import("hash.zig").Sha256Hash;
 const Sha384Hash = @import("hash.zig").Sha384Hash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const Prf12 = @import("prf.zig").Prf12;
+const finished_verify_length = @import("prf.zig").finished_verify_length;
+const seed_max_len = @import("prf.zig").seed_max_len;
+const client_finished_label = @import("prf.zig").client_finished_label;
+const server_finished_label = @import("prf.zig").server_finished_label;
 
 pub const FinishedHash = struct {
     client: Hash,
@@ -21,7 +26,13 @@ pub const FinishedHash = struct {
     buffer: ?fifo.LinearFifo(u8, .Dynamic) = null,
 
     version: ProtocolVersion,
-    prf: fn (secret: []const u8, label: []const u8, seed: []const u8, out: []u8) void,
+    prf: fn (
+        allocator: mem.Allocator,
+        secret: []const u8,
+        label: []const u8,
+        seed: []const u8,
+        out: []u8,
+    ) anyerror!void,
     hash_digest_length: usize,
 
     pub fn new(
@@ -102,68 +113,8 @@ pub const FinishedHash = struct {
     }
 };
 
-const seed_max_len = std.crypto.hash.sha2.Sha384.digest_length;
-
-pub const finished_verify_length = 12;
-
-const master_secret_label = "master secret";
-const key_expansion_label = "key expansion";
-const client_finished_label = "client finished";
-const server_finished_label = "server finished";
-const label_max_len = math.max(
-    master_secret_label.len,
-    math.max(
-        key_expansion_label.len,
-        math.max(
-            client_finished_label.len,
-            server_finished_label.len,
-        ),
-    ),
-);
-
-// prf12 implements the TLS 1.2 pseudo-random function, as defined in RFC 5246, Section 5.
-fn Prf12(comptime HashType: type) type {
-    return struct {
-        fn prf12(
-            secret: []const u8,
-            label: []const u8,
-            seed: []const u8,
-            out: []u8,
-        ) void {
-            var label_and_seed: [label_max_len + seed_max_len]u8 = undefined;
-            mem.copy(u8, label_and_seed[0..label.len], label);
-            mem.copy(u8, label_and_seed[label.len .. label.len + seed.len], seed);
-            pHash(HashType, secret, label_and_seed[0 .. label.len + seed.len], out);
-        }
-    };
-}
-
-fn pHash(comptime HashType: type, secret: []const u8, seed: []const u8, out: []u8) void {
-    const Hmac = std.crypto.auth.hmac.Hmac(HashType);
-    var h = Hmac.init(secret);
-    h.update(seed);
-    var a: [Hmac.mac_length]u8 = undefined;
-    h.final(&a);
-
-    var j: usize = 0;
-    while (j < out.len) {
-        h = Hmac.init(secret);
-        h.update(&a);
-        h.update(seed);
-        var b: [Hmac.mac_length]u8 = undefined;
-        h.final(&b);
-        const copy_len = math.min(out[j..].len, b.len);
-        mem.copy(u8, out[j..], b[0..copy_len]);
-        j += b.len;
-
-        h = Hmac.init(secret);
-        h.update(&a);
-        h.final(&a);
-    }
-}
-
-const cipher_suites12 = @import("cipher_suites.zig").cipher_suites12;
 const testing = std.testing;
+const cipher_suites12 = @import("cipher_suites.zig").cipher_suites12;
 
 test "FinishedHash" {
     const allocator = testing.allocator;
@@ -193,20 +144,4 @@ test "FinishedHash" {
         const bytes_written = fh.sum(&out);
         std.debug.print("bytes_written={}, out#2={}\n", .{ bytes_written, std.fmt.fmtSliceHexLower(&out) });
     }
-}
-
-test "Prf12" {
-    const prf12Sha256 = Prf12(std.crypto.hash.sha2.Sha256).prf12;
-    const seed = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
-    var result: [12]u8 = undefined;
-    const secret = "my secret" ** 100;
-    prf12Sha256(secret, "master secret", &seed, &result);
-    std.debug.print("prf12 result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
-}
-
-test "pHash" {
-    var result: [12]u8 = undefined;
-    const secret = "my secret" ** 100;
-    pHash(std.crypto.hash.sha2.Sha256, secret, "master secret" ++ "\x00" ** 32, &result);
-    std.debug.print("pHash result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
 }

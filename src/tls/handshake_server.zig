@@ -34,13 +34,13 @@ pub const ServerHandshakeState = struct {
     cert_chain: ?CertificateChain = null,
     fake_con: ?*FakeConnection = null,
 
-    fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
+    pub fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.cert_chain) |*cc| cc.deinit(allocator);
     }
 
-    fn processClientHello(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
+    pub fn processClientHello(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
         const random = try generateRandom(allocator);
         // TODO: stop hardcoding field values.
         var hello = ServerHelloMsg{
@@ -76,12 +76,12 @@ pub const ServerHandshakeState = struct {
         };
     }
 
-    fn pickCipherSuite(self: *ServerHandshakeState) !void {
+    pub fn pickCipherSuite(self: *ServerHandshakeState) !void {
         // TODO: stop hardcoding.
         self.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
     }
 
-    fn doFullHandshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
+    pub fn doFullHandshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
         const conn_protocol_vers = .v1_2;
         var finished_hash = FinishedHash.new(allocator, conn_protocol_vers, self.suite.?);
 
@@ -94,9 +94,6 @@ pub const ServerHandshakeState = struct {
         try finished_hash.write(try self.client_hello.marshal(allocator));
         try finished_hash.write(try self.hello.?.marshal(allocator));
         // TODO: implement write record self.hello.marshal()
-        if (self.fake_con) |con| {
-            con.server_hello_msg = self.hello.?;
-        }
 
         {
             const certificates = try allocator.dupe(
@@ -106,13 +103,14 @@ pub const ServerHandshakeState = struct {
             var cert_msg = CertificateMsg{
                 .certificates = certificates,
             };
-            defer cert_msg.deinit(allocator);
+            defer if (self.fake_con) |con| {
+                con.cert_msg = cert_msg;
+            } else {
+                cert_msg.deinit(allocator);
+            };
 
             try finished_hash.write(try cert_msg.marshal(allocator));
             // TODO: implement write record cert_msg.marshal()
-            if (self.fake_con) |con| {
-                con.cert_msg = cert_msg;
-            }
         }
 
         if (self.hello.?.ocsp_stapling) {
@@ -126,22 +124,25 @@ pub const ServerHandshakeState = struct {
             self.client_hello,
             &self.hello.?,
         );
-        defer skx.deinit(allocator);
+        defer if (self.fake_con) |con| {
+            con.skx_msg = skx;
+        } else {
+            skx.deinit(allocator);
+        };
+
         // std.log.debug("skx={}", .{skx});
         try finished_hash.write(try skx.marshal(allocator));
         // TODO: implement write record skx.marshal()
-        if (self.fake_con) |con| {
-            con.skx_msg = skx;
-        }
 
         var hello_done = ServerHelloDoneMsg{};
-        defer hello_done.deinit(allocator);
+        defer if (self.fake_con) |con| {
+            con.hello_done_msg = hello_done;
+        } else {
+            hello_done.deinit(allocator);
+        };
         try finished_hash.write(try hello_done.marshal(allocator));
         // TODO: implement write record hello_done.marshal()
-        if (self.fake_con) |con| {
-            con.hello_done_msg = hello_done;
-        }
-
+        
         // TODO: implement
         self.finished_hash = finished_hash;
     }

@@ -883,11 +883,12 @@ pub const ServerHelloDoneMsg = struct {
     }
 };
 
-const ClientKeyExchangeMsg = struct {
+pub const ClientKeyExchangeMsg = struct {
     raw: ?[]const u8 = null,
     ciphertext: []const u8 = undefined,
 
     pub fn deinit(self: *ClientKeyExchangeMsg, allocator: mem.Allocator) void {
+        allocator.free(self.ciphertext);
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -895,7 +896,7 @@ const ClientKeyExchangeMsg = struct {
         const raw = try allocator.dupe(u8, msg_data);
         var bv = BytesView.init(raw);
         bv.skip(enumTypeLen(MsgType));
-        const ciphertext = try readString(u24, &bv);
+        const ciphertext = try allocator.dupe(u8, try readString(u24, &bv));
 
         return ClientKeyExchangeMsg{
             .raw = raw,
@@ -1996,7 +1997,7 @@ test "ClientKeyExchangeMsg.marshal" {
     };
 
     {
-        var msg = testCreateClientKeyExchangeMsg();
+        var msg = try testCreateClientKeyExchangeMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(&msg, test_marshaled_client_key_exchange_msg);
     }
@@ -2020,15 +2021,15 @@ test "ClientKeyExchangeMsg.unmarshal" {
     };
 
     {
-        var msg = testCreateClientKeyExchangeMsg();
+        var msg = try testCreateClientKeyExchangeMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(test_marshaled_client_key_exchange_msg, &msg);
     }
 }
 
-fn testCreateClientKeyExchangeMsg() ClientKeyExchangeMsg {
+fn testCreateClientKeyExchangeMsg(allocator: mem.Allocator) !ClientKeyExchangeMsg {
     return ClientKeyExchangeMsg{
-        .ciphertext = "cipher text",
+        .ciphertext = try allocator.dupe(u8, "cipher text"),
     };
 }
 
