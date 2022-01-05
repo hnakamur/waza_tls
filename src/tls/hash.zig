@@ -1,4 +1,6 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const mem = std.mem;
 
 pub const Hash = union(enum) {
     Sha256: Sha256Hash,
@@ -31,6 +33,13 @@ pub const Hash = union(enum) {
             .Sha384 => |s| s.digestLength(),
         };
     }
+
+    pub fn allocFinal(self: *Hash, allocator: mem.Allocator) ![]const u8 {
+        return switch (self.*) {
+            .Sha256 => |*s| try s.allocFinal(allocator),
+            .Sha384 => |*s| try s.allocFinal(allocator),
+        };
+    }
 };
 
 pub const Sha256Hash = HashAdapter(std.crypto.hash.sha2.Sha256);
@@ -60,7 +69,6 @@ fn HashAdapter(comptime HashImpl: type) type {
 
         pub fn finalToSlice(self: *Self, out: []u8) usize {
             const len = HashImpl.digest_length;
-            std.debug.print("finalToSlice, HashImpl={s}, len={}\n", .{ @typeName(HashImpl), len });
             self.inner_hash.final(out[0..len]);
             return len;
         }
@@ -68,6 +76,13 @@ fn HashAdapter(comptime HashImpl: type) type {
         pub fn digestLength(self: *const Self) usize {
             _ = self;
             return digest_length;
+        }
+
+        pub fn allocFinal(self: *Self, allocator: mem.Allocator) ![]const u8 {
+            var sum = try allocator.alloc(u8, digest_length);
+            const sum_len = self.finalToSlice(sum);
+            assert(sum_len == digest_length);
+            return sum;
         }
     };
 }

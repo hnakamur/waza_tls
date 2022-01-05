@@ -85,9 +85,9 @@ pub const FinishedHash = struct {
         }
     }
 
-    pub fn sum(self: *FinishedHash, out: []u8) usize {
+    pub fn allocSum(self: *FinishedHash, allocator: mem.Allocator) ![]const u8{
         return switch (self.version) {
-            .v1_2 => self.client.finalToSlice(out),
+            .v1_2 => try self.client.allocFinal(allocator),
             else => @panic("not implemented"),
         };
     }
@@ -95,26 +95,20 @@ pub const FinishedHash = struct {
     // clientSum returns to the contents of the verify_data member of a client's
     // Finished message.
     pub fn clientSum(self: *FinishedHash, allocator: mem.Allocator, master_secret: []const u8) ![finished_verify_length]u8 {
-        const seed_len = self.client.digestLength();
-        var seed = try allocator.alloc(u8, seed_len);
+        var seed = try self.allocSum(allocator);
         defer allocator.free(seed);
-        const actual_seed_len = self.sum(seed);
-        assert(actual_seed_len == seed_len);
         var out: [finished_verify_length]u8 = undefined;
-        try self.prf(master_secret, client_finished_label, seed[0..seed_len], &out);
+        try self.prf(allocator, master_secret, client_finished_label, seed, &out);
         return out;
     }
 
     // serverSum returns to the contents of the verify_data member of a server's
     // Finished message.
     pub fn serverSum(self: *FinishedHash, allocator: mem.Allocator, master_secret: []const u8) ![finished_verify_length]u8 {
-        const seed_len = self.client.digestLength();
-        var seed = try allocator.alloc(u8, seed_len);
+        var seed = try self.allocSum(allocator);
         defer allocator.free(seed);
-        const actual_seed_len = self.sum(seed);
-        assert(actual_seed_len == seed_len);
         var out: [finished_verify_length]u8 = undefined;
-        try self.prf(allocator, master_secret, server_finished_label, seed[0..seed_len], &out);
+        try self.prf(allocator, master_secret, server_finished_label, seed, &out);
         return out;
     }
 };
@@ -131,10 +125,9 @@ test "FinishedHash" {
 
         try fh.write("hello");
         try fh.write("world");
-        std.debug.print("FinishedHash#1={}\n", .{fh});
-        var out = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
-        const bytes_written = fh.sum(&out);
-        std.debug.print("bytes_written={}, out#1={}\n", .{ bytes_written, std.fmt.fmtSliceHexLower(&out) });
+        const out = try fh.allocSum(allocator);
+        defer allocator.free(out);
+        std.debug.print("out#1={}\n", .{ std.fmt.fmtSliceHexLower(out) });
         const server_sum = try fh.serverSum(allocator, "my master secret");
         std.debug.print("server_sum={}\n", .{std.fmt.fmtSliceHexLower(&server_sum)});
     }
@@ -145,9 +138,10 @@ test "FinishedHash" {
 
         try fh.write("hello");
         try fh.write("world");
-        std.debug.print("FinishedHash#2={}\n", .{fh});
-        var out = [_]u8{0} ** std.crypto.hash.sha2.Sha384.digest_length;
-        const bytes_written = fh.sum(&out);
-        std.debug.print("bytes_written={}, out#2={}\n", .{ bytes_written, std.fmt.fmtSliceHexLower(&out) });
+        const out = try fh.allocSum(allocator);
+        defer allocator.free(out);
+        std.debug.print(" out#2={}\n", .{ std.fmt.fmtSliceHexLower(out) });
+        const client_sum = try fh.clientSum(allocator, "my master secret");
+        std.debug.print("client_sum={}\n", .{std.fmt.fmtSliceHexLower(&client_sum)});
     }
 }
