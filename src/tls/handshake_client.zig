@@ -84,7 +84,12 @@ pub const ClientHandshakeState = struct {
                 &ckx,
             );
             defer allocator.free(pre_master_secret);
+            std.log.debug(
+                "ClientHandshakeState.doFullHandshake pre_master_secret={}",
+                .{fmtx.fmtSliceHexEscapeLower(pre_master_secret)},
+            );
             con.ckx_msg = ckx;
+            try self.finished_hash.?.write(try con.ckx_msg.?.marshal(allocator));
 
             self.master_secret = try masterFromPreMasterSecret(
                 allocator,
@@ -101,17 +106,21 @@ pub const ClientHandshakeState = struct {
 };
 
 const testing = std.testing;
+const generateRandom = @import("handshake_msg.zig").generateRandom;
 const fmtx = @import("../fmtx.zig");
 
 test "ClientHandshakeState" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
+    const random = try generateRandom(allocator);
+    defer allocator.free(random);
+
     var client_hello: ClientHelloMsg = undefined;
     {
         const cipher_suites = try allocator.dupe(
             CipherSuiteId,
-            &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
+            &[_]CipherSuiteId{.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
         );
         errdefer allocator.free(cipher_suites);
         const compression_methods = try allocator.dupe(
@@ -121,7 +130,7 @@ test "ClientHandshakeState" {
         errdefer allocator.free(compression_methods);
         client_hello = ClientHelloMsg{
             .vers = .v1_3,
-            .random = &[_]u8{0} ** 32,
+            .random = random[0..32],
             .session_id = &[_]u8{0} ** 32,
             .cipher_suites = cipher_suites,
             .compression_methods = compression_methods,
@@ -151,9 +160,10 @@ test "ClientHandshakeState" {
 
     try cli_hs.handshake(allocator);
 
-    std.debug.print("cli_hs={}\n", .{cli_hs});
+    // std.debug.print("cli_hs={}\n", .{cli_hs});
     std.log.debug("cli_hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(cli_hs.master_secret.?)});
 
     try srv_hs.doFullHandshake2(allocator, &fake_con.server_key_agreement.?, .v1_2);
     std.log.debug("srv_hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(srv_hs.master_secret.?)});
+    try testing.expectEqualSlices(u8, cli_hs.master_secret.?, srv_hs.master_secret.?);
 }

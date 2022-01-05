@@ -134,15 +134,20 @@ pub const EcdheKeyAgreement = struct {
 
         // See RFC 4492, Section 5.4.
         const ecdhe_public = params.publicKey();
+        std.log.debug(
+            "EcdheKeyAgreement.generateServerKeyExchange, ecdhe_public={}",
+            .{fmtx.fmtSliceHexEscapeLower(ecdhe_public)},
+        );
         var server_ecdhe_params = try allocator.alloc(u8, 1 + 2 + 1 + ecdhe_public.len);
         defer allocator.free(server_ecdhe_params);
         server_ecdhe_params[0] = 3; // named curve
         server_ecdhe_params[1] = @intCast(u8, @enumToInt(curve_id) >> 8);
         server_ecdhe_params[2] = @truncate(u8, @enumToInt(curve_id));
         server_ecdhe_params[3] = @intCast(u8, ecdhe_public.len);
+        mem.copy(u8, server_ecdhe_params[4..], ecdhe_public);
         std.log.debug(
             "EcdheKeyAgreement.generateServerKeyExchange, server_ecdhe_params={}",
-            .{std.fmt.fmtSliceHexLower(server_ecdhe_params)},
+            .{fmtx.fmtSliceHexEscapeLower(server_ecdhe_params)},
         );
 
         // std.log.debug("ecdhe_public={}", .{std.fmt.fmtSliceHexLower(ecdhe_public)});
@@ -181,10 +186,6 @@ pub const EcdheKeyAgreement = struct {
         const sig_and_hash_len: usize = if (v1_2_or_later) 2 else 0;
         var key = try allocator.alloc(u8, server_ecdhe_params.len + sig_and_hash_len + 2 + sig.len);
         mem.copy(u8, key, server_ecdhe_params);
-        std.log.debug(
-            "EcdheKeyAgreement.generateServerKeyExchange, key#1={}",
-            .{fmtx.fmtSliceHexEscapeLower(key)},
-        );
 
         var k = key[server_ecdhe_params.len..];
         if (v1_2_or_later) {
@@ -222,19 +223,23 @@ pub const EcdheKeyAgreement = struct {
         }
         var bv = BytesView.init(skx.key[1..]);
         const curve_id = try bv.readEnum(CurveId, .Big);
+        std.log.debug("EcdheKeyAgreement.processServerKeyExchange curve_id={}", .{curve_id});
         const public_len = @as(usize, try bv.readByte());
         if (public_len + 4 > skx.key.len) {
             return error.InvalidServerKeyExchangeMessage;
         }
         const server_ecdhe_params = skx.key[0 .. 4 + public_len];
-        const public_key = skx.key[4..];
+        const public_key = server_ecdhe_params[4..];
+        std.log.debug(
+            "EcdheKeyAgreement.processServerKeyExchange public_key={}",
+            .{fmtx.fmtSliceHexEscapeLower(public_key)},
+        );
         const sig = skx.key[4 + public_len ..];
         if (sig.len < 2) {
             return error.InvalidServerKeyExchangeMessage;
         }
 
         // TODO: implement check curve_id is supported curve
-        _ = server_ecdhe_params;
 
         const params = try EcdheParameters.generate(curve_id);
         self.params = params;
@@ -286,6 +291,10 @@ pub const EcdheKeyAgreement = struct {
         if (ckx.ciphertext.len == 0 or ckx.ciphertext[0] != ckx.ciphertext.len - 1) {
             return error.InvalidClientKeyExchangeMessage;
         }
+        std.log.debug("EcdheKeyAgreement.processClientKeyExchange priv_key={}, peer_pub_key={}", .{
+            fmtx.fmtSliceHexEscapeLower(&self.params.?.x25519.private_key),
+            fmtx.fmtSliceHexEscapeLower(ckx.ciphertext[1..]),
+        });
         return try self.params.?.sharedKey(allocator, ckx.ciphertext[1..]);
     }
 };

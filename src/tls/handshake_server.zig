@@ -20,6 +20,7 @@ const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeStat
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
+const fmtx = @import("../fmtx.zig");
 
 // ServerHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
@@ -51,7 +52,7 @@ pub const ServerHandshakeState = struct {
             .vers = .v1_2,
             .random = random,
             .session_id = &[_]u8{0} ** 32,
-            .cipher_suite = .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+            .cipher_suite = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
             .compression_method = .none,
             .ocsp_stapling = false,
             .supported_version = .v1_2,
@@ -82,7 +83,7 @@ pub const ServerHandshakeState = struct {
 
     pub fn pickCipherSuite(self: *ServerHandshakeState) !void {
         // TODO: stop hardcoding.
-        self.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+        self.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
     }
 
     pub fn doFullHandshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
@@ -173,6 +174,11 @@ pub const ServerHandshakeState = struct {
             conn_protocol_vers,
         );
         defer allocator.free(pre_master_secret);
+        std.log.debug(
+            "ServerHandshakeState.doFullHandshake pre_master_secret={}",
+            .{fmtx.fmtSliceHexEscapeLower(pre_master_secret)},
+        );
+        try self.finished_hash.?.write(try ckx.marshal(allocator));
 
         self.master_secret = try masterFromPreMasterSecret(
             allocator,
