@@ -2,7 +2,6 @@ const std = @import("std");
 const crypto = std.crypto;
 const mem = std.mem;
 const CurveId = @import("handshake_msg.zig").CurveId;
-const fmtx = @import("../fmtx.zig");
 
 pub const EcdheParameters = union(enum) {
     x25519: X25519Parameters,
@@ -44,8 +43,8 @@ const X25519Parameters = struct {
     fn generate() !X25519Parameters {
         var priv_key: [key_len]u8 = undefined;
         crypto.random.bytes(&priv_key);
-        const priv_key_curve = Curve25519.fromBytes(Curve25519.basePoint.toBytes());
-        const pub_key_curve = try priv_key_curve.clampedMul(priv_key);
+        const base_point_curve = Curve25519.fromBytes(Curve25519.basePoint.toBytes());
+        const pub_key_curve = try base_point_curve.clampedMul(priv_key);
         const pub_key = pub_key_curve.toBytes();
         return X25519Parameters{
             .private_key = priv_key,
@@ -54,18 +53,14 @@ const X25519Parameters = struct {
     }
 
     fn sharedKey(self: *const X25519Parameters, allocator: mem.Allocator, peer_public_key: []const u8) ![]const u8 {
-        std.log.debug("X25519Parameters.sharedKey self.private_key={}, peer_public_key={}", .{
-            fmtx.fmtSliceHexEscapeLower(&self.private_key),
-            fmtx.fmtSliceHexEscapeLower(peer_public_key),
-        });
-        const priv_key_curve = Curve25519.fromBytes(peer_public_key[0..key_len].*);
-        const curve = try priv_key_curve.clampedMul(self.private_key);
+        const peer_public_key_curve = Curve25519.fromBytes(peer_public_key[0..key_len].*);
+        const curve = try peer_public_key_curve.clampedMul(self.private_key);
         return try allocator.dupe(u8, &curve.toBytes());
     }
 };
 
 const testing = std.testing;
-const fmt = std.fmt;
+const fmtx = @import("../fmtx.zig");
 
 test "X25519Parameters.sharedKey" {
     const f = struct {

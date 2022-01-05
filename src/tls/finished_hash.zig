@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const fifo = std.fifo;
 const math = std.math;
 const mem = std.mem;
@@ -9,7 +10,6 @@ const Sha384Hash = @import("hash.zig").Sha384Hash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
 const Prf12 = @import("prf.zig").Prf12;
 const finished_verify_length = @import("prf.zig").finished_verify_length;
-const seed_max_len = @import("prf.zig").seed_max_len;
 const client_finished_label = @import("prf.zig").client_finished_label;
 const server_finished_label = @import("prf.zig").server_finished_label;
 
@@ -94,21 +94,27 @@ pub const FinishedHash = struct {
 
     // clientSum returns to the contents of the verify_data member of a client's
     // Finished message.
-    pub fn clientSum(self: *FinishedHash, master_secret: []const u8) [finished_verify_length]u8 {
-        var seed: [seed_max_len]u8 = undefined;
-        const seed_len = self.sum(&seed);
+    pub fn clientSum(self: *FinishedHash, allocator: mem.Allocator, master_secret: []const u8) ![finished_verify_length]u8 {
+        const seed_len = self.client.digestLength();
+        var seed = try allocator.alloc(u8, seed_len);
+        defer allocator.free(seed);
+        const actual_seed_len = self.sum(seed);
+        assert(actual_seed_len == seed_len);
         var out: [finished_verify_length]u8 = undefined;
-        self.prf(master_secret, client_finished_label, seed[0..seed_len], &out);
+        try self.prf(master_secret, client_finished_label, seed[0..seed_len], &out);
         return out;
     }
 
     // serverSum returns to the contents of the verify_data member of a server's
     // Finished message.
-    pub fn serverSum(self: *FinishedHash, master_secret: []const u8) [finished_verify_length]u8 {
-        var seed: [seed_max_len]u8 = undefined;
-        const seed_len = self.sum(&seed);
+    pub fn serverSum(self: *FinishedHash, allocator: mem.Allocator, master_secret: []const u8) ![finished_verify_length]u8 {
+        const seed_len = self.client.digestLength();
+        var seed = try allocator.alloc(u8, seed_len);
+        defer allocator.free(seed);
+        const actual_seed_len = self.sum(seed);
+        assert(actual_seed_len == seed_len);
         var out: [finished_verify_length]u8 = undefined;
-        self.prf(master_secret, server_finished_label, seed[0..seed_len], &out);
+        try self.prf(allocator, master_secret, server_finished_label, seed[0..seed_len], &out);
         return out;
     }
 };
@@ -129,7 +135,7 @@ test "FinishedHash" {
         var out = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
         const bytes_written = fh.sum(&out);
         std.debug.print("bytes_written={}, out#1={}\n", .{ bytes_written, std.fmt.fmtSliceHexLower(&out) });
-        const server_sum = fh.serverSum("my master secret");
+        const server_sum = try fh.serverSum(allocator, "my master secret");
         std.debug.print("server_sum={}\n", .{std.fmt.fmtSliceHexLower(&server_sum)});
     }
 

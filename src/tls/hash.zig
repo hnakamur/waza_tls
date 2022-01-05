@@ -24,6 +24,13 @@ pub const Hash = union(enum) {
             .Sha384 => |*s| s.finalToSlice(out),
         };
     }
+
+    pub fn digestLength(self: *const Hash) usize {
+        return switch (self.*) {
+            .Sha256 => |s| s.digestLength(),
+            .Sha384 => |s| s.digestLength(),
+        };
+    }
 };
 
 pub const Sha256Hash = HashAdapter(std.crypto.hash.sha2.Sha256);
@@ -56,6 +63,11 @@ fn HashAdapter(comptime HashImpl: type) type {
             std.debug.print("finalToSlice, HashImpl={s}, len={}\n", .{ @typeName(HashImpl), len });
             self.inner_hash.final(out[0..len]);
             return len;
+        }
+
+        pub fn digestLength(self: *const Self) usize {
+            _ = self;
+            return digest_length;
         }
     };
 }

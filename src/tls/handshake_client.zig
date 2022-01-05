@@ -52,10 +52,6 @@ pub const ClientHandshakeState = struct {
 
             var key_agreement = self.suite.?.ka(conn_protocol_vers);
             defer key_agreement.deinit(allocator);
-            std.log.debug(
-                "ClientHandshakeState.doFullHandshake key_agreement={}",
-                .{key_agreement},
-            );
 
             try self.finished_hash.?.write(try con.skx_msg.?.marshal(allocator));
 
@@ -84,10 +80,6 @@ pub const ClientHandshakeState = struct {
                 &ckx,
             );
             defer allocator.free(pre_master_secret);
-            std.log.debug(
-                "ClientHandshakeState.doFullHandshake pre_master_secret={}",
-                .{fmtx.fmtSliceHexEscapeLower(pre_master_secret)},
-            );
             con.ckx_msg = ckx;
             try self.finished_hash.?.write(try con.ckx_msg.?.marshal(allocator));
 
@@ -107,7 +99,6 @@ pub const ClientHandshakeState = struct {
 
 const testing = std.testing;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
-const fmtx = @import("../fmtx.zig");
 
 test "ClientHandshakeState" {
     testing.log_level = .debug;
@@ -159,11 +150,7 @@ test "ClientHandshakeState" {
     defer cli_hs.deinit(allocator);
 
     try cli_hs.handshake(allocator);
-
-    // std.debug.print("cli_hs={}\n", .{cli_hs});
-    std.log.debug("cli_hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(cli_hs.master_secret.?)});
-
     try srv_hs.doFullHandshake2(allocator, &fake_con.server_key_agreement.?, .v1_2);
-    std.log.debug("srv_hs.master_secret={}", .{fmtx.fmtSliceHexEscapeLower(srv_hs.master_secret.?)});
+
     try testing.expectEqualSlices(u8, cli_hs.master_secret.?, srv_hs.master_secret.?);
 }

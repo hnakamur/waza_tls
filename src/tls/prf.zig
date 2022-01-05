@@ -9,9 +9,9 @@ pub const master_secret_length = 48; // Length of a master secret in TLS 1.1.
 pub const finished_verify_length = 12; // Length of verify_data in a Finished message.
 
 pub const master_secret_label = "master secret";
-const key_expansion_label = "key expansion";
-const client_finished_label = "client finished";
-const server_finished_label = "server finished";
+pub const key_expansion_label = "key expansion";
+pub const client_finished_label = "client finished";
+pub const server_finished_label = "server finished";
 
 pub fn prfForVersion(version: ProtocolVersion, suite: *const CipherSuite12) fn (
     allocator: mem.Allocator,
@@ -103,7 +103,7 @@ test "prfForVersion" {
     const seed = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
     var result: [12]u8 = undefined;
     const secret = "my secret" ** 100;
-    prf(allocator, secret, "master secret", &seed, &result);
+    try prf(allocator, secret, "master secret", &seed, &result);
     std.debug.print("prf12 result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
 }
 
@@ -113,7 +113,7 @@ test "Prf12" {
     const seed = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
     var result: [12]u8 = undefined;
     const secret = "my secret" ** 100;
-    prf12Sha256(allocator, secret, "master secret", &seed, &result);
+    try prf12Sha256(allocator, secret, "master secret", &seed, &result);
     std.debug.print("prf12 result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
 }
 

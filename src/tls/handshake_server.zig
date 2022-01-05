@@ -20,7 +20,6 @@ const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeStat
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
-const fmtx = @import("../fmtx.zig");
 
 // ServerHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
@@ -174,10 +173,6 @@ pub const ServerHandshakeState = struct {
             conn_protocol_vers,
         );
         defer allocator.free(pre_master_secret);
-        std.log.debug(
-            "ServerHandshakeState.doFullHandshake pre_master_secret={}",
-            .{fmtx.fmtSliceHexEscapeLower(pre_master_secret)},
-        );
         try self.finished_hash.?.write(try ckx.marshal(allocator));
 
         self.master_secret = try masterFromPreMasterSecret(
@@ -204,52 +199,4 @@ test "Ed25519.sign" {
     const sig = try crypto.sign.Ed25519.sign(message, key_pair, null);
     const want = "\x1f\x56\x21\x8a\x44\x04\x69\x65\xee\xf8\x93\x52\x4c\xf0\x49\x42\x57\x4c\x5b\xf5\x1a\xef\x43\xad\x39\x93\x03\xa3\x64\x84\xda\xe5\x82\x32\xfc\x77\x12\x61\xf3\xf4\x2c\xd8\x61\x9e\x86\x01\x1f\xc0\xa0\x98\x94\xa3\x7f\x15\x75\xc8\xe6\x2f\x20\xbd\xaf\x7c\xbe\x0e";
     try testing.expectEqualSlices(u8, want, &sig);
-}
-
-test "ServerHandshakeState" {
-    testing.log_level = .debug;
-
-    const allocator = testing.allocator;
-
-    var client_hello: ClientHelloMsg = undefined;
-    {
-        const cipher_suites = try allocator.dupe(
-            CipherSuiteId,
-            &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
-        );
-        errdefer allocator.free(cipher_suites);
-        const compression_methods = try allocator.dupe(
-            CompressionMethod,
-            &[_]CompressionMethod{.none},
-        );
-        errdefer allocator.free(compression_methods);
-        client_hello = ClientHelloMsg{
-            .vers = .v1_3,
-            .random = &[_]u8{0} ** 32,
-            .session_id = &[_]u8{0} ** 32,
-            .cipher_suites = cipher_suites,
-            .compression_methods = compression_methods,
-        };
-    }
-    defer client_hello.deinit(allocator);
-
-    var fake_con = FakeConnection{};
-    var srv_hs = ServerHandshakeState{
-        .client_hello = &client_hello,
-        .ecdhe_ok = true,
-        .fake_con = &fake_con,
-    };
-    defer srv_hs.deinit(allocator);
-    try srv_hs.processClientHello(allocator);
-    try srv_hs.pickCipherSuite();
-    try srv_hs.doFullHandshake(allocator);
-
-    var cli_hs = ClientHandshakeState{
-        .server_hello = &fake_con.server_hello_msg.?,
-        .hello = &client_hello,
-    };
-    defer cli_hs.deinit(allocator);
-
-    std.log.debug("ClientHandshakeState={}\n", .{cli_hs});
-    std.log.debug("ServerHandshakeState={}\n", .{srv_hs});
 }
