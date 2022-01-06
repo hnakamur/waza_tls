@@ -25,6 +25,7 @@ const asn1 = @import("tls/asn1.zig");
 const hash = @import("tls/hash.zig");
 const ticket = @import("tls/ticket.zig");
 const x509 = @import("tls/x509.zig");
+const conn = @import("tls/conn.zig");
 const socket = @import("tls/socket.zig");
 
 comptime {

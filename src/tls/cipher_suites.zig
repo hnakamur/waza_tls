@@ -5,6 +5,13 @@ const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const RsaKeyAgreement = @import("key_agreement.zig").RsaKeyAgreement;
 const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
 
+pub const CipherSuite = union(ProtocolVersion) {
+    v1_3: CipherSuite13,
+    v1_2, v1_0: CipherSuite12,
+};
+
+pub const CipherSuite13 = struct {};
+
 pub const CipherSuite12 = struct {
     pub const Flags = packed struct {
         ecdhe: bool = false,
