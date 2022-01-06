@@ -1,4 +1,5 @@
 const std = @import("std");
+const fifo = std.fifo;
 const mem = std.mem;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 
@@ -7,14 +8,12 @@ pub const HalfConn = struct {
 
     pub fn encrypt(
         self: *HalfConn,
-        allocator: mem.Allocator,
-        record: []u8,
         payload: []const u8,
-    ) ![]const u8 {
+        writer: anytype,
+    ) !void {
         if (self.cipher) |_| {} else {
-            var ret = try allocator.realloc(record, record.len + payload.len);
-            mem.copy(u8, ret[record.len..], payload);
-            return ret;
+            try writer.writeAll(payload);
+            return;
         }
 
         @panic("not implemented yet");
@@ -26,11 +25,12 @@ const testing = std.testing;
 test "HalfConn.encrypt" {
     const allocator = testing.allocator;
 
-    var record = try allocator.dupe(u8, "hello, ");
-    errdefer allocator.free(record);
-    var hc = HalfConn{};
-    const record2 = try hc.encrypt(allocator, record, "world");
-    defer allocator.free(record2);
+    var buf = fifo.LinearFifo(u8, .Dynamic).init(allocator);
+    defer buf.deinit();
+    var writer = buf.writer();
+    try writer.writeAll("hello, ");
 
-    try testing.expectEqualStrings("hello, world", record2);
+    var hc = HalfConn{};
+    try hc.encrypt("world", writer);
+    try testing.expectEqualStrings("hello, world", buf.readableSlice(0));
 }
