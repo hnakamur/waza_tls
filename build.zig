@@ -44,7 +44,6 @@ pub fn build(b: *std.build.Builder) void {
     unit_tests.addPackage(pkgs.datetime);
     unit_tests.setBuildMode(mode);
     unit_tests.filter = test_filter;
-    unit_tests.test_evented_io = true;
     if (coverage) {
         unit_tests.setExecCmd(&[_]?[]const u8{
             "kcov",

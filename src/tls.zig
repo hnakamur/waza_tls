@@ -25,7 +25,7 @@ const asn1 = @import("tls/asn1.zig");
 const hash = @import("tls/hash.zig");
 const ticket = @import("tls/ticket.zig");
 const x509 = @import("tls/x509.zig");
-const socket_test = @import("tls/socket_test.zig");
+const socket = @import("tls/socket.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
