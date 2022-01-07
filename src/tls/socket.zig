@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const net = std.net;
+const Conn = @import("conn.zig").Conn;
 
 const Server = struct {
     server: net.StreamServer,
@@ -27,22 +28,26 @@ const Server = struct {
 
     pub fn accept(self: *Server) !ServerConn {
         var conn = try self.server.accept();
-        var sc = ServerConn{ .conn = conn };
+        var sc = ServerConn{
+            .address = conn.address,
+            .conn = .{ .stream = conn.stream, .in = .{}, .out = .{}, },
+        };
         try self.connections.append(self.allocator, sc);
         return sc;
     }
 };
 
 const ServerConn = struct {
-    conn: net.StreamServer.Connection,
+    address: net.Address,
+    conn: Conn,
 };
 
 const Client = struct {
-    conn: ClientConn,
+    conn: Conn,
 
     pub fn init(addr: net.Address) !Client {
         var stream = try net.tcpConnectToAddress(addr);
-        return Client{ .conn = .{ .stream = stream } };
+        return Client{ .conn = .{ .stream = stream, .in = .{}, .out = .{} } };
     }
 
     pub fn close(self: *Client) void {
@@ -50,9 +55,6 @@ const Client = struct {
     }
 };
 
-const ClientConn = struct {
-    stream: net.Stream,
-};
 
 const testing = std.testing;
 
