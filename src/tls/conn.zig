@@ -1,5 +1,6 @@
 const std = @import("std");
 const fifo = std.fifo;
+const io = std.io;
 const math = std.math;
 const mem = std.mem;
 const net = std.net;
@@ -10,6 +11,7 @@ const RecordType = @import("record.zig").RecordType;
 const max_plain_text = 16384; // maximum plaintext payload length
 const record_header_len = 5;
 
+// Currently Conn is not thread-safe.
 pub const Conn = struct {
     stream: net.Stream,
     in: HalfConn,
@@ -18,6 +20,7 @@ pub const Conn = struct {
     buffering: bool = false,
     send_buf: std.ArrayListUnmanaged(u8) = .{},
     bytes_sent: usize = 0,
+    handshake_complete: bool = false,
 
     pub fn writeRecord(
         self: *Conn,
@@ -88,6 +91,10 @@ pub const Conn = struct {
         self.send_buf.clearRetainingCapacity();
         self.buffering = false;
     }
+
+    fn readRecordOrCCS(expect_change_cipher_spec: bool) !void {
+        _ = expect_change_cipher_spec;
+    }
 };
 
 const HalfConn = struct {
@@ -108,7 +115,72 @@ const HalfConn = struct {
     }
 };
 
+pub fn AtLeastReader(comptime ReaderType: type) type {
+    return struct {
+        inner_reader: ReaderType,
+        bytes_left: u64,
+
+        pub const Error = error{UnexpectedEof} || ReaderType.Error;
+        pub const Reader = io.Reader(*Self, Error, read);
+
+        const Self = @This();
+
+        /// Returns the number of bytes read. It may be less than dest.len.
+        /// If the number of bytes read is 0, it means end of stream.
+        /// End of stream is not an error condition.
+        /// If the number of bytes read from inner_reader is 0 and bytes_left
+        /// is greater than 0, it returns error.UnexpectedEof.
+        pub fn read(self: *Self, dest: []u8) Error!usize {
+            const max_read = std.math.min(self.bytes_left, dest.len);
+            const n = try self.inner_reader.read(dest[0..max_read]);
+            self.bytes_left -= n;
+            if (n == 0 and self.bytes_left > 0) {
+                return error.UnexpectedEof;
+            }
+            return n;
+        }
+
+        pub fn reader(self: *Self) Reader {
+            return .{ .context = self };
+        }
+    };
+}
+
+/// Returns an initialised `AtLeastReader`
+/// `bytes_left` is a `u64` to be able to take 64 bit file offsets
+pub fn atLeastReader(inner_reader: anytype, bytes_left: u64) AtLeastReader(@TypeOf(inner_reader)) {
+    return .{ .inner_reader = inner_reader, .bytes_left = bytes_left };
+}
+
 const testing = std.testing;
+
+test "atLeastReader" {
+    {
+        const input = "hello";
+        var fbs = io.fixedBufferStream(input);
+        var reader = atLeastReader(fbs.reader(), input.len);
+        var buf = [_]u8{0} ** input.len;
+        try testing.expectEqual(input.len, try reader.read(&buf));
+        try testing.expectEqual(@as(usize, 0), try reader.read(&buf));
+    }
+    {
+        const input = "hello";
+        var fbs = io.fixedBufferStream(input);
+        var reader = atLeastReader(fbs.reader(), input.len + 1);
+        var buf = [_]u8{0} ** input.len;
+        try testing.expectEqual(input.len, try reader.read(&buf));
+        try testing.expectError(error.UnexpectedEof, reader.read(&buf));
+    }
+    {
+        const input = "hello";
+        var fbs = io.fixedBufferStream(input);
+        var reader = atLeastReader(fbs.reader(), input.len + 1);
+        var buf = [_]u8{0} ** (input.len - 1);
+        try testing.expectEqual(buf.len, try reader.read(&buf));
+        try testing.expectEqual(input.len - buf.len, try reader.read(&buf));
+        try testing.expectError(error.UnexpectedEof, reader.read(&buf));
+    }
+}
 
 test "HalfConn.encrypt" {
     const allocator = testing.allocator;
