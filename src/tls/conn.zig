@@ -12,17 +12,13 @@ const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_head
 const RecordType = @import("record.zig").RecordType;
 const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
 const ClientHandshake = @import("handshake_client.zig").ClientHandshake;
+const Handshake = @import("handshake.zig").Handshake;
 const fmtx = @import("../fmtx.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext_tls13 = 16640;
 const max_ciphertext = 18432;
 const record_header_len = 5;
-
-const Role = enum {
-    client,
-    server,
-};
 
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
@@ -80,8 +76,7 @@ pub const Conn = struct {
     retry_count: usize = 0,
     handshake_bytes: []const u8 = &[_]u8{},
     config: Config,
-    server_handshake: ?ServerHandshake = null,
-    client_handshake: ?ClientHandshake = null,
+    handshake: ?Handshake = null,
 
     pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
         return .{
@@ -96,14 +91,15 @@ pub const Conn = struct {
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
         self.send_buf.deinit(allocator);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
-        if (self.server_handshake) |*hs| hs.deinit(allocator);
-        if (self.client_handshake) |*hs| hs.deinit(allocator);
+        if (self.handshake) |*hs| hs.deinit(allocator);
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
-        self.server_handshake = ServerHandshake.init(self.version.?, self, client_hello);
-        try self.server_handshake.?.handshake(allocator);
+        self.handshake = Handshake{
+            .server = ServerHandshake.init(self.version.?, self, client_hello),
+        };
+        try self.handshake.?.server.handshake(allocator);
     }
 
     pub fn writeRecord(
