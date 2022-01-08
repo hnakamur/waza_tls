@@ -104,10 +104,13 @@ test "Conn ClientServer" {
             var client = try server.accept();
             const allocator = server.allocator;
             defer client.conn.deinit(allocator);
-            var msg = try client.conn.readClientHello(allocator);
-            defer msg.deinit(allocator);
+            try client.conn.serverHandshake(allocator);
+            // defer client.conn.handshake.?.v1_2.state.client_hello.deinit(allocator);
+            defer client.conn.handshake.?.deinit(allocator);
+            // var msg = try client.conn.readClientHello(allocator);
+            // defer msg.deinit(allocator);
 
-            std.log.debug("testServer msg={}", .{msg});
+            // std.log.debug("testServer msg={}", .{msg});
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
         }
 

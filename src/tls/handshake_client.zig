@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
@@ -28,6 +29,7 @@ pub const ClientHandshakeState = struct {
     fake_con: ?*FakeConnection = null,
 
     pub fn deinit(self: *ClientHandshakeState, allocator: mem.Allocator) void {
+        self.hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.master_secret) |s| allocator.free(s);
     }
@@ -127,13 +129,18 @@ test "ClientHandshakeState" {
             .compression_methods = compression_methods,
         };
     }
-    defer client_hello.deinit(allocator);
 
     var fake_con = FakeConnection{};
     defer fake_con.deinit(allocator);
 
+    const client_hello_bytes = try client_hello.marshal(allocator);
+    var client_hello_for_server = blk: {
+        var msg = try HandshakeMsg.unmarshal(allocator, client_hello_bytes);
+        break :blk msg.ClientHello;
+    };
+
     var srv_hs = ServerHandshakeState{
-        .client_hello = &client_hello,
+        .client_hello = client_hello_for_server,
         .ecdhe_ok = true,
         .fake_con = &fake_con,
     };

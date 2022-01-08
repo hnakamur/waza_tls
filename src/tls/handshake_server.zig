@@ -20,11 +20,12 @@ const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeStat
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
+const Conn = @import("conn.zig").Conn;
 
 // ServerHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
 pub const ServerHandshakeState = struct {
-    client_hello: *ClientHelloMsg,
+    client_hello: ClientHelloMsg,
     hello: ?ServerHelloMsg = null,
     suite: ?*const CipherSuite12 = null,
     ecdhe_ok: bool = false,
@@ -38,6 +39,7 @@ pub const ServerHandshakeState = struct {
     fake_con: ?*FakeConnection = null,
 
     pub fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
+        self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.cert_chain) |*cc| cc.deinit(allocator);
@@ -125,7 +127,7 @@ pub const ServerHandshakeState = struct {
         var skx = try key_agreement.generateServerKeyExchange(
             allocator,
             &self.cert_chain.?,
-            self.client_hello,
+            &self.client_hello,
             &self.hello.?,
         );
         defer if (self.fake_con) |con| {
@@ -183,6 +185,87 @@ pub const ServerHandshakeState = struct {
             self.client_hello.random,
             self.hello.?.random,
         );
+    }
+};
+
+pub const ServerHandshake = union(ProtocolVersion) {
+    v1_3: void,
+    v1_2: ServerHandshakeTls12,
+    v1_0: ServerHandshakeTls12,
+
+    pub fn init(ver: ProtocolVersion, conn: *Conn, client_hello: ClientHelloMsg) ServerHandshake {
+        return switch (ver) {
+            .v1_3 => @panic("not implemented yet"),
+            .v1_2 => ServerHandshake{ .v1_2 = ServerHandshakeTls12.init(conn, client_hello) },
+            .v1_0 => ServerHandshake{ .v1_0 = ServerHandshakeTls12.init(conn, client_hello) },
+        };
+    }
+
+    pub fn deinit(self: *ServerHandshake, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .v1_3 => @panic("not implemented yet"),
+            .v1_2, .v1_0 => |*hs| hs.deinit(allocator),
+        }
+    }
+
+    pub fn handshake(self: *ServerHandshake, allocator: mem.Allocator) !void {
+        switch (self.*) {
+            .v1_3 => @panic("not implemented yet"),
+            .v1_2, .v1_0 => |*hs| try hs.handshake(allocator),
+        }
+    }
+};
+
+pub const ServerHandshakeTls12 = struct {
+    state: ServerHandshakeState,
+    conn: *Conn,
+
+    pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeTls12 {
+        return .{ .state = .{ .client_hello = client_hello }, .conn = conn };
+    }
+
+    pub fn deinit(self: *ServerHandshakeTls12, allocator: mem.Allocator) void {
+        self.state.deinit(allocator);
+    }
+
+    pub fn handshake(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
+        try self.processClientHello(allocator);
+    }
+
+    pub fn processClientHello(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
+        const random = try generateRandom(allocator);
+        // TODO: stop hardcoding field values.
+        var hello = ServerHelloMsg{
+            .vers = .v1_2,
+            .random = random,
+            .session_id = &[_]u8{0} ** 32,
+            .cipher_suite = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            .compression_method = .none,
+            .ocsp_stapling = false,
+            .supported_version = .v1_2,
+        };
+        if (self.state.ecdhe_ok) {
+            // Although omitting the ec_point_formats extension is permitted, some
+            // old OpenSSL version will refuse to handshake if not present.
+            //
+            // Per RFC 4492, section 5.1.2, implementations MUST support the
+            // uncompressed point format. See golang.org/issue/31943.
+            hello.supported_points = try allocator.dupe(
+                EcPointFormat,
+                &[_]EcPointFormat{.uncompressed},
+            );
+        }
+
+        self.state.hello = hello;
+
+        const certificate_chain = try allocator.dupe(
+            []const u8,
+            &[_][]const u8{testEd25519Certificate},
+        );
+        self.state.cert_chain = CertificateChain{
+            .certificate_chain = certificate_chain,
+            .private_key = .{ .raw = testEd25519PrivateKey },
+        };
     }
 };
 

@@ -9,6 +9,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const RecordType = @import("record.zig").RecordType;
+const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
 const fmtx = @import("../fmtx.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
@@ -75,8 +76,9 @@ pub const Conn = struct {
     raw_input: io.BufferedReader(4096, net.Stream.Reader),
     input: std.ArrayListUnmanaged(u8) = .{},
     retry_count: usize = 0,
-    handshake: []const u8 = &[_]u8{},
+    handshake_bytes: []const u8 = &[_]u8{},
     config: Config,
+    handshake: ?ServerHandshake = null,
 
     pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
         return .{
@@ -89,9 +91,15 @@ pub const Conn = struct {
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
-        if (self.handshake.len > 0) {
-            allocator.free(self.handshake);
+        if (self.handshake_bytes.len > 0) {
+            allocator.free(self.handshake_bytes);
         }
+    }
+
+    pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
+        const client_hello = try self.readClientHello(allocator);
+        self.handshake = ServerHandshake.init(self.version.?, self, client_hello);
+        try self.handshake.?.handshake(allocator);
     }
 
     pub fn writeRecord(
@@ -199,22 +207,21 @@ pub const Conn = struct {
     }
 
     pub fn readHandshake(self: *Conn, allocator: mem.Allocator) !HandshakeMsg {
-        if (self.handshake.len < 4) {
+        if (self.handshake_bytes.len < 4) {
             try self.readRecord(allocator);
         }
-        std.log.debug("Conn.readHandshake handshake.len={}", .{self.handshake.len});
-        return try HandshakeMsg.unmarshal(allocator, self.handshake);
+        return try HandshakeMsg.unmarshal(allocator, self.handshake_bytes);
     }
 
     pub fn readRecord(self: *Conn, allocator: mem.Allocator) !void {
-        try self.readRecordOrCCS(allocator, false);
+        try self.readRecordOrChangeCipherSpec(allocator, false);
     }
 
     pub fn readChangeCipherSpec(self: *Conn, allocator: mem.Allocator) !void {
-        try self.readRecordOrCCS(allocator, true);
+        try self.readRecordOrChangeCipherSpec(allocator, true);
     }
 
-    pub fn readRecordOrCCS(
+    pub fn readRecordOrChangeCipherSpec(
         self: *Conn,
         allocator: mem.Allocator,
         expect_change_cipher_spec: bool,
@@ -289,7 +296,7 @@ pub const Conn = struct {
 
         switch (rec_type) {
             .handshake => {
-                self.handshake = data;
+                self.handshake_bytes = data;
             },
             else => {
                 // TODO: send alert
