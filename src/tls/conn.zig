@@ -6,13 +6,64 @@ const mem = std.mem;
 const net = std.net;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
+const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const RecordType = @import("record.zig").RecordType;
+const fmtx = @import("../fmtx.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
+const max_ciphertext_tls13 = 16640;
+const max_ciphertext = 18432;
 const record_header_len = 5;
+
+const Role = enum {
+    client,
+    server,
+};
 
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
+    const Config = struct {
+        min_version: ProtocolVersion = .v1_2,
+        max_version: ProtocolVersion = .v1_3,
+
+        fn supportedVersion(self: *const Config) []const ProtocolVersion {
+            var start: usize = 0;
+            var end: usize = supported_versions.len;
+            var i: usize = 0;
+            while (i < supported_versions.len) : (i += 1) {
+                if (@enumToInt(supported_versions[i]) <= @enumToInt(self.max_version)) {
+                    start = i;
+                    break;
+                }
+            }
+            while (i < supported_versions.len) : (i += 1) {
+                if (@enumToInt(supported_versions[i]) <= @enumToInt(self.min_version)) {
+                    end = i + 1;
+                    break;
+                }
+            }
+            return supported_versions[start..end];
+        }
+
+        // mutualVersion returns the protocol version to use given the advertised
+        // versions of the peer. Priority is given to the peer preference order.
+        fn mutualVersion(
+            self: *const Config,
+            peer_versions: []const ProtocolVersion,
+        ) ?ProtocolVersion {
+            const sup_vers = self.supportedVersion();
+            for (peer_versions) |peer_ver| {
+                for (sup_vers) |sup_ver| {
+                    if (sup_ver == peer_ver) {
+                        return sup_ver;
+                    }
+                }
+            }
+            return null;
+        }
+    };
+
     stream: net.Stream,
     in: HalfConn,
     out: HalfConn,
@@ -21,11 +72,32 @@ pub const Conn = struct {
     send_buf: std.ArrayListUnmanaged(u8) = .{},
     bytes_sent: usize = 0,
     handshake_complete: bool = false,
+    raw_input: io.BufferedReader(4096, net.Stream.Reader),
+    input: std.ArrayListUnmanaged(u8) = .{},
+    retry_count: usize = 0,
+    handshake: []const u8 = &[_]u8{},
+    config: Config,
+
+    pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
+        return .{
+            .stream = stream,
+            .in = in,
+            .out = out,
+            .raw_input = io.bufferedReader(stream.reader()),
+            .config = config,
+        };
+    }
+
+    pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
+        if (self.handshake.len > 0) {
+            allocator.free(self.handshake);
+        }
+    }
 
     pub fn writeRecord(
         self: *Conn,
         allocator: mem.Allocator,
-        record_type: RecordType,
+        rec_type: RecordType,
         data: []const u8,
     ) !void {
         var out_buf = try std.ArrayListUnmanaged(u8).initCapacity(allocator, record_header_len);
@@ -35,8 +107,8 @@ pub const Conn = struct {
         var rest = data;
         while (rest.len > 0) {
             out_buf.clearRetainingCapacity();
-            var writer = out_buf.writer();
-            try writer.writeByte(@enumToInt(record_type));
+            var writer = out_buf.writer(allocator);
+            try writer.writeByte(@enumToInt(rec_type));
 
             const vers = if (self.version) |vers| blk: {
                 // TLS 1.3 froze the record layer version to 1.2.
@@ -49,7 +121,7 @@ pub const Conn = struct {
             };
             try writer.writeIntBig(u16, @enumToInt(vers));
 
-            const m = math.min(rest.len, self.maxPayloadSizeForWrite(record_type));
+            const m = math.min(rest.len, self.maxPayloadSizeForWrite(rec_type));
             try writer.writeIntBig(u16, @intCast(u16, m));
 
             try self.out.encrypt(allocator, &out_buf, rest[0..m]);
@@ -58,13 +130,17 @@ pub const Conn = struct {
             rest = rest[m..];
         }
 
-        if (record_type == .change_cipher_spec and self.version != .v1_3) {
-            // TODO: implement
+        if (rec_type == .change_cipher_spec) {
+            if (self.version) |con_ver| {
+                if (con_ver == .v1_3) {
+                    // TODO: implement
+                }
+            }
         }
     }
 
-    fn maxPayloadSizeForWrite(self: *Conn, record_type: RecordType) usize {
-        if (record_type != .application_data) {
+    fn maxPayloadSizeForWrite(self: *Conn, rec_type: RecordType) usize {
+        if (rec_type != .application_data) {
             return max_plain_text;
         }
         _ = self;
@@ -73,12 +149,12 @@ pub const Conn = struct {
 
     fn write(self: *Conn, allocator: mem.Allocator, data: []const u8) !void {
         if (self.buffering) {
-            try self.send_buf.append(allocator, data);
+            try self.send_buf.appendSlice(allocator, data);
             return;
         }
 
-        try self.stream.writer().writeAll(self.send_buf.items);
-        self.bytes_sent += self.send_buf.items.len;
+        try self.stream.writer().writeAll(data);
+        self.bytes_sent += data.len;
     }
 
     fn flush(self: *Conn) !void {
@@ -92,13 +168,141 @@ pub const Conn = struct {
         self.buffering = false;
     }
 
-    fn readRecordOrCCS(expect_change_cipher_spec: bool) !void {
+    pub fn readClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
+        var hs_msg = try self.readHandshake(allocator);
+        const client_hello = switch (hs_msg) {
+            .ClientHello => |msg| msg,
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        };
+
+        const client_versions = blk: {
+            if (client_hello.supported_versions) |cli_sup_vers| {
+                if (cli_sup_vers.len > 0) {
+                    break :blk cli_sup_vers;
+                }
+            }
+            break :blk supportedVersionsFromMax(client_hello.vers);
+        };
+        self.version = self.config.mutualVersion(client_versions);
+        if (self.version) |ver| {
+            self.in.ver = ver;
+            self.out.ver = ver;
+        } else {
+            // TODO: send alert
+            return error.ProtocolVersionMismatch;
+        }
+
+        return client_hello;
+    }
+
+    pub fn readHandshake(self: *Conn, allocator: mem.Allocator) !HandshakeMsg {
+        if (self.handshake.len < 4) {
+            try self.readRecord(allocator);
+        }
+        std.log.debug("Conn.readHandshake handshake.len={}", .{self.handshake.len});
+        return try HandshakeMsg.unmarshal(allocator, self.handshake);
+    }
+
+    pub fn readRecord(self: *Conn, allocator: mem.Allocator) !void {
+        try self.readRecordOrCCS(allocator, false);
+    }
+
+    pub fn readChangeCipherSpec(self: *Conn, allocator: mem.Allocator) !void {
+        try self.readRecordOrCCS(allocator, true);
+    }
+
+    pub fn readRecordOrCCS(
+        self: *Conn,
+        allocator: mem.Allocator,
+        expect_change_cipher_spec: bool,
+    ) !void {
         _ = expect_change_cipher_spec;
+
+        if (self.input.items.len != 0) {
+            return error.InternalError;
+        }
+        var hdr: [record_header_len]u8 = undefined;
+        const header_bytes_read = try self.raw_input.reader().readAll(&hdr);
+        if (header_bytes_read == 0) {
+            // RFC 8446, Section 6.1 suggests that EOF without an alertCloseNotify
+            // is an error, but popular web sites seem to do this, so we accept it
+            // if and only if at the record boundary.
+            return error.EndOfStream;
+        } else if (header_bytes_read < record_header_len) {
+            return error.UnexpectedEof;
+        }
+
+        var fbs = io.fixedBufferStream(&hdr);
+        var r = fbs.reader();
+        const rec_type = try r.readEnum(RecordType, .Big);
+        const rec_ver = try r.readEnum(ProtocolVersion, .Big);
+        const payload_len = try r.readIntBig(u16);
+        std.log.debug(
+            "Conn.readRecordOrCCS rec_type={}, rec_ver={}, payload_len={}",
+            .{ rec_type, rec_ver, payload_len },
+        );
+        if (self.version) |con_ver| {
+            if (con_ver != .v1_3 and con_ver != rec_ver) {
+                // TODO: sendAlert
+                return error.InvalidRecordHeader;
+            }
+        } else {
+            // First message, be extra suspicious: this might not be a TLS
+            // client. Bail out before reading a full 'body', if possible.
+            // The current max version is 3.3 so if the version is >= 16.0,
+            // it's probably not real.
+            if ((rec_type != .alert and rec_type != .handshake) or
+                @enumToInt(rec_ver) >= 0x1000)
+            {
+                return error.InvalidRecordHeader;
+            }
+        }
+        if (self.version) |con_ver| {
+            if (con_ver == .v1_3 and
+                payload_len > max_ciphertext_tls13 or payload_len > max_ciphertext)
+            {
+                // TODO: sendAlert
+                return error.InvalidRecordHeader;
+            }
+        }
+
+        const data = blk: {
+            var payload = try allocator.alloc(u8, payload_len);
+            errdefer allocator.free(payload);
+            const payload_bytes_read = try self.raw_input.reader().readAll(payload);
+            if (payload_bytes_read < payload_len) {
+                return error.UnexpectedEof;
+            }
+            break :blk try self.in.decrypt(allocator, rec_type, rec_ver, payload);
+        };
+        errdefer allocator.free(data);
+
+        if (rec_type != .alert and rec_type != .change_cipher_spec and data.len > 0) {
+            // This is a state-advancing message: reset the retry count.
+            self.retry_count = 0;
+        }
+
+        std.log.debug("data.len={}, data={}", .{ data.len, fmtx.fmtSliceHexEscapeLower(data) });
+
+        switch (rec_type) {
+            .handshake => {
+                self.handshake = data;
+            },
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        }
     }
 };
 
 const HalfConn = struct {
     cipher: ?CipherSuite = null,
+    ver: ?ProtocolVersion = null,
+    seq: [8]u8 = [_]u8{0} ** 8, // 64-bit sequence number
 
     fn encrypt(
         self: *HalfConn,
@@ -113,7 +317,66 @@ const HalfConn = struct {
 
         @panic("not implemented yet");
     }
+
+    fn decrypt(
+        self: *HalfConn,
+        allocator: mem.Allocator,
+        rec_type: RecordType,
+        rec_ver: ProtocolVersion,
+        payload: []const u8,
+    ) ![]const u8 {
+        _ = rec_ver;
+        _ = allocator;
+        var plaintext: []const u8 = undefined;
+        // In TLS 1.3, change_cipher_spec messages are to be ignored without being
+        // decrypted. See RFC 8446, Appendix D.4.
+        if (self.ver) |con_ver| {
+            if (con_ver == .v1_3 and rec_type == .change_cipher_spec) {
+                return payload;
+            }
+        }
+
+        if (self.cipher) |cipher| {
+            // TODO: implement
+            _ = cipher;
+        } else {
+            plaintext = payload;
+        }
+
+        self.incSeq();
+        return plaintext;
+    }
+
+    fn incSeq(self: *HalfConn) void {
+        var i: usize = 7;
+        while (i > 0) : (i -= 1) {
+            self.seq[i] +%= 1;
+            if (self.seq[i] != 0) {
+                return;
+            }
+        }
+
+        // Not allowed to let sequence number wrap.
+        // Instead, must renegotiate before it does.
+        // Not likely enough to bother.
+        @panic("TLS: sequence number wraparound");
+    }
 };
+
+const supported_versions = [_]ProtocolVersion{ .v1_3, .v1_2 };
+
+// supportedVersionsFromMax returns a list of supported versions derived from a
+// legacy maximum version value. Note that only versions supported by this
+// library are returned. Any newer peer will use supportedVersions anyway.
+fn supportedVersionsFromMax(max_version: ProtocolVersion) []const ProtocolVersion {
+    var i: usize = 0;
+    while (i < supported_versions.len) : (i += 1) {
+        if (@enumToInt(supported_versions[i]) <= @enumToInt(max_version)) {
+            break;
+        }
+    }
+    return supported_versions[i..];
+}
 
 pub fn AtLeastReader(comptime ReaderType: type) type {
     return struct {
@@ -193,4 +456,49 @@ test "HalfConn.encrypt" {
     var hc = HalfConn{};
     try hc.encrypt(allocator, &record, "world");
     try testing.expectEqualStrings("hello, world", record.items);
+}
+
+test "blk" {
+    const f = struct {
+        fn f(versions: ?[]const ProtocolVersion) bool {
+            return blk: {
+                if (versions) |vers| {
+                    if (vers.len > 0) {
+                        break :blk true;
+                    }
+                }
+                break :blk false;
+            };
+        }
+    }.f;
+
+    try testing.expect(f(&[_]ProtocolVersion{.v1_3}));
+    try testing.expect(!f(&[_]ProtocolVersion{}));
+    try testing.expect(!f(null));
+}
+
+test "supportedVersionsFromMax" {
+    const f = struct {
+        fn f(max_version: ProtocolVersion, want_versions: []const ProtocolVersion) !void {
+            const got_versions = supportedVersionsFromMax(max_version);
+            try testing.expectEqualSlices(ProtocolVersion, want_versions, got_versions);
+        }
+    }.f;
+
+    try f(.v1_3, &supported_versions);
+    try f(.v1_2, supported_versions[1..]);
+}
+
+test "Config.supportedVersion" {
+    // testing.log_level = .debug;
+    const f = struct {
+        fn f(config: Conn.Config, want_versions: []const ProtocolVersion) !void {
+            const got_versions = config.supportedVersion();
+            try testing.expectEqualSlices(ProtocolVersion, want_versions, got_versions);
+        }
+    }.f;
+
+    try f(.{ .max_version = .v1_3, .min_version = .v1_2 }, &supported_versions);
+    try f(.{ .max_version = .v1_3, .min_version = .v1_3 }, supported_versions[0..1]);
+    try f(.{ .max_version = .v1_2, .min_version = .v1_2 }, supported_versions[1..]);
 }
