@@ -18,7 +18,7 @@ const master_secret_length = @import("prf.zig").master_secret_length;
 const master_secret_label = @import("prf.zig").master_secret_label;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
-const ServerHandshakeState = @import("handshake_server.zig").ServerHandshakeState;
+const Conn = @import("conn.zig").Conn;
 
 pub const ClientHandshakeState = struct {
     server_hello: *ServerHelloMsg,
@@ -99,6 +99,53 @@ pub const ClientHandshakeState = struct {
     }
 };
 
+
+pub const ClientHandshake = union(ProtocolVersion) {
+    v1_3: void,
+    v1_2: ClientHandshakeTls12,
+    v1_0: ClientHandshakeTls12,
+
+    pub fn init(ver: ProtocolVersion, conn: *Conn, client_hello: ClientHelloMsg) ClientHandshake {
+        return switch (ver) {
+            .v1_3 => @panic("not implemented yet"),
+            .v1_2 => ClientHandshake{ .v1_2 = ClientHandshakeTls12.init(conn, client_hello) },
+            .v1_0 => ClientHandshake{ .v1_0 = ClientHandshakeTls12.init(conn, client_hello) },
+        };
+    }
+
+    pub fn deinit(self: *ClientHandshake, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .v1_3 => @panic("not implemented yet"),
+            .v1_2, .v1_0 => |*hs| hs.deinit(allocator),
+        }
+    }
+
+    pub fn handshake(self: *ClientHandshake, allocator: mem.Allocator) !void {
+        switch (self.*) {
+            .v1_3 => @panic("not implemented yet"),
+            .v1_2, .v1_0 => |*hs| try hs.handshake(allocator),
+        }
+    }
+};
+
+pub const ClientHandshakeTls12 = struct {
+    state: ClientHandshakeState,
+    conn: *Conn,
+
+    pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ClientHandshakeTls12 {
+        return .{ .state = .{ .client_hello = client_hello }, .conn = conn };
+    }
+
+    pub fn deinit(self: *ClientHandshakeTls12, allocator: mem.Allocator) void {
+        self.state.deinit(allocator);
+    }
+
+    pub fn handshake(self: *ClientHandshakeTls12, allocator: mem.Allocator) !void {
+        _ = self;
+        _ = allocator;
+    }
+};
+
 const testing = std.testing;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 
@@ -139,7 +186,7 @@ test "ClientHandshakeState" {
         break :blk msg.ClientHello;
     };
 
-    var srv_hs = ServerHandshakeState{
+    var srv_hs = ClientHandshakeState{
         .client_hello = client_hello_for_server,
         .ecdhe_ok = true,
         .fake_con = &fake_con,

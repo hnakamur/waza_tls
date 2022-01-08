@@ -50,6 +50,10 @@ const Client = struct {
         return Client{ .conn = Conn.init(stream, .{}, .{}, .{}) };
     }
 
+    pub fn deinit(self: *Client, allocator: mem.Allocator) void {
+        self.conn.deinit(allocator);
+    }
+
     pub fn close(self: *Client) void {
         self.conn.stream.close();
     }
@@ -93,6 +97,7 @@ test "socket ClientServer" {
 }
 
 test "Conn ClientServer" {
+    const MsgType = @import("handshake_msg.zig").MsgType;
     const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
     const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
     const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
@@ -105,17 +110,12 @@ test "Conn ClientServer" {
             const allocator = server.allocator;
             defer client.conn.deinit(allocator);
             try client.conn.serverHandshake(allocator);
-            // defer client.conn.handshake.?.v1_2.state.client_hello.deinit(allocator);
-            defer client.conn.handshake.?.deinit(allocator);
-            // var msg = try client.conn.readClientHello(allocator);
-            // defer msg.deinit(allocator);
-
-            // std.log.debug("testServer msg={}", .{msg});
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var client = try Client.init(addr);
+            defer client.deinit(allocator);
             defer client.close();
 
             var client_hello = blk: {
@@ -141,6 +141,26 @@ test "Conn ClientServer" {
 
             const client_hello_bytes = try client_hello.marshal(allocator);
             try client.conn.writeRecord(allocator, .handshake, client_hello_bytes);
+            {
+                var hs_msg = try client.conn.readHandshake(allocator);
+                defer hs_msg.deinit(allocator);
+                try testing.expectEqual(MsgType.ServerHello, @as(MsgType, hs_msg));
+            }
+            {
+                var hs_msg = try client.conn.readHandshake(allocator);
+                defer hs_msg.deinit(allocator);
+                try testing.expectEqual(MsgType.Certificate, @as(MsgType, hs_msg));
+            }
+            {
+                var hs_msg = try client.conn.readHandshake(allocator);
+                defer hs_msg.deinit(allocator);
+                try testing.expectEqual(MsgType.ServerKeyExchange, @as(MsgType, hs_msg));
+            }
+            {
+                var hs_msg = try client.conn.readHandshake(allocator);
+                defer hs_msg.deinit(allocator);
+                try testing.expectEqual(MsgType.ServerHelloDone, @as(MsgType, hs_msg));
+            }
         }
 
         fn runTest() !void {

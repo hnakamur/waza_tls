@@ -35,7 +35,7 @@ pub const CipherSuiteId = enum(u16) {
     _,
 };
 
-const MsgType = enum(u8) {
+pub const MsgType = enum(u8) {
     HelloRequest = 0,
     ClientHello = 1,
     ServerHello = 2,
@@ -128,7 +128,7 @@ pub const HandshakeMsg = union(MsgType) {
     }
 };
 
-const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
+pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
 const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;

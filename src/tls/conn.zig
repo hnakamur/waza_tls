@@ -8,8 +8,10 @@ const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
+const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
 const RecordType = @import("record.zig").RecordType;
 const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
+const ClientHandshake = @import("handshake_client.zig").ClientHandshake;
 const fmtx = @import("../fmtx.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
@@ -78,7 +80,8 @@ pub const Conn = struct {
     retry_count: usize = 0,
     handshake_bytes: []const u8 = &[_]u8{},
     config: Config,
-    handshake: ?ServerHandshake = null,
+    server_handshake: ?ServerHandshake = null,
+    client_handshake: ?ClientHandshake = null,
 
     pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
         return .{
@@ -91,15 +94,16 @@ pub const Conn = struct {
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
-        if (self.handshake_bytes.len > 0) {
-            allocator.free(self.handshake_bytes);
-        }
+        self.send_buf.deinit(allocator);
+        if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
+        if (self.server_handshake) |*hs| hs.deinit(allocator);
+        if (self.client_handshake) |*hs| hs.deinit(allocator);
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
-        self.handshake = ServerHandshake.init(self.version.?, self, client_hello);
-        try self.handshake.?.handshake(allocator);
+        self.server_handshake = ServerHandshake.init(self.version.?, self, client_hello);
+        try self.server_handshake.?.handshake(allocator);
     }
 
     pub fn writeRecord(
@@ -165,7 +169,7 @@ pub const Conn = struct {
         self.bytes_sent += data.len;
     }
 
-    fn flush(self: *Conn) !void {
+    pub fn flush(self: *Conn) !void {
         if (self.send_buf.items.len == 0) {
             return;
         }
@@ -207,10 +211,13 @@ pub const Conn = struct {
     }
 
     pub fn readHandshake(self: *Conn, allocator: mem.Allocator) !HandshakeMsg {
-        if (self.handshake_bytes.len < 4) {
+        if (self.handshake_bytes.len < handshake_msg_header_len) {
             try self.readRecord(allocator);
         }
-        return try HandshakeMsg.unmarshal(allocator, self.handshake_bytes);
+        var msg = try HandshakeMsg.unmarshal(allocator, self.handshake_bytes);
+        allocator.free(self.handshake_bytes);
+        self.handshake_bytes = &[_]u8{};
+        return msg;
     }
 
     pub fn readRecord(self: *Conn, allocator: mem.Allocator) !void {

@@ -230,6 +230,18 @@ pub const ServerHandshakeTls12 = struct {
 
     pub fn handshake(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
         try self.processClientHello(allocator);
+
+        // For an overview of TLS handshaking, see RFC 5246, Section 7.3.
+        self.conn.buffering = true;
+        if (self.checkForResumption()) {
+            // TODO: implement
+        } else {
+            // The client didn't include a session ticket, or it wasn't
+            // valid so we do a full handshake.
+            try self.pickCipherSuite();
+            try self.doFullHandshake(allocator);
+            try self.conn.flush();
+        }
     }
 
     pub fn processClientHello(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
@@ -266,6 +278,79 @@ pub const ServerHandshakeTls12 = struct {
             .certificate_chain = certificate_chain,
             .private_key = .{ .raw = testEd25519PrivateKey },
         };
+    }
+
+    // checkForResumption reports whether we should perform resumption on this connection.
+    fn checkForResumption(self: *const ServerHandshakeTls12) bool {
+        _ = self;
+        // TODO: implemnt
+        return false;
+    }
+
+    pub fn pickCipherSuite(self: *ServerHandshakeTls12) !void {
+        // TODO: stop hardcoding.
+        self.state.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+    }
+
+    pub fn doFullHandshake(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
+        const conn_protocol_vers = .v1_2;
+        var finished_hash = FinishedHash.new(allocator, conn_protocol_vers, self.state.suite.?);
+
+        if (false) { // TODO: stop hardcoding
+            // No need to keep a full record of the handshake if client
+            // certificates won't be used.
+            finished_hash.discardHandshakeBuffer();
+        }
+
+        try finished_hash.write(try self.state.client_hello.marshal(allocator));
+        const server_hello_bytes = try self.state.hello.?.marshal(allocator);
+        try finished_hash.write(server_hello_bytes);
+        try self.conn.writeRecord(allocator, .handshake, server_hello_bytes);
+
+        {
+            const certificates = try allocator.dupe(
+                []const u8,
+                &[_][]const u8{testEd25519Certificate},
+            );
+            var cert_msg = CertificateMsg{ .certificates = certificates };
+            defer cert_msg.deinit(allocator);
+
+            const cert_msg_bytes = try cert_msg.marshal(allocator);
+            try finished_hash.write(cert_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, cert_msg_bytes);
+        }
+
+        if (self.state.hello.?.ocsp_stapling) {
+            // TODO: implement
+        }
+
+        var key_agreement = self.state.suite.?.ka(conn_protocol_vers);
+        var skx = try key_agreement.generateServerKeyExchange(
+            allocator,
+            &self.state.cert_chain.?,
+            &self.state.client_hello,
+            &self.state.hello.?,
+        );
+        defer skx.deinit(allocator);
+
+        const skx_bytes = try skx.marshal(allocator);
+        try finished_hash.write(skx_bytes);
+        try self.conn.writeRecord(allocator, .handshake, skx_bytes);
+
+        var hello_done = ServerHelloDoneMsg{};
+        defer hello_done.deinit(allocator);
+        const hello_done_bytes = try hello_done.marshal(allocator);
+        try finished_hash.write(hello_done_bytes);
+        try self.conn.writeRecord(allocator, .handshake, hello_done_bytes);
+
+        // TODO: implement
+        self.state.finished_hash = finished_hash;
+
+        // if (self.fake_con) |con| {
+        //     con.server_key_agreement = key_agreement;
+        // } else {
+        //     try self.doFullHandshake2(allocator, &key_agreement, conn_protocol_vers);
+        // }
     }
 };
 
