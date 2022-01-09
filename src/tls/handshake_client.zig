@@ -186,6 +186,8 @@ pub const ClientHandshakeTls12 = struct {
                 .{fmtx.fmtSliceHexEscapeLower(&self.conn.server_finished)},
             );
         }
+
+        self.conn.handshake_complete = true;
     }
 
     pub fn doFullHandshake(self: *ClientHandshakeTls12, allocator: mem.Allocator) !void {

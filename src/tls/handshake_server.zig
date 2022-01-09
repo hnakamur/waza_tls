@@ -249,15 +249,11 @@ pub const ServerHandshakeTls12 = struct {
                 .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
             );
             self.conn.buffering = true;
-            // var server_finished: [12]u8 = undefined;
-            // try self.sendFinished(allocator, &server_finished);
-            // std.log.debug(
-            //     "ServerHandshakeTls12 server_finished={}",
-            //     .{fmtx.fmtSliceHexEscapeLower(&server_finished)},
-            // );
             try self.sendFinished(allocator, null);
             try self.conn.flush();
         }
+
+        self.conn.handshake_complete = true;
     }
 
     pub fn processClientHello(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
