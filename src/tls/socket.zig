@@ -102,6 +102,8 @@ test "Conn ClientServer" {
     const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
     const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const generateRandom = @import("handshake_msg.zig").generateRandom;
+    const random_length = @import("handshake_msg.zig").random_length;
 
     testing.log_level = .debug;
     try struct {
@@ -119,6 +121,10 @@ test "Conn ClientServer" {
             defer client.close();
 
             var client_hello = blk: {
+                const random = try generateRandom(allocator);
+                errdefer allocator.free(random);
+                const session_id = try generateRandom(allocator);
+                errdefer allocator.free(session_id);
                 const cipher_suites = try allocator.dupe(
                     CipherSuiteId,
                     &[_]CipherSuiteId{.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
@@ -131,8 +137,8 @@ test "Conn ClientServer" {
                 errdefer allocator.free(compression_methods);
                 break :blk ClientHelloMsg{
                     .vers = .v1_2,
-                    .random = &[_]u8{0} ** 32,
-                    .session_id = &[_]u8{0} ** 32,
+                    .random = random[0..random_length],
+                    .session_id = session_id[0..random_length],
                     .cipher_suites = cipher_suites,
                     .compression_methods = compression_methods,
                 };

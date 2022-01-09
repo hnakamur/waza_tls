@@ -99,7 +99,6 @@ pub const ClientHandshakeState = struct {
     }
 };
 
-
 pub const ClientHandshake = union(ProtocolVersion) {
     v1_3: void,
     v1_2: ClientHandshakeTls12,
@@ -147,17 +146,20 @@ pub const ClientHandshakeTls12 = struct {
 };
 
 const testing = std.testing;
-const generateRandom = @import("handshake_msg.zig").generateRandom;
 
 test "ClientHandshakeState" {
+    const generateRandom = @import("handshake_msg.zig").generateRandom;
+    const random_length = @import("handshake_msg.zig").random_length;
+    const ServerHandshakeState = @import("handshake_server.zig").ServerHandshakeState;
+
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
-    const random = try generateRandom(allocator);
-    defer allocator.free(random);
-
-    var client_hello: ClientHelloMsg = undefined;
-    {
+    var client_hello: ClientHelloMsg = blk: {
+        const random = try generateRandom(allocator);
+        errdefer allocator.free(random);
+        const session_id = try generateRandom(allocator);
+        errdefer allocator.free(session_id);
         const cipher_suites = try allocator.dupe(
             CipherSuiteId,
             &[_]CipherSuiteId{.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
@@ -168,14 +170,14 @@ test "ClientHandshakeState" {
             &[_]CompressionMethod{.none},
         );
         errdefer allocator.free(compression_methods);
-        client_hello = ClientHelloMsg{
+        break :blk ClientHelloMsg{
             .vers = .v1_3,
-            .random = random[0..32],
-            .session_id = &[_]u8{0} ** 32,
+            .random = random[0..random_length],
+            .session_id = session_id[0..random_length],
             .cipher_suites = cipher_suites,
             .compression_methods = compression_methods,
         };
-    }
+    };
 
     var fake_con = FakeConnection{};
     defer fake_con.deinit(allocator);
@@ -186,7 +188,7 @@ test "ClientHandshakeState" {
         break :blk msg.ClientHello;
     };
 
-    var srv_hs = ClientHandshakeState{
+    var srv_hs = ServerHandshakeState{
         .client_hello = client_hello_for_server,
         .ecdhe_ok = true,
         .fake_con = &fake_con,

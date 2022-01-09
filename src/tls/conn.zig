@@ -8,6 +8,9 @@ const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
+const generateRandom = @import("handshake_msg.zig").generateRandom;
+const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
+const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
 const RecordType = @import("record.zig").RecordType;
 const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
@@ -25,6 +28,14 @@ pub const Conn = struct {
     const Config = struct {
         min_version: ProtocolVersion = .v1_2,
         max_version: ProtocolVersion = .v1_3,
+
+        fn maxSupportedVersion(self: *const Config) ?ProtocolVersion {
+            const sup_vers = self.supportedVersions();
+            if (sup_vers.len == 0) {
+                return null;
+            }
+            return sup_vers[0];
+        }
 
         fn supportedVersion(self: *const Config) []const ProtocolVersion {
             var start: usize = 0;
@@ -94,12 +105,60 @@ pub const Conn = struct {
         if (self.handshake) |*hs| hs.deinit(allocator);
     }
 
+    pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
+        const client_hello = try self.makeClientHello(allocator);
+        _ = client_hello;
+        // self.handshake = Handshake{
+        //     .client = ClientHandshake.init(self.version.?, self, client_hello),
+        // };
+        // try self.handshake.?.client.handshake(allocator);
+    }
+
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
         self.handshake = Handshake{
             .server = ServerHandshake.init(self.version.?, self, client_hello),
         };
         try self.handshake.?.server.handshake(allocator);
+    }
+
+    fn makeClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
+        const sup_vers = self.supportedVersion();
+        if (sup_vers.len == 0) {
+            return error.NoSupportedVersion;
+        }
+
+        var cli_hello_ver = self.config.maxSupportedVersion().?;
+        if (@enumToInt(cli_hello_ver) > @enumToInt(.v1_2)) {
+            cli_hello_ver = .v1_2;
+        }
+
+        var client_hello: ClientHelloMsg = blk: {
+            const random = try generateRandom(allocator);
+            errdefer allocator.free(random);
+
+            const cipher_suites = try allocator.dupe(
+                CipherSuiteId,
+                &[_]CipherSuiteId{.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+            );
+            errdefer allocator.free(cipher_suites);
+
+            const compression_methods = try allocator.dupe(
+                CompressionMethod,
+                &[_]CompressionMethod{.none},
+            );
+            errdefer allocator.free(compression_methods);
+
+            break :blk ClientHelloMsg{
+                .vers = cli_hello_ver,
+                .random = random,
+                .session_id = &[_]u8{0} ** 32,
+                .cipher_suites = cipher_suites,
+                .compression_methods = compression_methods,
+            };
+        };
+
+        return client_hello;
     }
 
     pub fn writeRecord(
@@ -176,7 +235,7 @@ pub const Conn = struct {
         self.buffering = false;
     }
 
-    pub fn readClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
+    fn readClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
         var hs_msg = try self.readHandshake(allocator);
         const client_hello = switch (hs_msg) {
             .ClientHello => |msg| msg,

@@ -169,6 +169,8 @@ pub const ClientHelloMsg = struct {
     psk_binders: ?[]const []const u8 = null,
 
     pub fn deinit(self: *ClientHelloMsg, allocator: mem.Allocator) void {
+        allocator.free(self.random);
+        allocator.free(self.session_id);
         allocator.free(self.cipher_suites);
         allocator.free(self.compression_methods);
         freeOptionalField(self, allocator, "supported_curves");
@@ -193,8 +195,8 @@ pub const ClientHelloMsg = struct {
             bv = BytesView.init(raw);
             bv.skip(handshake_msg_header_len);
             const vers = try readEnum(ProtocolVersion, &bv);
-            const random = try bv.sliceBytesNoEof(random_length);
-            const session_id = try readString(u8, &bv);
+            const random = try allocator.dupe(u8, try bv.sliceBytesNoEof(random_length));
+            const session_id = try allocator.dupe(u8, try readString(u8, &bv));
 
             const cipher_suites = try readEnumList(u16, CipherSuiteId, allocator, &bv);
             errdefer allocator.free(cipher_suites);
@@ -1430,6 +1432,10 @@ test "ClientHelloMsg.unmarshal" {
 }
 
 fn testCreateClientHelloMsg(allocator: mem.Allocator) !ClientHelloMsg {
+    const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(random);
+    const session_id = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(session_id);
     const cipher_suites = try allocator.dupe(
         CipherSuiteId,
         &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
@@ -1442,8 +1448,8 @@ fn testCreateClientHelloMsg(allocator: mem.Allocator) !ClientHelloMsg {
     errdefer allocator.free(compression_methods);
     return ClientHelloMsg{
         .vers = .v1_3,
-        .random = &[_]u8{0} ** 32,
-        .session_id = &[_]u8{0} ** 32,
+        .random = random,
+        .session_id = session_id,
         .cipher_suites = cipher_suites,
         .compression_methods = compression_methods,
     };
@@ -1461,6 +1467,10 @@ const test_marshaled_client_hello_msg = "\x01" ++ // ClientHello
     "\x00"; // CompressionMethod.none
 
 fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHelloMsg {
+    const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(random);
+    const session_id = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(session_id);
     const cipher_suites = try allocator.dupe(
         CipherSuiteId,
         &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
@@ -1520,8 +1530,8 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
     errdefer allocator.free(psk_binders);
     return ClientHelloMsg{
         .vers = .v1_3,
-        .random = &[_]u8{0} ** 32,
-        .session_id = &[_]u8{0} ** 32,
+        .random = random,
+        .session_id = session_id,
         .cipher_suites = cipher_suites,
         .compression_methods = compression_methods,
         .server_name = "example.com",
