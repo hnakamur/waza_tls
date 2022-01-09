@@ -21,8 +21,8 @@ const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const Conn = @import("conn.zig").Conn;
 
 pub const ClientHandshakeState = struct {
-    server_hello: *ServerHelloMsg,
-    hello: *ClientHelloMsg,
+    hello: ClientHelloMsg,
+    server_hello: ServerHelloMsg,
     suite: ?*const CipherSuite12 = null,
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
@@ -30,6 +30,7 @@ pub const ClientHandshakeState = struct {
 
     pub fn deinit(self: *ClientHandshakeState, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);
+        self.server_hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.master_secret) |s| allocator.free(s);
     }
@@ -64,8 +65,8 @@ pub const ClientHandshakeState = struct {
 
             try key_agreement.processServerKeyExchange(
                 allocator,
-                self.hello,
-                self.server_hello,
+                &self.hello,
+                &self.server_hello,
                 &cert_chain,
                 &con.skx_msg.?,
             );
@@ -76,7 +77,7 @@ pub const ClientHandshakeState = struct {
             var ckx: ClientKeyExchangeMsg = undefined;
             try key_agreement.generateClientKeyExchange(
                 allocator,
-                self.hello,
+                &self.hello,
                 &cert_chain,
                 &pre_master_secret,
                 &ckx,
@@ -187,7 +188,6 @@ test "ClientHandshakeState" {
         var msg = try HandshakeMsg.unmarshal(allocator, client_hello_bytes);
         break :blk msg.ClientHello;
     };
-
     var srv_hs = ServerHandshakeState{
         .client_hello = client_hello_for_server,
         .ecdhe_ok = true,
@@ -198,9 +198,14 @@ test "ClientHandshakeState" {
     try srv_hs.pickCipherSuite();
     try srv_hs.doFullHandshake(allocator);
 
+    const server_hello_bytes = try srv_hs.hello.?.marshal(allocator);
+    var server_hello_for_client = blk: {
+        var msg = try HandshakeMsg.unmarshal(allocator, server_hello_bytes);
+        break :blk msg.ServerHello;
+    };
     var cli_hs = ClientHandshakeState{
-        .server_hello = &srv_hs.hello.?,
-        .hello = &client_hello,
+        .server_hello = server_hello_for_client,
+        .hello = client_hello,
         .fake_con = &fake_con,
     };
     defer cli_hs.deinit(allocator);

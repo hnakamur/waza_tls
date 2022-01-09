@@ -9,6 +9,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
+const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
@@ -129,6 +130,9 @@ pub const Conn = struct {
         }
 
         var cli_hello_ver = self.config.maxSupportedVersion().?;
+        // The version at the beginning of the ClientHello was capped at TLS 1.2
+        // for compatibility reasons. The supported_versions extension is used
+        // to negotiate versions now. See RFC 8446, Section 4.2.1.
         if (@enumToInt(cli_hello_ver) > @enumToInt(.v1_2)) {
             cli_hello_ver = .v1_2;
         }
@@ -136,6 +140,8 @@ pub const Conn = struct {
         var client_hello: ClientHelloMsg = blk: {
             const random = try generateRandom(allocator);
             errdefer allocator.free(random);
+            const session_id = try generateRandom(allocator);
+            errdefer allocator.free(session_id);
 
             const cipher_suites = try allocator.dupe(
                 CipherSuiteId,
@@ -151,8 +157,8 @@ pub const Conn = struct {
 
             break :blk ClientHelloMsg{
                 .vers = cli_hello_ver,
-                .random = random,
-                .session_id = &[_]u8{0} ** 32,
+                .random = random[0..random_length],
+                .session_id = session_id[0..random_length],
                 .cipher_suites = cipher_suites,
                 .compression_methods = compression_methods,
             };
