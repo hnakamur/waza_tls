@@ -88,6 +88,24 @@ pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
     return null;
 }
 
+const Aead = union(enum) {
+    prefix_nonce: PrefixNonceAead,
+    xor_nonce: XorNonceAead,
+};
+
+const aead_nonce_length = 12;
+const nonce_prefix_length = 4;
+
+// prefixNonceAEAD wraps an AEAD and prefixes a fixed portion of the nonce to
+// each call.
+const PrefixNonceAead = struct {
+    // nonce contains the fixed part of the nonce in the first four bytes.
+    nonce: [aead_nonce_length]u8 = undefined,
+    // aead:
+};
+
+const XorNonceAead = struct {};
+
 const testing = std.testing;
 
 test "mutualCipherSuite12" {
@@ -104,5 +122,31 @@ test "mutualCipherSuite12" {
     try testing.expectEqual(
         @as(?*const CipherSuite12, null),
         mutualCipherSuite12(&have, .TLS_AES_128_GCM_SHA256),
+    );
+}
+
+test "Aes128Gcm - Message and associated data" {
+    const Aes128Gcm = std.crypto.aead.aes_gcm.Aes128Gcm;
+    const key: [Aes128Gcm.key_length]u8 = [_]u8{'k'} ** Aes128Gcm.key_length;
+    const nonce: [Aes128Gcm.nonce_length]u8 = [_]u8{'n'} ** Aes128Gcm.nonce_length;
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    var c: [m.len]u8 = undefined;
+    var m2: [m.len]u8 = undefined;
+    var tag: [Aes128Gcm.tag_length]u8 = undefined;
+
+    Aes128Gcm.encrypt(&c, &tag, m, ad, nonce, key);
+    try Aes128Gcm.decrypt(&m2, &c, tag, ad, nonce, key);
+    try testing.expectEqualSlices(u8, m[0..], m2[0..]);
+
+    try testing.expectEqualSlices(
+        u8,
+        "\x5e\x84\x2b\xcb\x73\x09\x9c\xcf\xdd\x8e\x7e\x27\x1c\x07\x14\xef",
+        &c,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        "\x74\xe2\xdf\xb3\x6e\x31\x90\x6f\xd5\xd1\x17\xd4\xa1\x7a\x14\x2d",
+        &tag,
     );
 }
