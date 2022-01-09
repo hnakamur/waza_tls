@@ -19,6 +19,7 @@ const master_secret_length = @import("prf.zig").master_secret_length;
 const master_secret_label = @import("prf.zig").master_secret_label;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const fmtx = @import("../fmtx.zig");
 
@@ -174,7 +175,16 @@ pub const ClientHandshakeTls12 = struct {
         } else {
             try self.doFullHandshake(allocator);
             try self.sendFinished(allocator, &self.conn.client_finished);
+            std.log.debug(
+                "ClientHandshakeTls12 client_finished={}",
+                .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
+            );
             try self.conn.flush();
+            try self.readFinished(allocator, &self.conn.server_finished);
+            std.log.debug(
+                "ClientHandshakeTls12 server_finished={}",
+                .{fmtx.fmtSliceHexEscapeLower(&self.conn.server_finished)},
+            );
         }
     }
 
@@ -288,6 +298,33 @@ pub const ClientHandshakeTls12 = struct {
         try self.state.finished_hash.?.write(finished_bytes);
         try self.conn.writeRecord(allocator, .handshake, finished_bytes);
         mem.copy(u8, out, finished.verify_data);
+    }
+
+    fn readFinished(self: *ClientHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {
+        try self.conn.readChangeCipherSpec(allocator);
+
+        var hs_msg = try self.conn.readHandshake(allocator);
+        var server_finished_msg = switch (hs_msg) {
+            .Finished => |m| m,
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        };
+        defer server_finished_msg.deinit(allocator);
+
+        const verify_data = try self.state.finished_hash.?.serverSum(
+            allocator,
+            self.state.master_secret.?,
+        );
+
+        if (constantTimeEqlBytes(&verify_data, server_finished_msg.verify_data) != 1) {
+            // TODO: send alert
+            return error.IncorrectServerFinishedMessage;
+        }
+
+        try self.state.finished_hash.?.write(try server_finished_msg.marshal(allocator));
+        mem.copy(u8, out, &verify_data);
     }
 
     fn processServerHello(self: *ClientHandshakeTls12, allocator: mem.Allocator) !bool {

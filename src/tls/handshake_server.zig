@@ -22,6 +22,7 @@ const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeStat
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
+const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const fmtx = @import("../fmtx.zig");
 
@@ -243,6 +244,18 @@ pub const ServerHandshakeTls12 = struct {
             try self.pickCipherSuite();
             try self.doFullHandshake(allocator);
             try self.readFinished(allocator, &self.conn.client_finished);
+            std.log.debug(
+                "ServerHandshakeTls12 client_finished={}",
+                .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
+            );
+            self.conn.buffering = true;
+            // var server_finished: [12]u8 = undefined;
+            // try self.sendFinished(allocator, &server_finished);
+            // std.log.debug(
+            //     "ServerHandshakeTls12 server_finished={}",
+            //     .{fmtx.fmtSliceHexEscapeLower(&server_finished)},
+            // );
+            try self.sendFinished(allocator, null);
             try self.conn.flush();
         }
     }
@@ -406,7 +419,6 @@ pub const ServerHandshakeTls12 = struct {
             allocator,
             self.state.master_secret.?,
         );
-        // defer allocator.free(&verify_data);
 
         if (constantTimeEqlBytes(&verify_data, client_finished_msg.verify_data) != 1) {
             // TODO: send alert
@@ -416,48 +428,33 @@ pub const ServerHandshakeTls12 = struct {
         try self.state.finished_hash.?.write(try client_finished_msg.marshal(allocator));
         mem.copy(u8, out, &verify_data);
     }
+
+    fn sendFinished(self: *ServerHandshakeTls12, allocator: mem.Allocator, out: ?[]u8) !void {
+        try self.conn.writeRecord(allocator, .change_cipher_spec, &[_]u8{1});
+
+        const verify_data = try self.state.finished_hash.?.serverSum(
+            allocator,
+            self.state.master_secret.?,
+        );
+        var finished = FinishedMsg{
+            .verify_data = &verify_data,
+        };
+        defer finished.deinit(allocator);
+
+        const finished_bytes = try finished.marshal(allocator);
+        try self.state.finished_hash.?.write(finished_bytes);
+        try self.conn.writeRecord(allocator, .handshake, finished_bytes);
+        if (out) |o| {
+            mem.copy(u8, o, finished.verify_data);
+        }
+        std.log.debug(
+            "ServerHandshakeTls12 server_finished={}",
+            .{fmtx.fmtSliceHexEscapeLower(finished.verify_data)},
+        );
+    }
 };
 
-// constantTimeEqlBytes returns 1 if the two slices, x and y, have equal contents
-// and 0 otherwise. The time taken is a function of the length of the slices and
-// is independent of the contents.
-fn constantTimeEqlBytes(x: []const u8, y: []const u8) u32 {
-    if (x.len != y.len) {
-        return 0;
-    }
-
-    var i: usize = 0;
-    var v: u8 = 0;
-    while (i < x.len) : (i += 1) {
-        v |= x[i] ^ y[i];
-    }
-    return constantTimeEqlByte(v, 0);
-}
-
-// constantTimeByteEq returns 1 if x == y and 0 otherwise.
-fn constantTimeEqlByte(x: u8, y: u8) u32 {
-    return (@intCast(u32, x ^ y) -% 1) >> 31;
-}
-
 const testing = std.testing;
-
-test "constantTimeEqlBytes" {
-    try testing.expectEqual(@as(u32, 1), constantTimeEqlBytes("hello", "hello"));
-    try testing.expectEqual(@as(u32, 0), constantTimeEqlBytes("hello", "hell"));
-    try testing.expectEqual(@as(u32, 0), constantTimeEqlBytes("hello", "goodbye"));
-}
-
-test "constantTimeEqlByte" {
-    var x: u8 = 0;
-    var y: u8 = 0;
-    while (true) : (x += 1) {
-        while (true) : (y += 1) {
-            try testing.expectEqual(x == y, constantTimeEqlByte(x, y) == 1);
-            if (y == 255) break;
-        }
-        if (x == 255) break;
-    }
-}
 
 const testEd25519Certificate = "\x30\x82\x01\x2e\x30\x81\xe1\xa0\x03\x02\x01\x02\x02\x10\x0f\x43\x1c\x42\x57\x93\x94\x1d\xe9\x87\xe4\xf1\xad\x15\x00\x5d\x30\x05\x06\x03\x2b\x65\x70\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x1e\x17\x0d\x31\x39\x30\x35\x31\x36\x32\x31\x33\x38\x30\x31\x5a\x17\x0d\x32\x30\x30\x35\x31\x35\x32\x31\x33\x38\x30\x31\x5a\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00\x3f\xe2\x15\x2e\xe6\xe3\xef\x3f\x4e\x85\x4a\x75\x77\xa3\x64\x9e\xed\xe0\xbf\x84\x2c\xcc\x92\x26\x8f\xfa\x6f\x34\x83\xaa\xec\x8f\xa3\x4d\x30\x4b\x30\x0e\x06\x03\x55\x1d\x0f\x01\x01\xff\x04\x04\x03\x02\x05\xa0\x30\x13\x06\x03\x55\x1d\x25\x04\x0c\x30\x0a\x06\x08\x2b\x06\x01\x05\x05\x07\x03\x01\x30\x0c\x06\x03\x55\x1d\x13\x01\x01\xff\x04\x02\x30\x00\x30\x16\x06\x03\x55\x1d\x11\x04\x0f\x30\x0d\x82\x0b\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d\x30\x05\x06\x03\x2b\x65\x70\x03\x41\x00\x63\x44\xed\x9c\xc4\xbe\x53\x24\x53\x9f\xd2\x10\x8d\x9f\xe8\x21\x08\x90\x95\x39\xe5\x0d\xc1\x55\xff\x2c\x16\xb7\x1d\xfc\xab\x7d\x4d\xd4\xe0\x93\x13\xd0\xa9\x42\xe0\xb6\x6b\xfe\x5d\x67\x48\xd7\x9f\x50\xbc\x6c\xcd\x4b\x03\x83\x7c\xf2\x08\x58\xcd\xac\xcf\x0c";
 const testEd25519PrivateKey = "\x3a\x88\x49\x65\xe7\x6b\x3f\x55\xe5\xfa\xf9\x61\x54\x58\xa9\x23\x54\x89\x42\x34\xde\x3e\xc9\xf6\x84\xd4\x6d\x55\xce\xbf\x3d\xc6\x3f\xe2\x15\x2e\xe6\xe3\xef\x3f\x4e\x85\x4a\x75\x77\xa3\x64\x9e\xed\xe0\xbf\x84\x2c\xcc\x92\x26\x8f\xfa\x6f\x34\x83\xaa\xec\x8f";

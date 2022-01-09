@@ -97,6 +97,7 @@ pub const Conn = struct {
     // retained to support the renegotiation extension and tls-unique
     // channel-binding.
     client_finished: [finished_verify_length]u8 = undefined,
+    server_finished: [finished_verify_length]u8 = undefined,
 
     pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
         return .{
