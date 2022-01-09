@@ -105,11 +105,20 @@ pub const ClientHandshake = union(ProtocolVersion) {
     v1_2: ClientHandshakeTls12,
     v1_0: ClientHandshakeTls12,
 
-    pub fn init(ver: ProtocolVersion, conn: *Conn, client_hello: ClientHelloMsg) ClientHandshake {
+    pub fn init(
+        ver: ProtocolVersion,
+        conn: *Conn,
+        client_hello: ClientHelloMsg,
+        server_hello: ServerHelloMsg,
+    ) ClientHandshake {
         return switch (ver) {
             .v1_3 => @panic("not implemented yet"),
-            .v1_2 => ClientHandshake{ .v1_2 = ClientHandshakeTls12.init(conn, client_hello) },
-            .v1_0 => ClientHandshake{ .v1_0 = ClientHandshakeTls12.init(conn, client_hello) },
+            .v1_2 => ClientHandshake{
+                .v1_2 = ClientHandshakeTls12.init(conn, client_hello, server_hello),
+            },
+            .v1_0 => ClientHandshake{
+                .v1_0 = ClientHandshakeTls12.init(conn, client_hello, server_hello),
+            },
         };
     }
 
@@ -132,8 +141,15 @@ pub const ClientHandshakeTls12 = struct {
     state: ClientHandshakeState,
     conn: *Conn,
 
-    pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ClientHandshakeTls12 {
-        return .{ .state = .{ .client_hello = client_hello }, .conn = conn };
+    pub fn init(
+        conn: *Conn,
+        client_hello: ClientHelloMsg,
+        server_hello: ServerHelloMsg,
+    ) ClientHandshakeTls12 {
+        return .{
+            .state = .{ .hello = client_hello, .server_hello = server_hello },
+            .conn = conn,
+        };
     }
 
     pub fn deinit(self: *ClientHandshakeTls12, allocator: mem.Allocator) void {
@@ -141,8 +157,136 @@ pub const ClientHandshakeTls12 = struct {
     }
 
     pub fn handshake(self: *ClientHandshakeTls12, allocator: mem.Allocator) !void {
-        _ = self;
+        const is_resume = try self.processServerHello(allocator);
+
+        self.state.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.state.suite.?);
+
+        // TODO: implement
+
+        try self.state.finished_hash.?.write(try self.state.hello.marshal(allocator));
+        try self.state.finished_hash.?.write(try self.state.server_hello.marshal(allocator));
+
+        self.conn.buffering = true;
+        if (is_resume) {
+            // TODO: implement
+        } else {
+            try self.doFullHandshake(allocator);
+            try self.conn.flush();
+        }
+    }
+
+    pub fn doFullHandshake(self: *ClientHandshakeTls12, allocator: mem.Allocator) !void {
+        var hs_msg = try self.conn.readHandshake(allocator);
+        std.log.debug(
+            "ClientHandshakeTls12.doFullHandshake hs_msg#1.type={s}",
+            .{@tagName(hs_msg)},
+        );
+        var cert_msg = switch (hs_msg) {
+            .Certificate => |c| c,
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        };
+        defer cert_msg.deinit(allocator);
+        if (cert_msg.certificates.len == 0) {
+            // TODO: send alert
+            return error.UnexpectedMessage;
+        }
+
+        try self.state.finished_hash.?.write(try cert_msg.marshal(allocator));
+
+        var cert_chain = CertificateChain{
+            .certificate_chain = try allocator.dupe([]const u8, cert_msg.certificates),
+        };
+        defer cert_chain.deinit(allocator);
+
+        hs_msg = try self.conn.readHandshake(allocator);
+        std.log.debug(
+            "ClientHandshakeTls12.doFullHandshake hs_msg#2.type={s}",
+            .{@tagName(hs_msg)},
+        );
+        switch (hs_msg) {
+            .CertificateStatus => |cs| {
+                _ = cs;
+                hs_msg = try self.conn.readHandshake(allocator);
+            },
+            else => {},
+        }
+
+        var key_agreement = self.state.suite.?.ka(self.conn.version.?);
+        defer key_agreement.deinit(allocator);
+
+        switch (hs_msg) {
+            .ServerKeyExchange => |*skx_msg| {
+                {
+                    defer skx_msg.deinit(allocator);
+                    try self.state.finished_hash.?.write(try skx_msg.marshal(allocator));
+                    try key_agreement.processServerKeyExchange(
+                        allocator,
+                        &self.state.hello,
+                        &self.state.server_hello,
+                        &cert_chain,
+                        skx_msg,
+                    );
+                }
+                hs_msg = try self.conn.readHandshake(allocator);
+                std.log.debug(
+                    "ClientHandshakeTls12.doFullHandshake hs_msg#3.type={s}",
+                    .{@tagName(hs_msg)},
+                );
+            },
+            else => {},
+        }
+
+        switch (hs_msg) {
+            .ServerHelloDone => |*hello_done_msg| {
+                defer hello_done_msg.deinit(allocator);
+                try self.state.finished_hash.?.write(try hello_done_msg.marshal(allocator));
+            },
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        }
+
+        var pre_master_secret: []const u8 = undefined;
+        var ckx_msg: ClientKeyExchangeMsg = undefined;
+        try key_agreement.generateClientKeyExchange(
+            allocator,
+            &self.state.hello,
+            &cert_chain,
+            &pre_master_secret,
+            &ckx_msg,
+        );
+        defer ckx_msg.deinit(allocator);
+        defer allocator.free(pre_master_secret);
+        const ckx_msg_bytes = try ckx_msg.marshal(allocator);
+        try self.state.finished_hash.?.write(ckx_msg_bytes);
+        try self.conn.writeRecord(allocator, .handshake, ckx_msg_bytes);
+
+        self.state.master_secret = try masterFromPreMasterSecret(
+            allocator,
+            self.conn.version.?,
+            self.state.suite.?,
+            pre_master_secret,
+            self.state.hello.random,
+            self.state.server_hello.random,
+        );
+
+        self.state.finished_hash.?.discardHandshakeBuffer();
+    }
+
+    fn processServerHello(self: *ClientHandshakeTls12, allocator: mem.Allocator) !bool {
+        try self.pickCipherSuite();
         _ = allocator;
+        return false;
+    }
+
+    fn pickCipherSuite(self: *ClientHandshakeTls12) !void {
+        // TODO: stop hardcoding
+        var suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
+        self.state.suite = suite;
     }
 };
 

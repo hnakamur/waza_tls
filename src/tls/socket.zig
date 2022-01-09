@@ -30,7 +30,7 @@ const Server = struct {
         var conn = try self.server.accept();
         var sc = ServerConn{
             .address = conn.address,
-            .conn = Conn.init(conn.stream, .{}, .{}, .{}),
+            .conn = Conn.init(conn.stream, .{}, .{}, .{ .max_version = .v1_2 }),
         };
         try self.connections.append(self.allocator, sc);
         return sc;
@@ -47,7 +47,7 @@ const Client = struct {
 
     pub fn init(addr: net.Address) !Client {
         var stream = try net.tcpConnectToAddress(addr);
-        return Client{ .conn = Conn.init(stream, .{}, .{}, .{}) };
+        return Client{ .conn = Conn.init(stream, .{}, .{}, .{ .max_version = .v1_2 }) };
     }
 
     pub fn deinit(self: *Client, allocator: mem.Allocator) void {
@@ -97,13 +97,7 @@ test "socket ClientServer" {
 }
 
 test "Conn ClientServer" {
-    const MsgType = @import("handshake_msg.zig").MsgType;
-    const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
-    const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
-    const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
-    const generateRandom = @import("handshake_msg.zig").generateRandom;
-    const random_length = @import("handshake_msg.zig").random_length;
 
     testing.log_level = .debug;
     try struct {
@@ -120,53 +114,7 @@ test "Conn ClientServer" {
             defer client.deinit(allocator);
             defer client.close();
 
-            var client_hello = blk: {
-                const random = try generateRandom(allocator);
-                errdefer allocator.free(random);
-                const session_id = try generateRandom(allocator);
-                errdefer allocator.free(session_id);
-                const cipher_suites = try allocator.dupe(
-                    CipherSuiteId,
-                    &[_]CipherSuiteId{.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
-                );
-                errdefer allocator.free(cipher_suites);
-                const compression_methods = try allocator.dupe(
-                    CompressionMethod,
-                    &[_]CompressionMethod{.none},
-                );
-                errdefer allocator.free(compression_methods);
-                break :blk ClientHelloMsg{
-                    .vers = .v1_2,
-                    .random = random[0..random_length],
-                    .session_id = session_id[0..random_length],
-                    .cipher_suites = cipher_suites,
-                    .compression_methods = compression_methods,
-                };
-            };
-            defer client_hello.deinit(allocator);
-
-            const client_hello_bytes = try client_hello.marshal(allocator);
-            try client.conn.writeRecord(allocator, .handshake, client_hello_bytes);
-            {
-                var hs_msg = try client.conn.readHandshake(allocator);
-                defer hs_msg.deinit(allocator);
-                try testing.expectEqual(MsgType.ServerHello, @as(MsgType, hs_msg));
-            }
-            {
-                var hs_msg = try client.conn.readHandshake(allocator);
-                defer hs_msg.deinit(allocator);
-                try testing.expectEqual(MsgType.Certificate, @as(MsgType, hs_msg));
-            }
-            {
-                var hs_msg = try client.conn.readHandshake(allocator);
-                defer hs_msg.deinit(allocator);
-                try testing.expectEqual(MsgType.ServerKeyExchange, @as(MsgType, hs_msg));
-            }
-            {
-                var hs_msg = try client.conn.readHandshake(allocator);
-                defer hs_msg.deinit(allocator);
-                try testing.expectEqual(MsgType.ServerHelloDone, @as(MsgType, hs_msg));
-            }
+            try client.conn.clientHandshake(allocator);
         }
 
         fn runTest() !void {

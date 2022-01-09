@@ -8,6 +8,7 @@ const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
+const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
@@ -38,7 +39,7 @@ pub const Conn = struct {
             return sup_vers[0];
         }
 
-        fn supportedVersion(self: *const Config) []const ProtocolVersion {
+        fn supportedVersions(self: *const Config) []const ProtocolVersion {
             var start: usize = 0;
             var end: usize = supported_versions.len;
             var i: usize = 0;
@@ -63,7 +64,7 @@ pub const Conn = struct {
             self: *const Config,
             peer_versions: []const ProtocolVersion,
         ) ?ProtocolVersion {
-            const sup_vers = self.supportedVersion();
+            const sup_vers = self.supportedVersions();
             for (peer_versions) |peer_ver| {
                 for (sup_vers) |sup_ver| {
                     if (sup_ver == peer_ver) {
@@ -107,12 +108,26 @@ pub const Conn = struct {
     }
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
-        const client_hello = try self.makeClientHello(allocator);
-        _ = client_hello;
-        // self.handshake = Handshake{
-        //     .client = ClientHandshake.init(self.version.?, self, client_hello),
-        // };
-        // try self.handshake.?.client.handshake(allocator);
+        var client_hello = try self.makeClientHello(allocator);
+
+        const client_hello_bytes = try client_hello.marshal(allocator);
+        try self.writeRecord(allocator, .handshake, client_hello_bytes);
+
+        var hs_msg = try self.readHandshake(allocator);
+        var server_hello = switch (hs_msg) {
+            .ServerHello => |sh| sh,
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        };
+
+        try self.pickTlsVersion(&server_hello);
+
+        self.handshake = Handshake{
+            .client = ClientHandshake.init(self.version.?, self, client_hello, server_hello),
+        };
+        try self.handshake.?.client.handshake(allocator);
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
@@ -124,7 +139,7 @@ pub const Conn = struct {
     }
 
     fn makeClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
-        const sup_vers = self.supportedVersion();
+        const sup_vers = self.config.supportedVersions();
         if (sup_vers.len == 0) {
             return error.NoSupportedVersion;
         }
@@ -133,7 +148,7 @@ pub const Conn = struct {
         // The version at the beginning of the ClientHello was capped at TLS 1.2
         // for compatibility reasons. The supported_versions extension is used
         // to negotiate versions now. See RFC 8446, Section 4.2.1.
-        if (@enumToInt(cli_hello_ver) > @enumToInt(.v1_2)) {
+        if (@enumToInt(cli_hello_ver) > @enumToInt(ProtocolVersion.v1_2)) {
             cli_hello_ver = .v1_2;
         }
 
@@ -165,6 +180,22 @@ pub const Conn = struct {
         };
 
         return client_hello;
+    }
+
+    fn pickTlsVersion(self: *Conn, server_hello: *const ServerHelloMsg) !void {
+        const peer_ver = if (server_hello.supported_version) |sup_ver|
+            sup_ver
+        else
+            server_hello.vers;
+
+        const ver = self.config.mutualVersion(&[_]ProtocolVersion{peer_ver});
+        if (ver) |_| {} else {
+            // TODO: send alert
+            return error.UnsupportedVersion;
+        }
+        self.version = ver;
+        self.in.ver = ver;
+        self.out.ver = ver;
     }
 
     pub fn writeRecord(
@@ -564,11 +595,11 @@ test "supportedVersionsFromMax" {
     try f(.v1_2, supported_versions[1..]);
 }
 
-test "Config.supportedVersion" {
+test "Config.supportedVersions" {
     // testing.log_level = .debug;
     const f = struct {
         fn f(config: Conn.Config, want_versions: []const ProtocolVersion) !void {
-            const got_versions = config.supportedVersion();
+            const got_versions = config.supportedVersions();
             try testing.expectEqualSlices(ProtocolVersion, want_versions, got_versions);
         }
     }.f;
