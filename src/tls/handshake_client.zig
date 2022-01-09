@@ -3,14 +3,15 @@ const mem = std.mem;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
+const ClientKeyExchangeMsg = @import("handshake_msg.zig").ClientKeyExchangeMsg;
+const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const freeOptionalField = @import("handshake_msg.zig").freeOptionalField;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
-const ClientKeyExchangeMsg = @import("handshake_msg.zig").ClientKeyExchangeMsg;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
-const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
+const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const x509 = @import("x509.zig");
 const prfForVersion = @import("prf.zig").prfForVersion;
@@ -19,6 +20,7 @@ const master_secret_label = @import("prf.zig").master_secret_label;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const Conn = @import("conn.zig").Conn;
+const fmtx = @import("../fmtx.zig");
 
 pub const ClientHandshakeState = struct {
     hello: ClientHelloMsg,
@@ -36,7 +38,7 @@ pub const ClientHandshakeState = struct {
     }
 
     fn handshake(self: *ClientHandshakeState, allocator: mem.Allocator) !void {
-        var suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
+        var suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
         self.suite = suite;
 
         var finished_hash = FinishedHash.new(allocator, .v1_2, suite);
@@ -171,6 +173,7 @@ pub const ClientHandshakeTls12 = struct {
             // TODO: implement
         } else {
             try self.doFullHandshake(allocator);
+            try self.sendFinished(allocator, &self.conn.client_finished);
             try self.conn.flush();
         }
     }
@@ -261,8 +264,30 @@ pub const ClientHandshakeTls12 = struct {
             self.state.hello.random,
             self.state.server_hello.random,
         );
+        std.log.debug(
+            "ClientHandshakeTls12 master_secret={}",
+            .{fmtx.fmtSliceHexEscapeLower(self.state.master_secret.?)},
+        );
 
         self.state.finished_hash.?.discardHandshakeBuffer();
+    }
+
+    fn sendFinished(self: *ClientHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {
+        try self.conn.writeRecord(allocator, .change_cipher_spec, &[_]u8{1});
+
+        const verify_data = try self.state.finished_hash.?.clientSum(
+            allocator,
+            self.state.master_secret.?,
+        );
+        var finished = FinishedMsg{
+            .verify_data = &verify_data,
+        };
+        defer finished.deinit(allocator);
+
+        const finished_bytes = try finished.marshal(allocator);
+        try self.state.finished_hash.?.write(finished_bytes);
+        try self.conn.writeRecord(allocator, .handshake, finished_bytes);
+        mem.copy(u8, out, finished.verify_data);
     }
 
     fn processServerHello(self: *ClientHandshakeTls12, allocator: mem.Allocator) !bool {
@@ -273,7 +298,7 @@ pub const ClientHandshakeTls12 = struct {
 
     fn pickCipherSuite(self: *ClientHandshakeTls12) !void {
         // TODO: stop hardcoding
-        var suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
+        var suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
         self.state.suite = suite;
     }
 };

@@ -925,7 +925,7 @@ pub const ClientKeyExchangeMsg = struct {
     }
 };
 
-const FinishedMsg = struct {
+pub const FinishedMsg = struct {
     raw: ?[]const u8 = null,
     verify_data: []const u8 = undefined,
 

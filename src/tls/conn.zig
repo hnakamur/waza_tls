@@ -14,6 +14,7 @@ const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
+const finished_verify_length = @import("prf.zig").finished_verify_length;
 const RecordType = @import("record.zig").RecordType;
 const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
 const ClientHandshake = @import("handshake_client.zig").ClientHandshake;
@@ -90,6 +91,12 @@ pub const Conn = struct {
     handshake_bytes: []const u8 = &[_]u8{},
     config: Config,
     handshake: ?Handshake = null,
+
+    // clientFinished and serverFinished contain the Finished message sent
+    // by the client or server in the most recent handshake. This is
+    // retained to support the renegotiation extension and tls-unique
+    // channel-binding.
+    client_finished: [finished_verify_length]u8 = undefined,
 
     pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
         return .{
@@ -325,8 +332,6 @@ pub const Conn = struct {
         allocator: mem.Allocator,
         expect_change_cipher_spec: bool,
     ) !void {
-        _ = expect_change_cipher_spec;
-
         if (self.input.items.len != 0) {
             return error.InternalError;
         }
@@ -390,6 +395,33 @@ pub const Conn = struct {
         switch (rec_type) {
             .handshake => {
                 self.handshake_bytes = data;
+            },
+            .change_cipher_spec => {
+                defer allocator.free(data);
+                if (data.len != 1 or data[0] != 1) {
+                    // TODO: send alert
+                    return error.AlertDecodeError;
+                }
+                // Handshake messages are not allowed to fragment across the CCS.
+                if (self.handshake_bytes.len > 0) {
+                    // TODO: send alert
+                    return error.UnexpectedMessage;
+                }
+                // In TLS 1.3, change_cipher_spec records are ignored until the
+                // Finished. See RFC 8446, Appendix D.4. Note that according to Section
+                // 5, a server can send a ChangeCipherSpec before its ServerHello, when
+                // c.vers is still unset. That's not useful though and suspicious if the
+                // server then selects a lower protocol version, so don't allow that.
+                if (self.version.? == .v1_3) {
+                    // TODO: implement
+                    @panic("not implemented yet");
+                }
+
+                if (!expect_change_cipher_spec) {
+                    // TODO: send alert
+                    return error.UnexpectedMessage;
+                }
+                // TODO: implement
             },
             else => {
                 // TODO: send alert

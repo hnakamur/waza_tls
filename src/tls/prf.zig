@@ -93,12 +93,75 @@ pub fn masterFromPreMasterSecret(
     return master_secret;
 }
 
+pub const ConnectionKeys = struct {
+    key_material: []const u8,
+    client_mac: []const u8,
+    server_mac: []const u8,
+    client_key: []const u8,
+    server_key: []const u8,
+    client_iv: []const u8,
+    server_iv: []const u8,
+
+    pub fn fromMasterSecret(
+        allocator: mem.Allocator,
+        version: ProtocolVersion,
+        suite: *const CipherSuite12,
+        master_secret: []const u8,
+        client_random: []const u8,
+        server_random: []const u8,
+        mac_len: usize,
+        key_len: usize,
+        iv_len: usize,
+    ) !ConnectionKeys {
+        var seed = try allocator.alloc(u8, client_random.len + server_random.len);
+        defer allocator.free(seed);
+        mem.copy(u8, seed, server_random);
+        mem.copy(u8, seed[server_random.len..], client_random);
+
+        const n = 2 * mac_len + 2 * key_len + 2 * iv_len;
+        var key_material = try allocator.alloc(u8, n);
+
+        const prf = prfForVersion(version, suite);
+        prf(allocator, master_secret, key_expansion_label, seed, key_material);
+
+        var rest = key_material;
+        const client_mac = rest[0..mac_len];
+        rest = rest[mac_len..];
+        const server_mac = rest[0..mac_len];
+        rest = rest[mac_len..];
+
+        const client_key = rest[0..key_len];
+        rest = rest[key_len..];
+        const server_key = rest[0..key_len];
+        rest = rest[key_len..];
+
+        const client_iv = rest[0..iv_len];
+        rest = rest[iv_len..];
+        const server_iv = rest[0..iv_len];
+        rest = rest[iv_len..];
+
+        return ConnectionKeys{
+            .key_material = key_material,
+            .client_mac = client_mac,
+            .server_mac = server_mac,
+            .client_key = client_key,
+            .server_key = server_key,
+            .client_iv = client_iv,
+            .server_iv = server_iv,
+        };
+    }
+
+    pub fn deinit(self: *ConnectionKeys, allocator: mem.Allocator) void {
+        allocator.free(self.key_material);
+    }
+};
+
 const testing = std.testing;
-const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
+const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
 
 test "prfForVersion" {
     const allocator = testing.allocator;
-    const suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256).?;
+    const suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256).?;
     const prf = prfForVersion(.v1_2, suite);
     const seed = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
     var result: [12]u8 = undefined;

@@ -7,7 +7,8 @@ const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
 
 pub const CipherSuite = union(ProtocolVersion) {
     v1_3: CipherSuite13,
-    v1_2, v1_0: CipherSuite12,
+    v1_2: CipherSuite12,
+    v1_0: CipherSuite12,
 };
 
 pub const CipherSuite13 = struct {};
@@ -21,6 +22,11 @@ pub const CipherSuite12 = struct {
     };
 
     id: CipherSuiteId,
+    // the lengths, in bytes, of the key material needed for each component.
+    key_len: usize,
+    mac_len: usize,
+    iv_len: usize,
+
     flags: Flags = .{},
     ka: fn (version: ProtocolVersion) KeyAgreement,
 };
@@ -28,16 +34,25 @@ pub const CipherSuite12 = struct {
 pub const cipher_suites12 = [_]CipherSuite12{
     .{
         .id = .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+        .key_len = 32,
+        .mac_len = 0,
+        .iv_len = 12,
         .flags = .{ .ecdhe = true, .tls12 = true },
         .ka = ecdheRsaKa,
     },
     .{
         .id = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        .key_len = 16,
+        .mac_len = 0,
+        .iv_len = 4,
         .flags = .{ .ecdhe = true, .tls12 = true },
         .ka = ecdheRsaKa,
     },
     .{
         .id = .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+        .key_len = 32,
+        .mac_len = 0,
+        .iv_len = 4,
         .flags = .{ .ecdhe = true, .ec_sign = true, .tls12 = true, .sha384 = true },
         .ka = ecdheEcdsaKa,
     },
@@ -55,16 +70,16 @@ fn ecdheRsaKa(version: ProtocolVersion) KeyAgreement {
     return .{ .ecdhe = EcdheKeyAgreement{ .is_rsa = true, .version = version } };
 }
 
-pub fn mutualCipherSuite(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuite12 {
+pub fn mutualCipherSuite12(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuite12 {
     for (have) |id| {
         if (id == want) {
-            return cipherSuiteById(id);
+            return cipherSuite12ById(id);
         }
     }
     return null;
 }
 
-pub fn cipherSuiteById(id: CipherSuiteId) ?*const CipherSuite12 {
+pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
     for (cipher_suites12) |*suite| {
         if (suite.id == id) {
             return suite;
@@ -75,7 +90,7 @@ pub fn cipherSuiteById(id: CipherSuiteId) ?*const CipherSuite12 {
 
 const testing = std.testing;
 
-test "mutualCipherSuite" {
+test "mutualCipherSuite12" {
     const have = [_]CipherSuiteId{
         .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
@@ -83,11 +98,11 @@ test "mutualCipherSuite" {
 
     try testing.expectEqual(
         @as(?*const CipherSuite12, &cipher_suites12[2]),
-        mutualCipherSuite(&have, .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
+        mutualCipherSuite12(&have, .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
     );
 
     try testing.expectEqual(
         @as(?*const CipherSuite12, null),
-        mutualCipherSuite(&have, .TLS_AES_128_GCM_SHA256),
+        mutualCipherSuite12(&have, .TLS_AES_128_GCM_SHA256),
     );
 }

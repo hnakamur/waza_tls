@@ -1,11 +1,13 @@
 const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
+const math = std.math;
 const mem = std.mem;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CertificateMsg = @import("handshake_msg.zig").CertificateMsg;
 const ServerHelloDoneMsg = @import("handshake_msg.zig").ServerHelloDoneMsg;
+const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
@@ -13,7 +15,7 @@ const generateRandom = @import("handshake_msg.zig").generateRandom;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
-const cipherSuiteById = @import("cipher_suites.zig").cipherSuiteById;
+const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
 const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
@@ -21,6 +23,7 @@ const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const Conn = @import("conn.zig").Conn;
+const fmtx = @import("../fmtx.zig");
 
 // ServerHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
@@ -84,7 +87,7 @@ pub const ServerHandshakeState = struct {
 
     pub fn pickCipherSuite(self: *ServerHandshakeState) !void {
         // TODO: stop hardcoding.
-        self.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+        self.suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
     }
 
     pub fn doFullHandshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
@@ -239,6 +242,7 @@ pub const ServerHandshakeTls12 = struct {
             // valid so we do a full handshake.
             try self.pickCipherSuite();
             try self.doFullHandshake(allocator);
+            try self.readFinished(allocator, &self.conn.client_finished);
             try self.conn.flush();
         }
     }
@@ -288,22 +292,22 @@ pub const ServerHandshakeTls12 = struct {
 
     pub fn pickCipherSuite(self: *ServerHandshakeTls12) !void {
         // TODO: stop hardcoding.
-        self.state.suite = cipherSuiteById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+        self.state.suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
     }
 
     pub fn doFullHandshake(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
         const conn_protocol_vers = .v1_2;
-        var finished_hash = FinishedHash.new(allocator, conn_protocol_vers, self.state.suite.?);
+        self.state.finished_hash = FinishedHash.new(allocator, conn_protocol_vers, self.state.suite.?);
 
         if (false) { // TODO: stop hardcoding
             // No need to keep a full record of the handshake if client
             // certificates won't be used.
-            finished_hash.discardHandshakeBuffer();
+            self.state.finished_hash.?.discardHandshakeBuffer();
         }
 
-        try finished_hash.write(try self.state.client_hello.marshal(allocator));
+        try self.state.finished_hash.?.write(try self.state.client_hello.marshal(allocator));
         const server_hello_bytes = try self.state.hello.?.marshal(allocator);
-        try finished_hash.write(server_hello_bytes);
+        try self.state.finished_hash.?.write(server_hello_bytes);
         try self.conn.writeRecord(allocator, .handshake, server_hello_bytes);
 
         {
@@ -315,7 +319,7 @@ pub const ServerHandshakeTls12 = struct {
             defer cert_msg.deinit(allocator);
 
             const cert_msg_bytes = try cert_msg.marshal(allocator);
-            try finished_hash.write(cert_msg_bytes);
+            try self.state.finished_hash.?.write(cert_msg_bytes);
             try self.conn.writeRecord(allocator, .handshake, cert_msg_bytes);
         }
 
@@ -324,6 +328,8 @@ pub const ServerHandshakeTls12 = struct {
         }
 
         var key_agreement = self.state.suite.?.ka(conn_protocol_vers);
+        defer key_agreement.deinit(allocator);
+
         var skx = try key_agreement.generateServerKeyExchange(
             allocator,
             &self.state.cert_chain.?,
@@ -333,27 +339,125 @@ pub const ServerHandshakeTls12 = struct {
         defer skx.deinit(allocator);
 
         const skx_bytes = try skx.marshal(allocator);
-        try finished_hash.write(skx_bytes);
+        try self.state.finished_hash.?.write(skx_bytes);
         try self.conn.writeRecord(allocator, .handshake, skx_bytes);
 
         var hello_done = ServerHelloDoneMsg{};
         defer hello_done.deinit(allocator);
         const hello_done_bytes = try hello_done.marshal(allocator);
-        try finished_hash.write(hello_done_bytes);
+        try self.state.finished_hash.?.write(hello_done_bytes);
         try self.conn.writeRecord(allocator, .handshake, hello_done_bytes);
 
-        // TODO: implement
-        self.state.finished_hash = finished_hash;
+        try self.conn.flush();
 
-        // if (self.fake_con) |con| {
-        //     con.server_key_agreement = key_agreement;
-        // } else {
-        //     try self.doFullHandshake2(allocator, &key_agreement, conn_protocol_vers);
-        // }
+        var hs_msg = try self.conn.readHandshake(allocator);
+
+        // Get client key exchange
+        var ckx_msg = switch (hs_msg) {
+            .ClientKeyExchange => |c| c,
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        };
+        defer ckx_msg.deinit(allocator);
+        try self.state.finished_hash.?.write(try ckx_msg.marshal(allocator));
+
+        const pre_master_secret = try key_agreement.processClientKeyExchange(
+            allocator,
+            &self.state.cert_chain.?,
+            &ckx_msg,
+            self.conn.version.?,
+        );
+        defer allocator.free(pre_master_secret);
+
+        self.state.master_secret = try masterFromPreMasterSecret(
+            allocator,
+            self.conn.version.?,
+            self.state.suite.?,
+            pre_master_secret,
+            self.state.client_hello.random,
+            self.state.hello.?.random,
+        );
+        std.log.debug(
+            "ServerHandshakeTls12 master_secret={}",
+            .{fmtx.fmtSliceHexEscapeLower(self.state.master_secret.?)},
+        );
+
+        // TODO: implement
+
+        self.state.finished_hash.?.discardHandshakeBuffer();
+    }
+
+    fn readFinished(self: *ServerHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {
+        try self.conn.readChangeCipherSpec(allocator);
+
+        var hs_msg = try self.conn.readHandshake(allocator);
+        var client_finished_msg = switch (hs_msg) {
+            .Finished => |m| m,
+            else => {
+                // TODO: send alert
+                return error.UnexpectedMessage;
+            },
+        };
+        defer client_finished_msg.deinit(allocator);
+
+        const verify_data = try self.state.finished_hash.?.clientSum(
+            allocator,
+            self.state.master_secret.?,
+        );
+        // defer allocator.free(&verify_data);
+
+        if (constantTimeEqlBytes(&verify_data, client_finished_msg.verify_data) != 1) {
+            // TODO: send alert
+            return error.IncorrectClientFinishedMessage;
+        }
+
+        try self.state.finished_hash.?.write(try client_finished_msg.marshal(allocator));
+        mem.copy(u8, out, &verify_data);
     }
 };
 
+// constantTimeEqlBytes returns 1 if the two slices, x and y, have equal contents
+// and 0 otherwise. The time taken is a function of the length of the slices and
+// is independent of the contents.
+fn constantTimeEqlBytes(x: []const u8, y: []const u8) u32 {
+    if (x.len != y.len) {
+        return 0;
+    }
+
+    var i: usize = 0;
+    var v: u8 = 0;
+    while (i < x.len) : (i += 1) {
+        v |= x[i] ^ y[i];
+    }
+    return constantTimeEqlByte(v, 0);
+}
+
+// constantTimeByteEq returns 1 if x == y and 0 otherwise.
+fn constantTimeEqlByte(x: u8, y: u8) u32 {
+    return (@intCast(u32, x ^ y) -% 1) >> 31;
+}
+
 const testing = std.testing;
+
+test "constantTimeEqlBytes" {
+    try testing.expectEqual(@as(u32, 1), constantTimeEqlBytes("hello", "hello"));
+    try testing.expectEqual(@as(u32, 0), constantTimeEqlBytes("hello", "hell"));
+    try testing.expectEqual(@as(u32, 0), constantTimeEqlBytes("hello", "goodbye"));
+}
+
+test "constantTimeEqlByte" {
+    var x: u8 = 0;
+    var y: u8 = 0;
+    while (true) : (x += 1) {
+        while (true) : (y += 1) {
+            try testing.expectEqual(x == y, constantTimeEqlByte(x, y) == 1);
+            if (y == 255) break;
+        }
+        if (x == 255) break;
+    }
+}
 
 const testEd25519Certificate = "\x30\x82\x01\x2e\x30\x81\xe1\xa0\x03\x02\x01\x02\x02\x10\x0f\x43\x1c\x42\x57\x93\x94\x1d\xe9\x87\xe4\xf1\xad\x15\x00\x5d\x30\x05\x06\x03\x2b\x65\x70\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x1e\x17\x0d\x31\x39\x30\x35\x31\x36\x32\x31\x33\x38\x30\x31\x5a\x17\x0d\x32\x30\x30\x35\x31\x35\x32\x31\x33\x38\x30\x31\x5a\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00\x3f\xe2\x15\x2e\xe6\xe3\xef\x3f\x4e\x85\x4a\x75\x77\xa3\x64\x9e\xed\xe0\xbf\x84\x2c\xcc\x92\x26\x8f\xfa\x6f\x34\x83\xaa\xec\x8f\xa3\x4d\x30\x4b\x30\x0e\x06\x03\x55\x1d\x0f\x01\x01\xff\x04\x04\x03\x02\x05\xa0\x30\x13\x06\x03\x55\x1d\x25\x04\x0c\x30\x0a\x06\x08\x2b\x06\x01\x05\x05\x07\x03\x01\x30\x0c\x06\x03\x55\x1d\x13\x01\x01\xff\x04\x02\x30\x00\x30\x16\x06\x03\x55\x1d\x11\x04\x0f\x30\x0d\x82\x0b\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d\x30\x05\x06\x03\x2b\x65\x70\x03\x41\x00\x63\x44\xed\x9c\xc4\xbe\x53\x24\x53\x9f\xd2\x10\x8d\x9f\xe8\x21\x08\x90\x95\x39\xe5\x0d\xc1\x55\xff\x2c\x16\xb7\x1d\xfc\xab\x7d\x4d\xd4\xe0\x93\x13\xd0\xa9\x42\xe0\xb6\x6b\xfe\x5d\x67\x48\xd7\x9f\x50\xbc\x6c\xcd\x4b\x03\x83\x7c\xf2\x08\x58\xcd\xac\xcf\x0c";
 const testEd25519PrivateKey = "\x3a\x88\x49\x65\xe7\x6b\x3f\x55\xe5\xfa\xf9\x61\x54\x58\xa9\x23\x54\x89\x42\x34\xde\x3e\xc9\xf6\x84\xd4\x6d\x55\xce\xbf\x3d\xc6\x3f\xe2\x15\x2e\xe6\xe3\xef\x3f\x4e\x85\x4a\x75\x77\xa3\x64\x9e\xed\xe0\xbf\x84\x2c\xcc\x92\x26\x8f\xfa\x6f\x34\x83\xaa\xec\x8f";
