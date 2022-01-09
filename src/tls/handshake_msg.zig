@@ -811,7 +811,6 @@ pub const ServerKeyExchangeMsg = struct {
     key: []const u8,
 
     pub fn deinit(self: *ServerKeyExchangeMsg, allocator: mem.Allocator) void {
-        std.log.debug("ServerKeyExchangeMsg.deinit", .{});
         allocator.free(self.key);
         freeOptionalField(self, allocator, "raw");
     }

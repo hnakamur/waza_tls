@@ -143,7 +143,7 @@ pub const SignatureAlgorithm = enum(u8) {
 test "fromAlgorithmIdentifier" {
     const ai = pkix.AlgorithmIdentifier{ .algorithm = oid_signature_ed25519 };
     var algo = try SignatureAlgorithm.fromAlgorithmIdentifier(&ai);
-    std.debug.print("algo={}\n", .{algo});
+    std.log.debug("algo={}\n", .{algo});
     // try testing.expectEqual(oid_signature_ed25519, ObjectIdentifier{ .components = &[_]u32{ 1, 3, 101, 112 } });
 }
 
@@ -215,8 +215,8 @@ test "SignatureAlgorithm" {
 }
 
 test "PublicKey/PrivateKey" {
-    std.debug.print("PublicKey.empty={}\n", .{PublicKey.empty});
-    std.debug.print("PrivateKey.empty={}\n", .{PrivateKey.empty});
+    std.log.debug("PublicKey.empty={}\n", .{PublicKey.empty});
+    std.log.debug("PrivateKey.empty={}\n", .{PrivateKey.empty});
 }
 
 test "parseCertificate" {
@@ -242,7 +242,7 @@ test "parseCertificate" {
     defer allocator.free(serial_str);
 
     // var serial_debug_str = try allocDebugPrintBigIntManaged(serial, allocator);
-    // std.debug.print("serial: {s}, {s}\n", .{ serial_str, serial_debug_str });
+    // std.log.debug("serial: {s}, {s}\n", .{ serial_str, serial_debug_str });
     // defer allocator.free(serial_debug_str);
 
     try testing.expectEqualStrings("322468385791552616392937435680808374704", serial_str);
@@ -258,7 +258,7 @@ test "parseCertificate" {
     defer signAi.deinit(allocator);
 
     var issuerSeq = try tbs.readAsn1Element(.sequence);
-    std.debug.print("issuerSeq.data={s}\n", .{issuerSeq.data});
+    std.log.debug("issuerSeq.data={s}\n", .{issuerSeq.data});
 
-    std.debug.print("tbs.data={}\n", .{fmtx.fmtSliceHexEscapeLower(tbs.data)});
+    std.log.debug("tbs.data={}\n", .{fmtx.fmtSliceHexEscapeLower(tbs.data)});
 }

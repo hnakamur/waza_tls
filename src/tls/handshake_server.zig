@@ -136,7 +136,6 @@ pub const ServerHandshakeState = struct {
             skx.deinit(allocator);
         };
 
-        // std.log.debug("skx={}", .{skx});
         try finished_hash.write(try skx.marshal(allocator));
         // TODO: implement write record skx.marshal()
 

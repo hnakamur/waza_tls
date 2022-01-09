@@ -177,10 +177,6 @@ pub const ClientHandshakeTls12 = struct {
 
     pub fn doFullHandshake(self: *ClientHandshakeTls12, allocator: mem.Allocator) !void {
         var hs_msg = try self.conn.readHandshake(allocator);
-        std.log.debug(
-            "ClientHandshakeTls12.doFullHandshake hs_msg#1.type={s}",
-            .{@tagName(hs_msg)},
-        );
         var cert_msg = switch (hs_msg) {
             .Certificate => |c| c,
             else => {
@@ -202,10 +198,6 @@ pub const ClientHandshakeTls12 = struct {
         defer cert_chain.deinit(allocator);
 
         hs_msg = try self.conn.readHandshake(allocator);
-        std.log.debug(
-            "ClientHandshakeTls12.doFullHandshake hs_msg#2.type={s}",
-            .{@tagName(hs_msg)},
-        );
         switch (hs_msg) {
             .CertificateStatus => |cs| {
                 _ = cs;
@@ -231,10 +223,6 @@ pub const ClientHandshakeTls12 = struct {
                     );
                 }
                 hs_msg = try self.conn.readHandshake(allocator);
-                std.log.debug(
-                    "ClientHandshakeTls12.doFullHandshake hs_msg#3.type={s}",
-                    .{@tagName(hs_msg)},
-                );
             },
             else => {},
         }

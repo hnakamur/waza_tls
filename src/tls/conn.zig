@@ -346,10 +346,6 @@ pub const Conn = struct {
         const rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
-        std.log.debug(
-            "Conn.readRecordOrCCS rec_type={}, rec_ver={}, payload_len={}",
-            .{ rec_type, rec_ver, payload_len },
-        );
         if (self.version) |con_ver| {
             if (con_ver != .v1_3 and con_ver != rec_ver) {
                 // TODO: sendAlert
@@ -390,8 +386,6 @@ pub const Conn = struct {
             // This is a state-advancing message: reset the retry count.
             self.retry_count = 0;
         }
-
-        std.log.debug("data.len={}, data={}", .{ data.len, fmtx.fmtSliceHexEscapeLower(data) });
 
         switch (rec_type) {
             .handshake => {
