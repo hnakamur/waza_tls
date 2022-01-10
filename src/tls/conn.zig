@@ -468,6 +468,11 @@ const HalfConn = struct {
                 const additional_data = self.scratch_buf[0 .. self.seq.len + record_header_len];
                 try cipher.encrypt(allocator, record, nonce, payload, additional_data);
             }
+
+            // Update length to include nonce, MAC and any block padding needed.
+            const n = record.items.len - record_header_len;
+            mem.writeIntBig(u16, record.items[3..5], @intCast(u16, n));
+            self.incSeq();
         } else {
             try record.appendSlice(allocator, payload);
         }
@@ -506,9 +511,9 @@ const HalfConn = struct {
             } else {
                 mem.copy(u8, self.scratch_buf[0..], &self.seq);
                 self.scratch_buf[self.seq.len] = @enumToInt(rec_type);
-                mem.writeIntBig(u16, self.scratch_buf[self.seq.len+1..self.seq.len+3], @enumToInt(rec_ver));
+                mem.writeIntBig(u16, self.scratch_buf[self.seq.len + 1 .. self.seq.len + 3], @enumToInt(rec_ver));
                 const n = ciphertext_and_tag.len - cipher.overhead();
-                mem.writeIntBig(u16, self.scratch_buf[self.seq.len+3..self.seq.len+5], @intCast(u16, n));
+                mem.writeIntBig(u16, self.scratch_buf[self.seq.len + 3 .. self.seq.len + 5], @intCast(u16, n));
                 additional_data = self.scratch_buf[0 .. self.seq.len + 5];
             }
 
