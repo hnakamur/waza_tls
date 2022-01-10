@@ -90,10 +90,137 @@ pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
     return null;
 }
 
-// const Aead = union(enum) {
-//     prefix_nonce: PrefixNonceAead,
-//     xor_nonce: XorNonceAead,
-// };
+pub const Aead = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        encrypt: fn (
+            ptr: *anyopaque,
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            plaintext: []const u8,
+            additional_data: []const u8,
+        ) anyerror!void,
+
+        decrypt: fn (
+            ptr: *anyopaque,
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            chiphertext_and_tag: []const u8,
+            additional_data: []const u8,
+        ) anyerror!void,
+    };
+
+    pub fn init(
+        pointer: anytype,
+        comptime encryptFn: fn (
+            ptr: @TypeOf(pointer),
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            plaintext: []const u8,
+            additional_data: []const u8,
+        ) anyerror!void,
+        comptime decryptFn: fn (
+            ptr: @TypeOf(pointer),
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            chiphertext_and_tag: []const u8,
+            additional_data: []const u8,
+        ) anyerror!void,
+    ) Aead {
+        const Ptr = @TypeOf(pointer);
+        const ptr_info = @typeInfo(Ptr);
+
+        assert(ptr_info == .Pointer); // Must be a pointer
+        assert(ptr_info.Pointer.size == .One); // Must be a single-item pointer
+
+        const alignment = ptr_info.Pointer.alignment;
+
+        const gen = struct {
+            fn encryptImpl(
+                ptr: *anyopaque,
+                allocator: mem.Allocator,
+                dest: *std.ArrayListUnmanaged(u8),
+                nonce: []const u8,
+                plaintext: []const u8,
+                additional_data: []const u8,
+            ) anyerror!void {
+                const self = @ptrCast(Ptr, @alignCast(alignment, ptr));
+                return @call(
+                    .{ .modifier = .always_inline },
+                    encryptFn,
+                    .{ self, allocator, dest, nonce, plaintext, additional_data },
+                );
+            }
+            fn decryptImpl(
+                ptr: *anyopaque,
+                allocator: mem.Allocator,
+                dest: *std.ArrayListUnmanaged(u8),
+                nonce: []const u8,
+                chiphertext_and_tag: []const u8,
+                additional_data: []const u8,
+            ) anyerror!void {
+                const self = @ptrCast(Ptr, @alignCast(alignment, ptr));
+                return @call(
+                    .{ .modifier = .always_inline },
+                    decryptFn,
+                    .{ self, allocator, dest, nonce, chiphertext_and_tag, additional_data },
+                );
+            }
+
+            const vtable = VTable{
+                .encrypt = encryptImpl,
+                .decrypt = decryptImpl,
+            };
+        };
+
+        return .{
+            .ptr = pointer,
+            .vtable = &gen.vtable,
+        };
+    }
+
+    pub fn encrypt(
+        self: Aead,
+        allocator: mem.Allocator,
+        dest: *std.ArrayListUnmanaged(u8),
+        nonce: []const u8,
+        plaintext: []const u8,
+        additional_data: []const u8,
+    ) !void {
+        try self.vtable.encrypt(
+            self.ptr,
+            allocator,
+            dest,
+            nonce,
+            plaintext,
+            additional_data,
+        );
+    }
+
+    pub fn decrypt(
+        self: Aead,
+        allocator: mem.Allocator,
+        dest: *std.ArrayListUnmanaged(u8),
+        nonce: []const u8,
+        chiphertext_and_tag: []const u8,
+        additional_data: []const u8,
+    ) !void {
+        try self.vtable.decrypt(
+            self.ptr,
+            allocator,
+            dest,
+            nonce,
+            chiphertext_and_tag,
+            additional_data,
+        );
+    }
+};
 
 const aead_nonce_length = 12;
 const nonce_prefix_length = 4;
@@ -116,9 +243,17 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
         key: [key_length]u8,
 
         pub fn init(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Self {
-            var aead = Self{ .key = key };
-            mem.copy(u8, &aead.nonce, nonce_prefix[0..]);
-            return aead;
+            var self = Self{ .key = key };
+            mem.copy(u8, &self.nonce, nonce_prefix[0..]);
+            return self;
+        }
+
+        pub fn initAead(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Aead {
+            return init(key, nonce_prefix).aead();
+        }
+
+        pub fn aead(self: *Self) Aead {
+            return Aead.init(self, encrypt, decrypt);
         }
 
         pub fn encrypt(
@@ -225,6 +360,14 @@ fn XorNonceAead(comptime InnerAead: type) type {
 
         pub fn init(key: [key_length]u8, nonce_mask: [aead_nonce_length]u8) Self {
             return .{ .key = key, .nonce_mask = nonce_mask };
+        }
+
+        pub fn initAead(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Aead {
+            return init(key, nonce_prefix).aead();
+        }
+
+        pub fn aead(self: *Self) Aead {
+            return Aead.init(self, encrypt, decrypt);
         }
 
         pub fn encrypt(
@@ -370,6 +513,36 @@ test "Aes128Gcm - Message and associated data" {
     );
 }
 
+test "PrefixNonceAeadAes128Gcm Aead" {
+    testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
+    const key = [_]u8{'k'} ** PrefixNonceAeadAes128Gcm.key_length;
+    const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
+    var concrete_aead = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix);
+    var aead = concrete_aead.aead();
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    const explicit_nonce = [_]u8{'n'} ** PrefixNonceAeadAes128Gcm.explicit_nonce_length;
+
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &explicit_nonce, m, ad);
+    try testing.expectEqualSlices(
+        u8,
+        "\x4b\x94\x1c\x11\x1c\xc9\xe9\xdb\x4d\xa6\xdb\xf7\x69\xda\x42\x81" ++
+            "\x07\xb4\x8a\x4c\x64\xda\x24\x62\xfc\xbc\xab\xb7\xfd\x76\x5e\x62",
+        c.items,
+    );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &explicit_nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
+}
+
 test "PrefixNonceAeadAes128Gcm" {
     testing.log_level = .debug;
 
@@ -389,7 +562,7 @@ test "PrefixNonceAeadAes128Gcm" {
     try testing.expectEqualSlices(
         u8,
         "\x4b\x94\x1c\x11\x1c\xc9\xe9\xdb\x4d\xa6\xdb\xf7\x69\xda\x42\x81" ++
-        "\x07\xb4\x8a\x4c\x64\xda\x24\x62\xfc\xbc\xab\xb7\xfd\x76\x5e\x62",
+            "\x07\xb4\x8a\x4c\x64\xda\x24\x62\xfc\xbc\xab\xb7\xfd\x76\x5e\x62",
         c.items,
     );
 
@@ -418,7 +591,7 @@ test "PrefixNonceAeadAes256Gcm" {
     try testing.expectEqualSlices(
         u8,
         "\x1a\xd2\x36\x15\xdd\xe3\x47\xec\xa5\x7d\xf1\x73\xef\xe8\xfa\x10" ++
-        "\x9d\x47\x5e\x0a\x47\x05\xcb\x51\xd3\xba\x47\x31\xe8\x79\xad\xb9",
+            "\x9d\x47\x5e\x0a\x47\x05\xcb\x51\xd3\xba\x47\x31\xe8\x79\xad\xb9",
         c.items,
     );
 
@@ -447,7 +620,7 @@ test "XorNonceAeadAes128Gcm" {
     try testing.expectEqualSlices(
         u8,
         "\x58\x92\x14\xf9\x47\x1f\x36\xc4\x95\x25\xe3\x16\x45\xc5\xbe\x39" ++
-        "\xbc\xfa\xd7\x22\x79\xe1\xff\x3f\xcb\x1a\x51\x0d\x92\x2b\xbd\x8f",
+            "\xbc\xfa\xd7\x22\x79\xe1\xff\x3f\xcb\x1a\x51\x0d\x92\x2b\xbd\x8f",
         c.items,
     );
 
@@ -476,7 +649,7 @@ test "XorNonceAeadAes256Gcm" {
     try testing.expectEqualSlices(
         u8,
         "\x61\x91\xb6\x55\xb7\x04\x54\xbf\xf5\x94\x4e\x7d\xbd\x83\x6b\x84" ++
-        "\x90\xcc\x27\x9a\xb8\x5d\x84\xf4\xcf\x67\x05\x27\x22\x27\xd4\x58",
+            "\x90\xcc\x27\x9a\xb8\x5d\x84\xf4\xcf\x67\x05\x27\x22\x27\xd4\x58",
         c.items,
     );
 
@@ -505,7 +678,7 @@ test "XorNonceAeadChaCha20Poly1305" {
     try testing.expectEqualSlices(
         u8,
         "\xdf\x39\x03\x0c\xb1\x2f\xe4\xf9\x24\xeb\x76\x15\x80\x4c\x40\xed" ++
-        "\xd8\x1f\x15\x82\xfc\x6c\x15\x62\x12\x9c\x8f\x77\x77\x11\x91\x60",
+            "\xd8\x1f\x15\x82\xfc\x6c\x15\x62\x12\x9c\x8f\x77\x77\x11\x91\x60",
         c.items,
     );
 
