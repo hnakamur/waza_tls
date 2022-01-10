@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const mem = std.mem;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
@@ -122,6 +123,28 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
 
         pub fn encrypt(
             self: *Self,
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            plaintext: []const u8,
+            additional_data: []const u8,
+        ) !void {
+            assert(nonce.len == explicit_nonce_length);
+            const old_len = dest.items.len;
+            const tag_start = old_len + plaintext.len;
+            const new_len = tag_start + tag_length;
+            try dest.resize(allocator, new_len);
+            self.do_encrypt(
+                dest.items[old_len..tag_start],
+                dest.items[tag_start..new_len][0..tag_length],
+                plaintext,
+                additional_data,
+                nonce[0..explicit_nonce_length].*,
+            );
+        }
+
+        fn do_encrypt(
+            self: *Self,
             out_ciphertext: []u8,
             out_tag: *[tag_length]u8,
             plaintext: []const u8,
@@ -140,6 +163,29 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
         }
 
         pub fn decrypt(
+            self: *Self,
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            chiphertext_and_tag: []const u8,
+            additional_data: []const u8,
+        ) !void {
+            assert(nonce.len == explicit_nonce_length);
+            assert(chiphertext_and_tag.len >= tag_length);
+            const old_len = dest.items.len;
+            const ciphertext_len = chiphertext_and_tag.len - tag_length;
+            const new_len = old_len + ciphertext_len;
+            try dest.resize(allocator, new_len);
+            try self.do_decrypt(
+                dest.items[old_len..new_len],
+                chiphertext_and_tag[0..ciphertext_len],
+                chiphertext_and_tag[ciphertext_len..][0..tag_length].*,
+                additional_data,
+                nonce[0..explicit_nonce_length].*,
+            );
+        }
+
+        pub fn do_decrypt(
             self: *Self,
             out_plaintext: []u8,
             ciphertext: []const u8,
@@ -183,6 +229,28 @@ fn XorNonceAead(comptime InnerAead: type) type {
 
         pub fn encrypt(
             self: *Self,
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            plaintext: []const u8,
+            additional_data: []const u8,
+        ) !void {
+            assert(nonce.len == nonce_length);
+            const old_len = dest.items.len;
+            const tag_start = old_len + plaintext.len;
+            const new_len = tag_start + tag_length;
+            try dest.resize(allocator, new_len);
+            self.do_encrypt(
+                dest.items[old_len..tag_start],
+                dest.items[tag_start..new_len][0..tag_length],
+                plaintext,
+                additional_data,
+                nonce[0..nonce_length].*,
+            );
+        }
+
+        fn do_encrypt(
+            self: *Self,
             out_ciphertext: []u8,
             out_tag: *[tag_length]u8,
             plaintext: []const u8,
@@ -202,6 +270,29 @@ fn XorNonceAead(comptime InnerAead: type) type {
         }
 
         pub fn decrypt(
+            self: *Self,
+            allocator: mem.Allocator,
+            dest: *std.ArrayListUnmanaged(u8),
+            nonce: []const u8,
+            chiphertext_and_tag: []const u8,
+            additional_data: []const u8,
+        ) !void {
+            assert(nonce.len == nonce_length);
+            assert(chiphertext_and_tag.len >= tag_length);
+            const old_len = dest.items.len;
+            const ciphertext_len = chiphertext_and_tag.len - tag_length;
+            const new_len = old_len + ciphertext_len;
+            try dest.resize(allocator, new_len);
+            try self.do_decrypt(
+                dest.items[old_len..new_len],
+                chiphertext_and_tag[0..ciphertext_len],
+                chiphertext_and_tag[ciphertext_len..][0..tag_length].*,
+                additional_data,
+                nonce[0..nonce_length].*,
+            );
+        }
+
+        fn do_decrypt(
             self: *Self,
             out_plaintext: []u8,
             ciphertext: []const u8,
@@ -281,140 +372,145 @@ test "Aes128Gcm - Message and associated data" {
 
 test "PrefixNonceAeadAes128Gcm" {
     testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
     const key = [_]u8{'k'} ** PrefixNonceAeadAes128Gcm.key_length;
     const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
+    var aead = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix);
-
     const explicit_nonce = [_]u8{'n'} ** PrefixNonceAeadAes128Gcm.explicit_nonce_length;
-    var c: [m.len]u8 = undefined;
-    var m2: [m.len]u8 = undefined;
-    var tag: [PrefixNonceAeadAes128Gcm.tag_length]u8 = undefined;
-    aead.encrypt(&c, &tag, m, ad, explicit_nonce);
-    try aead.decrypt(&m2, &c, tag, ad, explicit_nonce);
 
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &explicit_nonce, m, ad);
     try testing.expectEqualSlices(
         u8,
-        "\x4b\x94\x1c\x11\x1c\xc9\xe9\xdb\x4d\xa6\xdb\xf7\x69\xda\x42\x81",
-        &c,
-    );
-    try testing.expectEqualSlices(
-        u8,
+        "\x4b\x94\x1c\x11\x1c\xc9\xe9\xdb\x4d\xa6\xdb\xf7\x69\xda\x42\x81" ++
         "\x07\xb4\x8a\x4c\x64\xda\x24\x62\xfc\xbc\xab\xb7\xfd\x76\x5e\x62",
-        &tag,
+        c.items,
     );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &explicit_nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
 }
 
 test "PrefixNonceAeadAes256Gcm" {
     testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
     const key = [_]u8{'k'} ** PrefixNonceAeadAes256Gcm.key_length;
     const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
+    var aead = PrefixNonceAeadAes256Gcm.init(key, nonce_prefix);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = PrefixNonceAeadAes256Gcm.init(key, nonce_prefix);
-
     const explicit_nonce = [_]u8{'n'} ** PrefixNonceAeadAes256Gcm.explicit_nonce_length;
-    var c: [m.len]u8 = undefined;
-    var m2: [m.len]u8 = undefined;
-    var tag: [PrefixNonceAeadAes256Gcm.tag_length]u8 = undefined;
-    aead.encrypt(&c, &tag, m, ad, explicit_nonce);
-    try aead.decrypt(&m2, &c, tag, ad, explicit_nonce);
 
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &explicit_nonce, m, ad);
     try testing.expectEqualSlices(
         u8,
-        "\x1a\xd2\x36\x15\xdd\xe3\x47\xec\xa5\x7d\xf1\x73\xef\xe8\xfa\x10",
-        &c,
-    );
-    try testing.expectEqualSlices(
-        u8,
+        "\x1a\xd2\x36\x15\xdd\xe3\x47\xec\xa5\x7d\xf1\x73\xef\xe8\xfa\x10" ++
         "\x9d\x47\x5e\x0a\x47\x05\xcb\x51\xd3\xba\x47\x31\xe8\x79\xad\xb9",
-        &tag,
+        c.items,
     );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &explicit_nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
 }
 
 test "XorNonceAeadAes128Gcm" {
     testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
     const key = [_]u8{'k'} ** XorNonceAeadAes128Gcm.key_length;
     const nonce_mask = [_]u8{'m'} ** aead_nonce_length;
+    var aead = XorNonceAeadAes128Gcm.init(key, nonce_mask);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = XorNonceAeadAes128Gcm.init(key, nonce_mask);
-
     const nonce = [_]u8{'n'} ** XorNonceAeadAes128Gcm.nonce_length;
-    var c: [m.len]u8 = undefined;
-    var m2: [m.len]u8 = undefined;
-    var tag: [XorNonceAeadAes128Gcm.tag_length]u8 = undefined;
-    aead.encrypt(&c, &tag, m, ad, nonce);
-    try aead.decrypt(&m2, &c, tag, ad, nonce);
 
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &nonce, m, ad);
     try testing.expectEqualSlices(
         u8,
-        "\x58\x92\x14\xf9\x47\x1f\x36\xc4\x95\x25\xe3\x16\x45\xc5\xbe\x39",
-        &c,
-    );
-    try testing.expectEqualSlices(
-        u8,
+        "\x58\x92\x14\xf9\x47\x1f\x36\xc4\x95\x25\xe3\x16\x45\xc5\xbe\x39" ++
         "\xbc\xfa\xd7\x22\x79\xe1\xff\x3f\xcb\x1a\x51\x0d\x92\x2b\xbd\x8f",
-        &tag,
+        c.items,
     );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
 }
 
 test "XorNonceAeadAes256Gcm" {
     testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
     const key = [_]u8{'k'} ** XorNonceAeadAes256Gcm.key_length;
     const nonce_mask = [_]u8{'m'} ** aead_nonce_length;
+    var aead = XorNonceAeadAes256Gcm.init(key, nonce_mask);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = XorNonceAeadAes256Gcm.init(key, nonce_mask);
-
     const nonce = [_]u8{'n'} ** XorNonceAeadAes256Gcm.nonce_length;
-    var c: [m.len]u8 = undefined;
-    var m2: [m.len]u8 = undefined;
-    var tag: [XorNonceAeadAes256Gcm.tag_length]u8 = undefined;
-    aead.encrypt(&c, &tag, m, ad, nonce);
-    try aead.decrypt(&m2, &c, tag, ad, nonce);
 
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &nonce, m, ad);
     try testing.expectEqualSlices(
         u8,
-        "\x61\x91\xb6\x55\xb7\x04\x54\xbf\xf5\x94\x4e\x7d\xbd\x83\x6b\x84",
-        &c,
-    );
-    try testing.expectEqualSlices(
-        u8,
+        "\x61\x91\xb6\x55\xb7\x04\x54\xbf\xf5\x94\x4e\x7d\xbd\x83\x6b\x84" ++
         "\x90\xcc\x27\x9a\xb8\x5d\x84\xf4\xcf\x67\x05\x27\x22\x27\xd4\x58",
-        &tag,
+        c.items,
     );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
 }
 
 test "XorNonceAeadChaCha20Poly1305" {
     testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
     const key = [_]u8{'k'} ** XorNonceAeadChaCha20Poly1305.key_length;
     const nonce_prefix = [_]u8{'m'} ** aead_nonce_length;
+    var aead = XorNonceAeadChaCha20Poly1305.init(key, nonce_prefix);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = XorNonceAeadChaCha20Poly1305.init(key, nonce_prefix);
-
     const nonce = [_]u8{'n'} ** XorNonceAeadChaCha20Poly1305.nonce_length;
-    var c: [m.len]u8 = undefined;
-    var m2: [m.len]u8 = undefined;
-    var tag: [XorNonceAeadChaCha20Poly1305.tag_length]u8 = undefined;
-    aead.encrypt(&c, &tag, m, ad, nonce);
-    try aead.decrypt(&m2, &c, tag, ad, nonce);
 
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &nonce, m, ad);
     try testing.expectEqualSlices(
         u8,
-        "\xdf\x39\x03\x0c\xb1\x2f\xe4\xf9\x24\xeb\x76\x15\x80\x4c\x40\xed",
-        &c,
-    );
-    try testing.expectEqualSlices(
-        u8,
+        "\xdf\x39\x03\x0c\xb1\x2f\xe4\xf9\x24\xeb\x76\x15\x80\x4c\x40\xed" ++
         "\xd8\x1f\x15\x82\xfc\x6c\x15\x62\x12\x9c\x8f\x77\x77\x11\x91\x60",
-        &tag,
+        c.items,
     );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
 }
