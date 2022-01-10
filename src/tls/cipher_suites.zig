@@ -97,6 +97,9 @@ pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
 const aead_nonce_length = 12;
 const nonce_prefix_length = 4;
 
+pub const PrefixNonceAeadAes128Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes128Gcm);
+pub const PrefixNonceAeadAes256Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes256Gcm);
+
 // prefixNonceAEAD wraps an AEAD and prefixes a fixed portion of the nonce to
 // each call.
 fn PrefixNonceAead(comptime AesGcm: type) type {
@@ -104,6 +107,7 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
         const Self = @This();
         pub const key_length = AesGcm.key_length;
         pub const tag_length = AesGcm.tag_length;
+        pub const nonce_length = aead_nonce_length - nonce_prefix_length;
         pub const explicit_nonce_length = aead_nonce_length - nonce_prefix_length;
 
         // nonce contains the fixed part of the nonce in the first four bytes.
@@ -114,15 +118,6 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             var aead = Self{ .key = key };
             mem.copy(u8, &aead.nonce, nonce_prefix[0..]);
             return aead;
-        }
-
-        pub fn nonceSize(self: *const Self) usize {
-            _ = self;
-            return aead_nonce_length - nonce_prefix_length;
-        }
-
-        pub fn explicitNonceLen(self: *const Self) usize {
-            return self.nonceSize();
         }
 
         pub fn encrypt(
@@ -165,10 +160,78 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
     };
 }
 
-pub const AeadAes128Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes128Gcm);
-pub const AeadAes256Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes256Gcm);
+pub const XorNonceAeadAes128Gcm = XorNonceAead(std.crypto.aead.aes_gcm.Aes128Gcm);
+pub const XorNonceAeadAes256Gcm = XorNonceAead(std.crypto.aead.aes_gcm.Aes256Gcm);
+pub const XorNonceAeadChaCha20Poly1305 = XorNonceAead(std.crypto.aead.chacha_poly.ChaCha20Poly1305);
 
-const XorNonceAead = struct {};
+// XorNonceAEAD wraps an AEAD by XORing in a fixed pattern to the nonce
+// before each call.
+fn XorNonceAead(comptime InnerAead: type) type {
+    return struct {
+        const Self = @This();
+        pub const key_length = InnerAead.key_length;
+        pub const tag_length = InnerAead.tag_length;
+        pub const nonce_length = 8; // 64-bit sequence number
+        pub const explicit_nonce_length = 0;
+
+        nonce_mask: [aead_nonce_length]u8,
+        key: [key_length]u8,
+
+        pub fn init(key: [key_length]u8, nonce_mask: [aead_nonce_length]u8) Self {
+            return .{ .key = key, .nonce_mask = nonce_mask };
+        }
+
+        pub fn encrypt(
+            self: *Self,
+            out_ciphertext: []u8,
+            out_tag: *[tag_length]u8,
+            plaintext: []const u8,
+            additional_data: []const u8,
+            nonce: [nonce_length]u8,
+        ) void {
+            self.updateNonceMask(nonce);
+            InnerAead.encrypt(
+                out_ciphertext,
+                out_tag,
+                plaintext,
+                additional_data,
+                self.nonce_mask,
+                self.key,
+            );
+            self.updateNonceMask(nonce);
+        }
+
+        pub fn decrypt(
+            self: *Self,
+            out_plaintext: []u8,
+            ciphertext: []const u8,
+            tag: [tag_length]u8,
+            additional_data: []const u8,
+            nonce: [nonce_length]u8,
+        ) !void {
+            self.updateNonceMask(nonce);
+            try InnerAead.decrypt(
+                out_plaintext,
+                ciphertext,
+                tag,
+                additional_data,
+                self.nonce_mask,
+                self.key,
+            );
+            self.updateNonceMask(nonce);
+        }
+
+        inline fn updateNonceMask(
+            self: *Self,
+            nonce: [nonce_length]u8,
+        ) void {
+            var i: usize = 0;
+            while (i < nonce.len) : (i += 1) {
+                self.nonce_mask[aead_nonce_length - nonce_length + i] ^= nonce[i];
+            }
+        }
+    };
+}
 
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
@@ -216,19 +279,19 @@ test "Aes128Gcm - Message and associated data" {
     );
 }
 
-test "AeadAes128Gcm" {
+test "PrefixNonceAeadAes128Gcm" {
     testing.log_level = .debug;
-    const key = [_]u8{'k'} ** AeadAes128Gcm.key_length;
+    const key = [_]u8{'k'} ** PrefixNonceAeadAes128Gcm.key_length;
     const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = AeadAes128Gcm.init(key, nonce_prefix);
+    var aead = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix);
 
-    const explicit_nonce = [_]u8{'n'} ** AeadAes128Gcm.explicit_nonce_length;
+    const explicit_nonce = [_]u8{'n'} ** PrefixNonceAeadAes128Gcm.explicit_nonce_length;
     var c: [m.len]u8 = undefined;
     var m2: [m.len]u8 = undefined;
-    var tag: [AeadAes128Gcm.tag_length]u8 = undefined;
+    var tag: [PrefixNonceAeadAes128Gcm.tag_length]u8 = undefined;
     aead.encrypt(&c, &tag, m, ad, explicit_nonce);
     try aead.decrypt(&m2, &c, tag, ad, explicit_nonce);
 
@@ -244,19 +307,19 @@ test "AeadAes128Gcm" {
     );
 }
 
-test "AeadAes256Gcm" {
+test "PrefixNonceAeadAes256Gcm" {
     testing.log_level = .debug;
-    const key = [_]u8{'k'} ** AeadAes256Gcm.key_length;
+    const key = [_]u8{'k'} ** PrefixNonceAeadAes256Gcm.key_length;
     const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
-    var aead = AeadAes256Gcm.init(key, nonce_prefix);
+    var aead = PrefixNonceAeadAes256Gcm.init(key, nonce_prefix);
 
-    const explicit_nonce = [_]u8{'n'} ** AeadAes256Gcm.explicit_nonce_length;
+    const explicit_nonce = [_]u8{'n'} ** PrefixNonceAeadAes256Gcm.explicit_nonce_length;
     var c: [m.len]u8 = undefined;
     var m2: [m.len]u8 = undefined;
-    var tag: [AeadAes256Gcm.tag_length]u8 = undefined;
+    var tag: [PrefixNonceAeadAes256Gcm.tag_length]u8 = undefined;
     aead.encrypt(&c, &tag, m, ad, explicit_nonce);
     try aead.decrypt(&m2, &c, tag, ad, explicit_nonce);
 
@@ -268,6 +331,90 @@ test "AeadAes256Gcm" {
     try testing.expectEqualSlices(
         u8,
         "\x9d\x47\x5e\x0a\x47\x05\xcb\x51\xd3\xba\x47\x31\xe8\x79\xad\xb9",
+        &tag,
+    );
+}
+
+test "XorNonceAeadAes128Gcm" {
+    testing.log_level = .debug;
+    const key = [_]u8{'k'} ** XorNonceAeadAes128Gcm.key_length;
+    const nonce_mask = [_]u8{'m'} ** aead_nonce_length;
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    var aead = XorNonceAeadAes128Gcm.init(key, nonce_mask);
+
+    const nonce = [_]u8{'n'} ** XorNonceAeadAes128Gcm.nonce_length;
+    var c: [m.len]u8 = undefined;
+    var m2: [m.len]u8 = undefined;
+    var tag: [XorNonceAeadAes128Gcm.tag_length]u8 = undefined;
+    aead.encrypt(&c, &tag, m, ad, nonce);
+    try aead.decrypt(&m2, &c, tag, ad, nonce);
+
+    try testing.expectEqualSlices(
+        u8,
+        "\x58\x92\x14\xf9\x47\x1f\x36\xc4\x95\x25\xe3\x16\x45\xc5\xbe\x39",
+        &c,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        "\xbc\xfa\xd7\x22\x79\xe1\xff\x3f\xcb\x1a\x51\x0d\x92\x2b\xbd\x8f",
+        &tag,
+    );
+}
+
+test "XorNonceAeadAes256Gcm" {
+    testing.log_level = .debug;
+    const key = [_]u8{'k'} ** XorNonceAeadAes256Gcm.key_length;
+    const nonce_mask = [_]u8{'m'} ** aead_nonce_length;
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    var aead = XorNonceAeadAes256Gcm.init(key, nonce_mask);
+
+    const nonce = [_]u8{'n'} ** XorNonceAeadAes256Gcm.nonce_length;
+    var c: [m.len]u8 = undefined;
+    var m2: [m.len]u8 = undefined;
+    var tag: [XorNonceAeadAes256Gcm.tag_length]u8 = undefined;
+    aead.encrypt(&c, &tag, m, ad, nonce);
+    try aead.decrypt(&m2, &c, tag, ad, nonce);
+
+    try testing.expectEqualSlices(
+        u8,
+        "\x61\x91\xb6\x55\xb7\x04\x54\xbf\xf5\x94\x4e\x7d\xbd\x83\x6b\x84",
+        &c,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        "\x90\xcc\x27\x9a\xb8\x5d\x84\xf4\xcf\x67\x05\x27\x22\x27\xd4\x58",
+        &tag,
+    );
+}
+
+test "XorNonceAeadChaCha20Poly1305" {
+    testing.log_level = .debug;
+    const key = [_]u8{'k'} ** XorNonceAeadChaCha20Poly1305.key_length;
+    const nonce_prefix = [_]u8{'m'} ** aead_nonce_length;
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    var aead = XorNonceAeadChaCha20Poly1305.init(key, nonce_prefix);
+
+    const nonce = [_]u8{'n'} ** XorNonceAeadChaCha20Poly1305.nonce_length;
+    var c: [m.len]u8 = undefined;
+    var m2: [m.len]u8 = undefined;
+    var tag: [XorNonceAeadChaCha20Poly1305.tag_length]u8 = undefined;
+    aead.encrypt(&c, &tag, m, ad, nonce);
+    try aead.decrypt(&m2, &c, tag, ad, nonce);
+
+    try testing.expectEqualSlices(
+        u8,
+        "\xdf\x39\x03\x0c\xb1\x2f\xe4\xf9\x24\xeb\x76\x15\x80\x4c\x40\xed",
+        &c,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        "\xd8\x1f\x15\x82\xfc\x6c\x15\x62\x12\x9c\x8f\x77\x77\x11\x91\x60",
         &tag,
     );
 }
