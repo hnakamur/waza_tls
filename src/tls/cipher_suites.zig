@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
@@ -88,25 +89,89 @@ pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
     return null;
 }
 
-const Aead = union(enum) {
-    prefix_nonce: PrefixNonceAead,
-    xor_nonce: XorNonceAead,
-};
+// const Aead = union(enum) {
+//     prefix_nonce: PrefixNonceAead,
+//     xor_nonce: XorNonceAead,
+// };
 
 const aead_nonce_length = 12;
 const nonce_prefix_length = 4;
 
 // prefixNonceAEAD wraps an AEAD and prefixes a fixed portion of the nonce to
 // each call.
-const PrefixNonceAead = struct {
-    // nonce contains the fixed part of the nonce in the first four bytes.
-    nonce: [aead_nonce_length]u8 = undefined,
-    // aead:
-};
+fn PrefixNonceAead(comptime AesGcm: type) type {
+    return struct {
+        const Self = @This();
+        pub const key_length = AesGcm.key_length;
+        pub const tag_length = AesGcm.tag_length;
+        pub const explicit_nonce_length = aead_nonce_length - nonce_prefix_length;
+
+        // nonce contains the fixed part of the nonce in the first four bytes.
+        nonce: [aead_nonce_length]u8 = [_]u8{0} ** aead_nonce_length,
+        key: [key_length]u8,
+
+        pub fn init(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Self {
+            var aead = Self{ .key = key };
+            mem.copy(u8, &aead.nonce, nonce_prefix[0..]);
+            return aead;
+        }
+
+        pub fn nonceSize(self: *const Self) usize {
+            _ = self;
+            return aead_nonce_length - nonce_prefix_length;
+        }
+
+        pub fn explicitNonceLen(self: *const Self) usize {
+            return self.nonceSize();
+        }
+
+        pub fn encrypt(
+            self: *Self,
+            out_ciphertext: []u8,
+            out_tag: *[tag_length]u8,
+            plaintext: []const u8,
+            additional_data: []const u8,
+            explicit_nonce: [explicit_nonce_length]u8,
+        ) void {
+            mem.copy(u8, self.nonce[nonce_prefix_length..], &explicit_nonce);
+            AesGcm.encrypt(
+                out_ciphertext,
+                out_tag,
+                plaintext,
+                additional_data,
+                self.nonce,
+                self.key,
+            );
+        }
+
+        pub fn decrypt(
+            self: *Self,
+            out_plaintext: []u8,
+            ciphertext: []const u8,
+            tag: [tag_length]u8,
+            additional_data: []const u8,
+            explicit_nonce: [explicit_nonce_length]u8,
+        ) !void {
+            mem.copy(u8, self.nonce[nonce_prefix_length..], &explicit_nonce);
+            try AesGcm.decrypt(
+                out_plaintext,
+                ciphertext,
+                tag,
+                additional_data,
+                self.nonce,
+                self.key,
+            );
+        }
+    };
+}
+
+pub const AeadAes128Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes128Gcm);
+pub const AeadAes256Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes256Gcm);
 
 const XorNonceAead = struct {};
 
 const testing = std.testing;
+const fmtx = @import("../fmtx.zig");
 
 test "mutualCipherSuite12" {
     const have = [_]CipherSuiteId{
@@ -147,6 +212,62 @@ test "Aes128Gcm - Message and associated data" {
     try testing.expectEqualSlices(
         u8,
         "\x74\xe2\xdf\xb3\x6e\x31\x90\x6f\xd5\xd1\x17\xd4\xa1\x7a\x14\x2d",
+        &tag,
+    );
+}
+
+test "AeadAes128Gcm" {
+    testing.log_level = .debug;
+    const key = [_]u8{'k'} ** AeadAes128Gcm.key_length;
+    const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    var aead = AeadAes128Gcm.init(key, nonce_prefix);
+
+    const explicit_nonce = [_]u8{'n'} ** AeadAes128Gcm.explicit_nonce_length;
+    var c: [m.len]u8 = undefined;
+    var m2: [m.len]u8 = undefined;
+    var tag: [AeadAes128Gcm.tag_length]u8 = undefined;
+    aead.encrypt(&c, &tag, m, ad, explicit_nonce);
+    try aead.decrypt(&m2, &c, tag, ad, explicit_nonce);
+
+    try testing.expectEqualSlices(
+        u8,
+        "\x4b\x94\x1c\x11\x1c\xc9\xe9\xdb\x4d\xa6\xdb\xf7\x69\xda\x42\x81",
+        &c,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        "\x07\xb4\x8a\x4c\x64\xda\x24\x62\xfc\xbc\xab\xb7\xfd\x76\x5e\x62",
+        &tag,
+    );
+}
+
+test "AeadAes256Gcm" {
+    testing.log_level = .debug;
+    const key = [_]u8{'k'} ** AeadAes256Gcm.key_length;
+    const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    var aead = AeadAes256Gcm.init(key, nonce_prefix);
+
+    const explicit_nonce = [_]u8{'n'} ** AeadAes256Gcm.explicit_nonce_length;
+    var c: [m.len]u8 = undefined;
+    var m2: [m.len]u8 = undefined;
+    var tag: [AeadAes256Gcm.tag_length]u8 = undefined;
+    aead.encrypt(&c, &tag, m, ad, explicit_nonce);
+    try aead.decrypt(&m2, &c, tag, ad, explicit_nonce);
+
+    try testing.expectEqualSlices(
+        u8,
+        "\x1a\xd2\x36\x15\xdd\xe3\x47\xec\xa5\x7d\xf1\x73\xef\xe8\xfa\x10",
+        &c,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        "\x9d\x47\x5e\x0a\x47\x05\xcb\x51\xd3\xba\x47\x31\xe8\x79\xad\xb9",
         &tag,
     );
 }
