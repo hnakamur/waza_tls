@@ -19,6 +19,7 @@ const RecordType = @import("record.zig").RecordType;
 const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
 const ClientHandshake = @import("handshake_client.zig").ClientHandshake;
 const Handshake = @import("handshake.zig").Handshake;
+const Aead = @import("cipher_suites.zig").Aead;
 const fmtx = @import("../fmtx.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
@@ -244,8 +245,8 @@ pub const Conn = struct {
 
         if (rec_type == .change_cipher_spec) {
             if (self.version) |con_ver| {
-                if (con_ver == .v1_3) {
-                    // TODO: implement
+                if (con_ver != .v1_3) {
+                    self.out.changeCipherSpec() catch @panic("send alert not implemented");
                 }
             }
         }
@@ -422,7 +423,7 @@ pub const Conn = struct {
                     // TODO: send alert
                     return error.UnexpectedMessage;
                 }
-                // TODO: implement
+                try self.in.changeCipherSpec();
             },
             else => {
                 // TODO: send alert
@@ -433,9 +434,13 @@ pub const Conn = struct {
 };
 
 const HalfConn = struct {
-    cipher: ?CipherSuite = null,
     ver: ?ProtocolVersion = null,
+    cipher: ?Aead = null,
+
     seq: [8]u8 = [_]u8{0} ** 8, // 64-bit sequence number
+    scratch_buf: [13]u8 = [_]u8{0} ** 13, // to avoid allocs; interface method args escape
+
+    next_cipher: ?Aead = null,
 
     fn encrypt(
         self: *HalfConn,
@@ -443,12 +448,29 @@ const HalfConn = struct {
         record: *std.ArrayListUnmanaged(u8),
         payload: []const u8,
     ) !void {
-        if (self.cipher) |_| {} else {
+        if (self.cipher) |*cipher| {
+            var explicit_nonce: ?[]u8 = null;
+            defer if (explicit_nonce) |n| allocator.free(n);
+            const explicit_nonce_len = self.explicitNonceLen();
+            if (explicit_nonce_len > 0) {
+                // TODO: implement if (isCBC) {
+                // } else {
+                explicit_nonce = try allocator.alloc(u8, explicit_nonce_len);
+                std.crypto.random.bytes(explicit_nonce.?);
+                // }
+            }
+            const nonce = if (explicit_nonce_len > 0) explicit_nonce.? else &self.seq;
+            if (self.ver.? == .v1_3) {
+                @panic("not implemented yet");
+            } else {
+                mem.copy(u8, self.scratch_buf[0..], &self.seq);
+                mem.copy(u8, self.scratch_buf[self.seq.len..], record.items[0..record_header_len]);
+                const additional_data = self.scratch_buf[0 .. self.seq.len + record_header_len];
+                try cipher.encrypt(allocator, record, nonce, payload, additional_data);
+            }
+        } else {
             try record.appendSlice(allocator, payload);
-            return;
         }
-
-        @panic("not implemented yet");
     }
 
     fn decrypt(
@@ -458,8 +480,6 @@ const HalfConn = struct {
         rec_ver: ProtocolVersion,
         payload: []const u8,
     ) ![]const u8 {
-        _ = rec_ver;
-        _ = allocator;
         var plaintext: []const u8 = undefined;
         // In TLS 1.3, change_cipher_spec messages are to be ignored without being
         // decrypted. See RFC 8446, Appendix D.4.
@@ -469,15 +489,66 @@ const HalfConn = struct {
             }
         }
 
-        if (self.cipher) |cipher| {
-            // TODO: implement
-            _ = cipher;
+        const explicit_nonce_len = self.explicitNonceLen();
+
+        if (self.cipher) |*cipher| {
+            if (payload.len < explicit_nonce_len) {
+                return error.BadRecordMac;
+            }
+            const nonce = if (explicit_nonce_len == 0)
+                &self.seq
+            else
+                payload[0..explicit_nonce_len];
+            const ciphertext_and_tag = payload[explicit_nonce_len..];
+            var additional_data: []const u8 = undefined;
+            if (self.ver.? == .v1_3) {
+                @panic("not implemented yet");
+            } else {
+                mem.copy(u8, self.scratch_buf[0..], &self.seq);
+                self.scratch_buf[self.seq.len] = @enumToInt(rec_type);
+                mem.writeIntBig(u16, self.scratch_buf[self.seq.len+1..self.seq.len+3], @enumToInt(rec_ver));
+                const n = ciphertext_and_tag.len - cipher.overhead();
+                mem.writeIntBig(u16, self.scratch_buf[self.seq.len+3..self.seq.len+5], @intCast(u16, n));
+                additional_data = self.scratch_buf[0 .. self.seq.len + 5];
+            }
+
+            var dest = std.ArrayListUnmanaged(u8){};
+            try cipher.decrypt(allocator, &dest, nonce, ciphertext_and_tag, additional_data);
+            allocator.free(payload);
+            plaintext = dest.items;
         } else {
             plaintext = payload;
         }
 
         self.incSeq();
         return plaintext;
+    }
+
+    // explicitNonceLen returns the number of bytes of explicit nonce or IV included
+    // in each record. Explicit nonces are present only in CBC modes after TLS 1.0
+    // and in certain AEAD modes in TLS 1.2.
+    pub fn explicitNonceLen(self: *HalfConn) usize {
+        return if (self.cipher) |cipher| cipher.explicitNonceLen() else 0;
+    }
+
+    // prepareCipherSpec sets the encryption and MAC states
+    // that a subsequent changeCipherSpec will use.
+    pub fn prepareCipherSpec(self: *HalfConn, ver: ProtocolVersion, cipher: Aead) void {
+        self.ver = ver;
+        self.next_cipher = cipher;
+    }
+
+    // changeCipherSpec changes the encryption and MAC states
+    // to the ones previously passed to prepareCipherSpec.
+    pub fn changeCipherSpec(self: *HalfConn) !void {
+        if (self.next_cipher) |_| {} else {
+            if (self.ver.? == .v1_3) {
+                return error.AlertInternal;
+            }
+        }
+        self.cipher = self.next_cipher;
+        self.next_cipher = null;
+        mem.set(u8, &self.seq, 0);
     }
 
     fn incSeq(self: *HalfConn) void {

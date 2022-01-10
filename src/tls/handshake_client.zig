@@ -18,6 +18,7 @@ const prfForVersion = @import("prf.zig").prfForVersion;
 const master_secret_length = @import("prf.zig").master_secret_length;
 const master_secret_label = @import("prf.zig").master_secret_label;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
+const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
@@ -174,6 +175,7 @@ pub const ClientHandshakeTls12 = struct {
             // TODO: implement
         } else {
             try self.doFullHandshake(allocator);
+            try self.establishKeys(allocator);
             try self.sendFinished(allocator, &self.conn.client_finished);
             std.log.debug(
                 "ClientHandshakeTls12 client_finished={}",
@@ -282,6 +284,32 @@ pub const ClientHandshakeTls12 = struct {
         );
 
         self.state.finished_hash.?.discardHandshakeBuffer();
+    }
+
+    pub fn establishKeys(self: *ClientHandshakeTls12, allocator: mem.Allocator) !void {
+        const ver = self.conn.version.?;
+        const suite = self.state.suite.?;
+        var keys = try ConnectionKeys.fromMasterSecret(
+            allocator,
+            ver,
+            suite,
+            self.state.master_secret.?,
+            self.state.hello.random,
+            self.state.server_hello.random,
+            suite.mac_len,
+            suite.key_len,
+            suite.iv_len,
+        );
+        defer keys.deinit(allocator);
+
+        // TODO: implement if (suite.cipher) |cipher| {
+        // } else {
+        var client_cipher = suite.aead.?(keys.client_key, keys.client_iv);
+        var server_cipher = suite.aead.?(keys.server_key, keys.server_iv);
+        // }
+
+        self.conn.in.prepareCipherSpec(ver, server_cipher);
+        self.conn.out.prepareCipherSpec(ver, client_cipher);
     }
 
     fn sendFinished(self: *ClientHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {

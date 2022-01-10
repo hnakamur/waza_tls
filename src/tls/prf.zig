@@ -122,7 +122,7 @@ pub const ConnectionKeys = struct {
         var key_material = try allocator.alloc(u8, n);
 
         const prf = prfForVersion(version, suite);
-        prf(allocator, master_secret, key_expansion_label, seed, key_material);
+        try prf(allocator, master_secret, key_expansion_label, seed, key_material);
 
         var rest = key_material;
         const client_mac = rest[0..mac_len];

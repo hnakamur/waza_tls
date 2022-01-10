@@ -31,6 +31,7 @@ pub const CipherSuite12 = struct {
 
     flags: Flags = .{},
     ka: fn (version: ProtocolVersion) KeyAgreement,
+    aead: ?fn (key: []const u8, nonce_prefix: []const u8) Aead,
 };
 
 pub const cipher_suites12 = [_]CipherSuite12{
@@ -41,6 +42,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .iv_len = 12,
         .flags = .{ .ecdhe = true, .tls12 = true },
         .ka = ecdheRsaKa,
+        .aead = Aead.initXorNonceAeadChaCha20Poly1305,
     },
     .{
         .id = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
@@ -49,6 +51,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .iv_len = 4,
         .flags = .{ .ecdhe = true, .tls12 = true },
         .ka = ecdheRsaKa,
+        .aead = Aead.initPrefixNonceAeadAes128Gcm,
     },
     .{
         .id = .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
@@ -57,6 +60,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .iv_len = 4,
         .flags = .{ .ecdhe = true, .ec_sign = true, .tls12 = true, .sha384 = true },
         .ka = ecdheEcdsaKa,
+        .aead = Aead.initPrefixNonceAeadAes256Gcm,
     },
 };
 
@@ -90,135 +94,155 @@ pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
     return null;
 }
 
-pub const Aead = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
+pub const Aead = union(enum) {
+    prefix_nonce_aead_aes128_gcm: PrefixNonceAeadAes128Gcm,
+    prefix_nonce_aead_aes256_gcm: PrefixNonceAeadAes256Gcm,
+    xor_nonce_aead_aes128_gcm: XorNonceAeadAes128Gcm,
+    xor_nonce_aead_aes256_gcm: XorNonceAeadAes256Gcm,
+    xor_nonce_aead_cha_cha20_poly1305: XorNonceAeadChaCha20Poly1305,
 
-    pub const VTable = struct {
-        encrypt: fn (
-            ptr: *anyopaque,
-            allocator: mem.Allocator,
-            dest: *std.ArrayListUnmanaged(u8),
-            nonce: []const u8,
-            plaintext: []const u8,
-            additional_data: []const u8,
-        ) anyerror!void,
-
-        decrypt: fn (
-            ptr: *anyopaque,
-            allocator: mem.Allocator,
-            dest: *std.ArrayListUnmanaged(u8),
-            nonce: []const u8,
-            chiphertext_and_tag: []const u8,
-            additional_data: []const u8,
-        ) anyerror!void,
-    };
-
-    pub fn init(
-        pointer: anytype,
-        comptime encryptFn: fn (
-            ptr: @TypeOf(pointer),
-            allocator: mem.Allocator,
-            dest: *std.ArrayListUnmanaged(u8),
-            nonce: []const u8,
-            plaintext: []const u8,
-            additional_data: []const u8,
-        ) anyerror!void,
-        comptime decryptFn: fn (
-            ptr: @TypeOf(pointer),
-            allocator: mem.Allocator,
-            dest: *std.ArrayListUnmanaged(u8),
-            nonce: []const u8,
-            chiphertext_and_tag: []const u8,
-            additional_data: []const u8,
-        ) anyerror!void,
-    ) Aead {
-        const Ptr = @TypeOf(pointer);
-        const ptr_info = @typeInfo(Ptr);
-
-        assert(ptr_info == .Pointer); // Must be a pointer
-        assert(ptr_info.Pointer.size == .One); // Must be a single-item pointer
-
-        const alignment = ptr_info.Pointer.alignment;
-
-        const gen = struct {
-            fn encryptImpl(
-                ptr: *anyopaque,
-                allocator: mem.Allocator,
-                dest: *std.ArrayListUnmanaged(u8),
-                nonce: []const u8,
-                plaintext: []const u8,
-                additional_data: []const u8,
-            ) anyerror!void {
-                const self = @ptrCast(Ptr, @alignCast(alignment, ptr));
-                return @call(
-                    .{ .modifier = .always_inline },
-                    encryptFn,
-                    .{ self, allocator, dest, nonce, plaintext, additional_data },
-                );
-            }
-            fn decryptImpl(
-                ptr: *anyopaque,
-                allocator: mem.Allocator,
-                dest: *std.ArrayListUnmanaged(u8),
-                nonce: []const u8,
-                chiphertext_and_tag: []const u8,
-                additional_data: []const u8,
-            ) anyerror!void {
-                const self = @ptrCast(Ptr, @alignCast(alignment, ptr));
-                return @call(
-                    .{ .modifier = .always_inline },
-                    decryptFn,
-                    .{ self, allocator, dest, nonce, chiphertext_and_tag, additional_data },
-                );
-            }
-
-            const vtable = VTable{
-                .encrypt = encryptImpl,
-                .decrypt = decryptImpl,
-            };
-        };
-
+    pub fn initPrefixNonceAeadAes128Gcm(key: []const u8, nonce_prefix: []const u8) Aead {
         return .{
-            .ptr = pointer,
-            .vtable = &gen.vtable,
+            .prefix_nonce_aead_aes128_gcm = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix),
+        };
+    }
+
+    pub fn initPrefixNonceAeadAes256Gcm(key: []const u8, nonce_prefix: []const u8) Aead {
+        return .{
+            .prefix_nonce_aead_aes256_gcm = PrefixNonceAeadAes256Gcm.init(key, nonce_prefix),
+        };
+    }
+
+    pub fn initXorNonceAeadAes128Gcm(key: []const u8, nonce_prefix: []const u8) Aead {
+        return .{
+            .xor_nonce_aead_aes128_gcm = XorNonceAeadAes128Gcm.init(key, nonce_prefix),
+        };
+    }
+
+    pub fn initXorNonceAeadAes256Gcm(key: []const u8, nonce_prefix: []const u8) Aead {
+        return .{
+            .xor_nonce_aead_aes256_gcm = XorNonceAeadAes256Gcm.init(key, nonce_prefix),
+        };
+    }
+
+    pub fn initXorNonceAeadChaCha20Poly1305(key: []const u8, nonce_prefix: []const u8) Aead {
+        return .{
+            .xor_nonce_aead_cha_cha20_poly1305 = XorNonceAeadChaCha20Poly1305.init(key, nonce_prefix),
+        };
+    }
+
+    pub fn explicitNonceLen(self: *const Aead) usize {
+        return switch (self.*) {
+            .prefix_nonce_aead_aes128_gcm => PrefixNonceAeadAes128Gcm.explicit_nonce_length,
+            .prefix_nonce_aead_aes256_gcm => PrefixNonceAeadAes256Gcm.explicit_nonce_length,
+            .xor_nonce_aead_aes128_gcm => XorNonceAeadAes128Gcm.explicit_nonce_length,
+            .xor_nonce_aead_aes256_gcm => XorNonceAeadAes256Gcm.explicit_nonce_length,
+            .xor_nonce_aead_cha_cha20_poly1305 => XorNonceAeadChaCha20Poly1305.explicit_nonce_length,
+        };
+    }
+
+    pub fn overhead(self: *const Aead) usize {
+        return switch (self.*) {
+            .prefix_nonce_aead_aes128_gcm => PrefixNonceAeadAes128Gcm.tag_length,
+            .prefix_nonce_aead_aes256_gcm => PrefixNonceAeadAes256Gcm.tag_length,
+            .xor_nonce_aead_aes128_gcm => XorNonceAeadAes128Gcm.tag_length,
+            .xor_nonce_aead_aes256_gcm => XorNonceAeadAes256Gcm.tag_length,
+            .xor_nonce_aead_cha_cha20_poly1305 => XorNonceAeadChaCha20Poly1305.tag_length,
         };
     }
 
     pub fn encrypt(
-        self: Aead,
+        self: *Aead,
         allocator: mem.Allocator,
         dest: *std.ArrayListUnmanaged(u8),
         nonce: []const u8,
         plaintext: []const u8,
         additional_data: []const u8,
     ) !void {
-        try self.vtable.encrypt(
-            self.ptr,
-            allocator,
-            dest,
-            nonce,
-            plaintext,
-            additional_data,
-        );
+        switch (self.*) {
+            .prefix_nonce_aead_aes128_gcm => |*c| try c.encrypt(
+                allocator,
+                dest,
+                nonce,
+                plaintext,
+                additional_data,
+            ),
+            .prefix_nonce_aead_aes256_gcm => |*c| try c.encrypt(
+                allocator,
+                dest,
+                nonce,
+                plaintext,
+                additional_data,
+            ),
+            .xor_nonce_aead_aes128_gcm => |*c| try c.encrypt(
+                allocator,
+                dest,
+                nonce,
+                plaintext,
+                additional_data,
+            ),
+            .xor_nonce_aead_aes256_gcm => |*c| try c.encrypt(
+                allocator,
+                dest,
+                nonce,
+                plaintext,
+                additional_data,
+            ),
+            .xor_nonce_aead_cha_cha20_poly1305 => |*c| try c.encrypt(
+                allocator,
+                dest,
+                nonce,
+                plaintext,
+                additional_data,
+            ),
+        }
     }
 
     pub fn decrypt(
-        self: Aead,
+        self: *Aead,
         allocator: mem.Allocator,
         dest: *std.ArrayListUnmanaged(u8),
         nonce: []const u8,
         chiphertext_and_tag: []const u8,
         additional_data: []const u8,
     ) !void {
-        try self.vtable.decrypt(
-            self.ptr,
-            allocator,
-            dest,
-            nonce,
-            chiphertext_and_tag,
-            additional_data,
-        );
+        switch (self.*) {
+            .prefix_nonce_aead_aes128_gcm => |*c| try c.decrypt(
+                allocator,
+                dest,
+                nonce,
+                chiphertext_and_tag,
+                additional_data,
+            ),
+            .prefix_nonce_aead_aes256_gcm => |*c| try c.decrypt(
+                allocator,
+                dest,
+                nonce,
+                chiphertext_and_tag,
+                additional_data,
+            ),
+            .xor_nonce_aead_aes128_gcm => |*c| try c.decrypt(
+                allocator,
+                dest,
+                nonce,
+                chiphertext_and_tag,
+                additional_data,
+            ),
+            .xor_nonce_aead_aes256_gcm => |*c| try c.decrypt(
+                allocator,
+                dest,
+                nonce,
+                chiphertext_and_tag,
+                additional_data,
+            ),
+            .xor_nonce_aead_cha_cha20_poly1305 => |*c| try c.decrypt(
+                allocator,
+                dest,
+                nonce,
+                chiphertext_and_tag,
+                additional_data,
+            ),
+        }
     }
 };
 
@@ -242,18 +266,12 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
         nonce: [aead_nonce_length]u8 = [_]u8{0} ** aead_nonce_length,
         key: [key_length]u8,
 
-        pub fn init(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Self {
-            var self = Self{ .key = key };
+        pub fn init(key: []const u8, nonce_prefix: []const u8) Self {
+            assert(key.len == key_length);
+            assert(nonce_prefix.len == nonce_prefix_length);
+            var self = Self{ .key = key[0..key_length].* };
             mem.copy(u8, &self.nonce, nonce_prefix[0..]);
             return self;
-        }
-
-        pub fn initAead(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Aead {
-            return init(key, nonce_prefix).aead();
-        }
-
-        pub fn aead(self: *Self) Aead {
-            return Aead.init(self, encrypt, decrypt);
         }
 
         pub fn encrypt(
@@ -310,7 +328,8 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             const old_len = dest.items.len;
             const ciphertext_len = chiphertext_and_tag.len - tag_length;
             const new_len = old_len + ciphertext_len;
-            try dest.resize(allocator, new_len);
+            try dest.ensureTotalCapacityPrecise(allocator, new_len);
+            dest.expandToCapacity();
             try self.do_decrypt(
                 dest.items[old_len..new_len],
                 chiphertext_and_tag[0..ciphertext_len],
@@ -358,16 +377,13 @@ fn XorNonceAead(comptime InnerAead: type) type {
         nonce_mask: [aead_nonce_length]u8,
         key: [key_length]u8,
 
-        pub fn init(key: [key_length]u8, nonce_mask: [aead_nonce_length]u8) Self {
-            return .{ .key = key, .nonce_mask = nonce_mask };
-        }
-
-        pub fn initAead(key: [key_length]u8, nonce_prefix: [nonce_prefix_length]u8) Aead {
-            return init(key, nonce_prefix).aead();
-        }
-
-        pub fn aead(self: *Self) Aead {
-            return Aead.init(self, encrypt, decrypt);
+        pub fn init(key: []const u8, nonce_mask: []const u8) Self {
+            assert(key.len == key_length);
+            assert(nonce_mask.len == aead_nonce_length);
+            return .{
+                .key = key[0..key_length].*,
+                .nonce_mask = nonce_mask[0..aead_nonce_length].*,
+            };
         }
 
         pub fn encrypt(
@@ -425,7 +441,8 @@ fn XorNonceAead(comptime InnerAead: type) type {
             const old_len = dest.items.len;
             const ciphertext_len = chiphertext_and_tag.len - tag_length;
             const new_len = old_len + ciphertext_len;
-            try dest.resize(allocator, new_len);
+            try dest.ensureTotalCapacityPrecise(allocator, new_len);
+            dest.expandToCapacity();
             try self.do_decrypt(
                 dest.items[old_len..new_len],
                 chiphertext_and_tag[0..ciphertext_len],
@@ -513,36 +530,6 @@ test "Aes128Gcm - Message and associated data" {
     );
 }
 
-test "PrefixNonceAeadAes128Gcm Aead" {
-    testing.log_level = .debug;
-
-    const allocator = testing.allocator;
-
-    const key = [_]u8{'k'} ** PrefixNonceAeadAes128Gcm.key_length;
-    const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
-    var concrete_aead = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix);
-    var aead = concrete_aead.aead();
-
-    const m = "exampleplaintext";
-    const ad = "additionaldata";
-    const explicit_nonce = [_]u8{'n'} ** PrefixNonceAeadAes128Gcm.explicit_nonce_length;
-
-    var c = std.ArrayListUnmanaged(u8){};
-    defer c.deinit(allocator);
-    try aead.encrypt(allocator, &c, &explicit_nonce, m, ad);
-    try testing.expectEqualSlices(
-        u8,
-        "\x4b\x94\x1c\x11\x1c\xc9\xe9\xdb\x4d\xa6\xdb\xf7\x69\xda\x42\x81" ++
-            "\x07\xb4\x8a\x4c\x64\xda\x24\x62\xfc\xbc\xab\xb7\xfd\x76\x5e\x62",
-        c.items,
-    );
-
-    var m2 = std.ArrayListUnmanaged(u8){};
-    defer m2.deinit(allocator);
-    try aead.decrypt(allocator, &m2, &explicit_nonce, c.items, ad);
-    try testing.expectEqualStrings(m, m2.items);
-}
-
 test "PrefixNonceAeadAes128Gcm" {
     testing.log_level = .debug;
 
@@ -550,7 +537,7 @@ test "PrefixNonceAeadAes128Gcm" {
 
     const key = [_]u8{'k'} ** PrefixNonceAeadAes128Gcm.key_length;
     const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
-    var aead = PrefixNonceAeadAes128Gcm.init(key, nonce_prefix);
+    var aead = PrefixNonceAeadAes128Gcm.init(&key, &nonce_prefix);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
@@ -579,7 +566,7 @@ test "PrefixNonceAeadAes256Gcm" {
 
     const key = [_]u8{'k'} ** PrefixNonceAeadAes256Gcm.key_length;
     const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
-    var aead = PrefixNonceAeadAes256Gcm.init(key, nonce_prefix);
+    var aead = PrefixNonceAeadAes256Gcm.init(&key, &nonce_prefix);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
@@ -608,7 +595,7 @@ test "XorNonceAeadAes128Gcm" {
 
     const key = [_]u8{'k'} ** XorNonceAeadAes128Gcm.key_length;
     const nonce_mask = [_]u8{'m'} ** aead_nonce_length;
-    var aead = XorNonceAeadAes128Gcm.init(key, nonce_mask);
+    var aead = XorNonceAeadAes128Gcm.init(&key, &nonce_mask);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
@@ -637,7 +624,7 @@ test "XorNonceAeadAes256Gcm" {
 
     const key = [_]u8{'k'} ** XorNonceAeadAes256Gcm.key_length;
     const nonce_mask = [_]u8{'m'} ** aead_nonce_length;
-    var aead = XorNonceAeadAes256Gcm.init(key, nonce_mask);
+    var aead = XorNonceAeadAes256Gcm.init(&key, &nonce_mask);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
@@ -666,7 +653,36 @@ test "XorNonceAeadChaCha20Poly1305" {
 
     const key = [_]u8{'k'} ** XorNonceAeadChaCha20Poly1305.key_length;
     const nonce_prefix = [_]u8{'m'} ** aead_nonce_length;
-    var aead = XorNonceAeadChaCha20Poly1305.init(key, nonce_prefix);
+    var aead = XorNonceAeadChaCha20Poly1305.init(&key, &nonce_prefix);
+
+    const m = "exampleplaintext";
+    const ad = "additionaldata";
+    const nonce = [_]u8{'n'} ** XorNonceAeadChaCha20Poly1305.nonce_length;
+
+    var c = std.ArrayListUnmanaged(u8){};
+    defer c.deinit(allocator);
+    try aead.encrypt(allocator, &c, &nonce, m, ad);
+    try testing.expectEqualSlices(
+        u8,
+        "\xdf\x39\x03\x0c\xb1\x2f\xe4\xf9\x24\xeb\x76\x15\x80\x4c\x40\xed" ++
+            "\xd8\x1f\x15\x82\xfc\x6c\x15\x62\x12\x9c\x8f\x77\x77\x11\x91\x60",
+        c.items,
+    );
+
+    var m2 = std.ArrayListUnmanaged(u8){};
+    defer m2.deinit(allocator);
+    try aead.decrypt(allocator, &m2, &nonce, c.items, ad);
+    try testing.expectEqualStrings(m, m2.items);
+}
+
+test "AeadXorNonceAeadChaCha20Poly1305" {
+    testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
+    const key = [_]u8{'k'} ** XorNonceAeadChaCha20Poly1305.key_length;
+    const nonce_prefix = [_]u8{'m'} ** aead_nonce_length;
+    var aead = Aead.initXorNonceAeadChaCha20Poly1305(&key, &nonce_prefix);
 
     const m = "exampleplaintext";
     const ad = "additionaldata";
