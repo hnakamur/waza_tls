@@ -105,6 +105,10 @@ test "Conn ClientServer" {
             var client = try server.accept();
             const allocator = server.allocator;
             defer client.conn.deinit(allocator);
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
             try client.conn.serverHandshake(allocator);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
         }
@@ -114,6 +118,10 @@ test "Conn ClientServer" {
             defer client.deinit(allocator);
             defer client.close();
 
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
             try client.conn.clientHandshake(allocator);
         }
 

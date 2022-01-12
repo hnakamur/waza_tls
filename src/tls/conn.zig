@@ -246,6 +246,10 @@ pub const Conn = struct {
         if (rec_type == .change_cipher_spec) {
             if (self.version) |con_ver| {
                 if (con_ver != .v1_3) {
+                    std.log.debug(
+                        "Conn.writeRecord calling changeCipherSpec, self=0x{x}, &self.out=0x{x}",
+                        .{ @ptrToInt(self), @ptrToInt(&self.out) },
+                    );
                     self.out.changeCipherSpec() catch @panic("send alert not implemented");
                 }
             }
@@ -356,6 +360,10 @@ pub const Conn = struct {
         const rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
+        std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec self=0x{x}, rec_type={}, rec_ver={}, payload_len={}",
+            .{ @ptrToInt(self), rec_type, rec_ver, payload_len },
+        );
         if (self.version) |con_ver| {
             if (con_ver != .v1_3 and con_ver != rec_ver) {
                 // TODO: sendAlert
@@ -381,6 +389,10 @@ pub const Conn = struct {
             }
         }
 
+        std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec self=0x{x}, before get data",
+            .{@ptrToInt(self)},
+        );
         const data = blk: {
             try record.resize(allocator, record_header_len + payload_len);
             const payload_bytes_read = try self.raw_input.reader().readAll(
@@ -392,6 +404,10 @@ pub const Conn = struct {
             break :blk try self.in.decrypt(allocator, record.items);
         };
         errdefer allocator.free(data);
+        std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}",
+            .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data) },
+        );
 
         if (rec_type != .alert and rec_type != .change_cipher_spec and data.len > 0) {
             // This is a state-advancing message: reset the retry count.
@@ -427,6 +443,10 @@ pub const Conn = struct {
                     // TODO: send alert
                     return error.UnexpectedMessage;
                 }
+                std.log.debug(
+                    "Conn.readRecordOrChangeCipherSpec calling changeCipherSpec, self=0x{x}, &self.in=0x{x}",
+                    .{ @ptrToInt(self), @ptrToInt(&self.in) },
+                );
                 try self.in.changeCipherSpec();
             },
             else => {
@@ -452,6 +472,10 @@ const HalfConn = struct {
         record: *std.ArrayListUnmanaged(u8),
         payload: []const u8,
     ) !void {
+        std.log.debug(
+            "HalfConn.encrypt start, self=0x{x}, self.cipher={}",
+            .{ @ptrToInt(self), self.cipher },
+        );
         if (self.cipher) |*cipher| {
             var explicit_nonce: ?[]u8 = null;
             const explicit_nonce_len = self.explicitNonceLen();
@@ -472,7 +496,24 @@ const HalfConn = struct {
                 mem.copy(u8, self.scratch_buf[0..], &self.seq);
                 mem.copy(u8, self.scratch_buf[self.seq.len..], record.items[0..record_header_len]);
                 const additional_data = self.scratch_buf[0 .. self.seq.len + record_header_len];
+                std.log.debug(
+                    "HalfConn.encrypt, self=0x{x}, record.items={}, nonce={}, payload={}, additional_data={}",
+                    .{
+                        @ptrToInt(self),
+                        fmtx.fmtSliceHexEscapeLower(record.items),
+                        fmtx.fmtSliceHexEscapeLower(nonce),
+                        fmtx.fmtSliceHexEscapeLower(payload),
+                        fmtx.fmtSliceHexEscapeLower(additional_data),
+                    },
+                );
                 try cipher.encrypt(allocator, record, nonce, payload, additional_data);
+                std.log.debug(
+                    "HalfConn.encrypt, self=0x{x}, encrypted record.items={}",
+                    .{
+                        @ptrToInt(self),
+                        fmtx.fmtSliceHexEscapeLower(record.items),
+                    },
+                );
             }
 
             // Update length to include nonce, MAC and any block padding needed.
@@ -491,6 +532,15 @@ const HalfConn = struct {
     ) ![]const u8 {
         var plaintext: []const u8 = undefined;
         const rec_type = @intToEnum(RecordType, record[0]);
+        std.log.debug(
+            "HalfConn.decrypt, self=0x{x}, rec_type={}, record.len={}, self.cipher={}",
+            .{
+                @ptrToInt(self),
+                rec_type,
+                record.len,
+                self.cipher,
+            },
+        );
         var payload = record[record_header_len..];
 
         // In TLS 1.3, change_cipher_spec messages are to be ignored without being
@@ -525,8 +575,27 @@ const HalfConn = struct {
 
             var dest = std.ArrayListUnmanaged(u8){};
             errdefer dest.deinit(allocator);
-            try cipher.decrypt(allocator, &dest, nonce, ciphertext_and_tag, additional_data);
+            std.log.debug(
+                "HalfConn.decrypt, before decrypt self=0x{x}, nonce={}, ciphertext_and_tag={}, additional_data={}",
+                .{
+                    @ptrToInt(self),
+                    fmtx.fmtSliceHexEscapeLower(nonce),
+                    fmtx.fmtSliceHexEscapeLower(ciphertext_and_tag),
+                    fmtx.fmtSliceHexEscapeLower(additional_data),
+                },
+            );
+            cipher.decrypt(allocator, &dest, nonce, ciphertext_and_tag, additional_data) catch |err| {
+                std.log.debug(
+                    "HalfConn.decrypt, self=0x{x}, decrpyt err: {s}",
+                    .{ @ptrToInt(self), @errorName(err) },
+                );
+                return err;
+            };
             plaintext = dest.items;
+            std.log.debug(
+                "HalfConn.decrypt, exit self=0x{x}, plaintext={}",
+                .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(plaintext) },
+            );
         } else {
             plaintext = try allocator.dupe(u8, payload);
         }
@@ -547,17 +616,26 @@ const HalfConn = struct {
     pub fn prepareCipherSpec(self: *HalfConn, ver: ProtocolVersion, cipher: Aead) void {
         self.ver = ver;
         self.next_cipher = cipher;
+        std.log.debug(
+            "HalfConn.prepareCipherSpec start, self=0x{x}, self.cipher={}",
+            .{ @ptrToInt(self), self.cipher },
+        );
     }
 
     // changeCipherSpec changes the encryption and MAC states
     // to the ones previously passed to prepareCipherSpec.
     pub fn changeCipherSpec(self: *HalfConn) !void {
+        std.log.debug("HalfConn.changeCipherSpec start, self=0x{x}", .{@ptrToInt(self)});
         if (self.next_cipher) |_| {} else {
             if (self.ver.? == .v1_3) {
                 return error.AlertInternal;
             }
         }
         self.cipher = self.next_cipher;
+        std.log.debug(
+            "HalfConn.changeCipherSpec set cipher, self=0x{x}, self.cipher={}",
+            .{ @ptrToInt(self), self.cipher },
+        );
         self.next_cipher = null;
         mem.set(u8, &self.seq, 0);
     }

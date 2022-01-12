@@ -22,6 +22,7 @@ const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeStat
 const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
+const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const fmtx = @import("../fmtx.zig");
@@ -243,6 +244,8 @@ pub const ServerHandshakeTls12 = struct {
             // valid so we do a full handshake.
             try self.pickCipherSuite();
             try self.doFullHandshake(allocator);
+            try self.establishKeys(allocator);
+            std.log.debug("ServerHandshakeTls12.handshake before readFinished", .{});
             try self.readFinished(allocator, &self.conn.client_finished);
             std.log.debug(
                 "ServerHandshakeTls12 client_finished={}",
@@ -251,6 +254,7 @@ pub const ServerHandshakeTls12 = struct {
             self.conn.buffering = true;
             try self.sendFinished(allocator, null);
             try self.conn.flush();
+            std.log.debug("ServerHandshakeTls12 after sendFinished, flush", .{});
         }
 
         self.conn.handshake_complete = true;
@@ -398,10 +402,39 @@ pub const ServerHandshakeTls12 = struct {
         self.state.finished_hash.?.discardHandshakeBuffer();
     }
 
+    pub fn establishKeys(self: *ServerHandshakeTls12, allocator: mem.Allocator) !void {
+        const ver = self.conn.version.?;
+        const suite = self.state.suite.?;
+        var keys = try ConnectionKeys.fromMasterSecret(
+            allocator,
+            ver,
+            suite,
+            self.state.master_secret.?,
+            self.state.client_hello.random,
+            self.state.hello.?.random,
+            suite.mac_len,
+            suite.key_len,
+            suite.iv_len,
+        );
+        defer keys.deinit(allocator);
+
+        // TODO: implement if (suite.cipher) |cipher| {
+        // } else {
+        var client_cipher = suite.aead.?(keys.client_key, keys.client_iv);
+        var server_cipher = suite.aead.?(keys.server_key, keys.server_iv);
+        // }
+
+        self.conn.in.prepareCipherSpec(ver, client_cipher);
+        self.conn.out.prepareCipherSpec(ver, server_cipher);
+    }
+
     fn readFinished(self: *ServerHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {
+        std.log.debug("ServerHandshakeTls12 readFinished start", .{});
         try self.conn.readChangeCipherSpec(allocator);
+        std.log.debug("ServerHandshakeTls12 after readChangeCipherSpec", .{});
 
         var hs_msg = try self.conn.readHandshake(allocator);
+        std.log.debug("ServerHandshakeTls12 after rreadHandshake", .{});
         var client_finished_msg = switch (hs_msg) {
             .Finished => |m| m,
             else => {
@@ -411,6 +444,7 @@ pub const ServerHandshakeTls12 = struct {
         };
         defer client_finished_msg.deinit(allocator);
 
+        std.log.debug("ServerHandshakeTls12 got client_finished", .{});
         const verify_data = try self.state.finished_hash.?.clientSum(
             allocator,
             self.state.master_secret.?,
@@ -440,6 +474,10 @@ pub const ServerHandshakeTls12 = struct {
         const finished_bytes = try finished.marshal(allocator);
         try self.state.finished_hash.?.write(finished_bytes);
         try self.conn.writeRecord(allocator, .handshake, finished_bytes);
+        std.log.debug(
+            "ServerHandshakeTls12.sendFinished after writeRecord finished={}",
+            .{fmtx.fmtSliceHexEscapeLower(finished_bytes)},
+        );
         if (out) |o| {
             mem.copy(u8, o, finished.verify_data);
         }

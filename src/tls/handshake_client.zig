@@ -314,6 +314,7 @@ pub const ClientHandshakeTls12 = struct {
 
     fn sendFinished(self: *ClientHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {
         try self.conn.writeRecord(allocator, .change_cipher_spec, &[_]u8{1});
+        std.log.debug("ClientHandshakeTls12.sendFinished after writeRecord change_cipher_spec", .{});
 
         const verify_data = try self.state.finished_hash.?.clientSum(
             allocator,
@@ -327,13 +328,17 @@ pub const ClientHandshakeTls12 = struct {
         const finished_bytes = try finished.marshal(allocator);
         try self.state.finished_hash.?.write(finished_bytes);
         try self.conn.writeRecord(allocator, .handshake, finished_bytes);
+        std.log.debug("ClientHandshakeTls12.sendFinished after writeRecord finished", .{});
         mem.copy(u8, out, finished.verify_data);
     }
 
     fn readFinished(self: *ClientHandshakeTls12, allocator: mem.Allocator, out: []u8) !void {
+        std.log.debug("ClientHandshakeTls12.readFinished start", .{});
         try self.conn.readChangeCipherSpec(allocator);
+        std.log.debug("ClientHandshakeTls12.readFinished after readChangeCipherSpec", .{});
 
         var hs_msg = try self.conn.readHandshake(allocator);
+        std.log.debug("ClientHandshakeTls12.readFinished after readHandshake", .{});
         var server_finished_msg = switch (hs_msg) {
             .Finished => |m| m,
             else => {
@@ -342,6 +347,10 @@ pub const ClientHandshakeTls12 = struct {
             },
         };
         defer server_finished_msg.deinit(allocator);
+        std.log.debug(
+            "ClientHandshakeTls12.readFinished server_finished_bytes={}",
+            .{fmtx.fmtSliceHexEscapeLower(server_finished_msg.raw.?)},
+        );
 
         const verify_data = try self.state.finished_hash.?.serverSum(
             allocator,
