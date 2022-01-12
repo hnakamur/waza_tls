@@ -294,12 +294,7 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             const old_len = dest.items.len;
             const tag_start = old_len + plaintext.len;
             const new_len = tag_start + tag_length;
-            std.log.debug(
-                "PrefixNonceAead.encrypt old_len={}, new_len={}, plaintext.len={}, tag_length={}",
-                .{ old_len, new_len, plaintext.len, tag_length },
-            );
             try dest.resize(allocator, new_len);
-            std.log.debug("PrefixNonceAead.encrypt resized dest.items.len={}", .{dest.items.len});
             self.do_encrypt(
                 dest.items[old_len..tag_start],
                 dest.items[tag_start..new_len][0..tag_length],
@@ -317,10 +312,6 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             additional_data: []const u8,
             explicit_nonce: [explicit_nonce_length]u8,
         ) void {
-            std.log.debug("PrefixNonceAead.do_encrypt, self.nonce.ptr=0x{x}, self.nonce.len={}, explicit_nonce.ptr=0x{x}, explicit_nonce.len={}", .{
-                @ptrToInt(&self.nonce), self.nonce.len, @ptrToInt(&explicit_nonce), explicit_nonce.len,
-            });
-            std.log.debug("PrefixNonceAead.do_encrypt, explicit_nonce[0]={x}", .{explicit_nonce[0]});
             mem.copy(u8, self.nonce[nonce_prefix_length..], &explicit_nonce);
             AesGcm.encrypt(
                 out_ciphertext,
