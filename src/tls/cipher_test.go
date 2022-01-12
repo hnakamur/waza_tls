@@ -150,18 +150,19 @@ func TestEncryptDecrypt(t *testing.T) {
 	c := aeadAESGCM(key, noncePrefix)
 	hc := halfConn{version: VersionTLS12, cipher: c}
 
-	data := []byte("hello")
+	data := []byte("exampleplaintext")
+	// data := []byte("hello")
 	encrypted, err := hc.testEncrypt(nil, recordTypeApplicationData, data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("encrypted=%x", encrypted)
+	t.Logf("encrypted=%x, len=%d", encrypted, len(encrypted))
 
-	decrypted, dec_type, err := hc.decrypt(encrypted)
+	decrypted, rec_type, err := hc.decrypt(encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("decrypted=%q, dec_type=%v", decrypted, dec_type)
+	t.Logf("decrypted=%q, rec_type=%v", decrypted, rec_type)
 	if got, want := decrypted, data; !bytes.Equal(got, want) {
 		t.Errorf("decrypted data mismatch, got=%q, want=%q", string(got), string(want))
 	}
@@ -354,6 +355,8 @@ func (hc *halfConn) testEncrypt(outBuf []byte, typ recordType, data []byte) ([]b
 // encrypt encrypts payload, adding the appropriate nonce and/or MAC, and
 // appends it to record, which must already contain the record header.
 func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, error) {
+	log.Printf("halfConn.encrypt start len(record)=%d, record=%x", len(record), record)
+
 	if hc.cipher == nil {
 		return append(record, payload...), nil
 	}
@@ -408,7 +411,9 @@ func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, err
 		} else {
 			additionalData := append(hc.scratchBuf[:0], hc.seq[:]...)
 			additionalData = append(additionalData, record[:recordHeaderLen]...)
+			log.Printf("halfConn.encrypt before Seal record=%x, nonce=%x, payload=%x, additionalData=%x", record, nonce, payload, additionalData)
 			record = c.Seal(record, nonce, payload, additionalData)
+			log.Printf("halfConn.encrypt after Seal record=%x", record)
 		}
 	// case cbcMode:
 	// 	mac := tls10MAC(hc.mac, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload, nil)
@@ -431,6 +436,7 @@ func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, err
 
 	// Update length to include nonce, MAC and any block padding needed.
 	n := len(record) - recordHeaderLen
+	log.Printf("halfConn.encrypt updated len(record)=%d, record=%x", len(record), record)
 	record[3] = byte(n >> 8)
 	record[4] = byte(n)
 	// commented out for test
@@ -480,6 +486,7 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 				additionalData = append(hc.scratchBuf[:0], hc.seq[:]...)
 				additionalData = append(additionalData, record[:3]...)
 				n := len(payload) - c.Overhead()
+				log.Printf("halfConn.decrypt len(payload)=%d, c.Overhead()=%d", len(payload), c.Overhead())
 				additionalData = append(additionalData, byte(n>>8), byte(n))
 			}
 

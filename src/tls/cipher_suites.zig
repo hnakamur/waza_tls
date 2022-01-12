@@ -247,7 +247,7 @@ pub const Aead = union(enum) {
 };
 
 const aead_nonce_length = 12;
-const nonce_prefix_length = 4;
+pub const nonce_prefix_length = 4;
 
 pub const PrefixNonceAeadAes128Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes128Gcm);
 pub const PrefixNonceAeadAes256Gcm = PrefixNonceAead(std.crypto.aead.aes_gcm.Aes256Gcm);
@@ -283,16 +283,29 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             additional_data: []const u8,
         ) !void {
             assert(nonce.len == explicit_nonce_length);
+
+            // Note: we have to copy explicit_nonce before resizing dest
+            // because HalfConn.encrypt put nonce in dest.items.
+            // After resizing dest, accessing nonce's data causes a segment fault
+            // if dest.items.ptr is changed.
+            var explicit_nonce: [explicit_nonce_length]u8 = undefined;
+            mem.copy(u8, &explicit_nonce, nonce);
+
             const old_len = dest.items.len;
             const tag_start = old_len + plaintext.len;
             const new_len = tag_start + tag_length;
+            std.log.debug(
+                "PrefixNonceAead.encrypt old_len={}, new_len={}, plaintext.len={}, tag_length={}",
+                .{ old_len, new_len, plaintext.len, tag_length },
+            );
             try dest.resize(allocator, new_len);
+            std.log.debug("PrefixNonceAead.encrypt resized dest.items.len={}", .{dest.items.len});
             self.do_encrypt(
                 dest.items[old_len..tag_start],
                 dest.items[tag_start..new_len][0..tag_length],
                 plaintext,
                 additional_data,
-                nonce[0..explicit_nonce_length].*,
+                explicit_nonce,
             );
         }
 
@@ -304,6 +317,10 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             additional_data: []const u8,
             explicit_nonce: [explicit_nonce_length]u8,
         ) void {
+            std.log.debug("PrefixNonceAead.do_encrypt, self.nonce.ptr=0x{x}, self.nonce.len={}, explicit_nonce.ptr=0x{x}, explicit_nonce.len={}", .{
+                @ptrToInt(&self.nonce), self.nonce.len, @ptrToInt(&explicit_nonce), explicit_nonce.len,
+            });
+            std.log.debug("PrefixNonceAead.do_encrypt, explicit_nonce[0]={x}", .{explicit_nonce[0]});
             mem.copy(u8, self.nonce[nonce_prefix_length..], &explicit_nonce);
             AesGcm.encrypt(
                 out_ciphertext,
@@ -395,6 +412,14 @@ fn XorNonceAead(comptime InnerAead: type) type {
             additional_data: []const u8,
         ) !void {
             assert(nonce.len == nonce_length);
+
+            // Note: we have to copy nonce before resizing dest
+            // because HalfConn.encrypt put nonce in dest.items.
+            // After resizing dest, accessing nonce's data causes a segment fault
+            // if dest.items.ptr is changed.
+            var nonce_copy: [nonce_length]u8 = undefined;
+            mem.copy(u8, &nonce_copy, nonce);
+
             const old_len = dest.items.len;
             const tag_start = old_len + plaintext.len;
             const new_len = tag_start + tag_length;
@@ -404,7 +429,7 @@ fn XorNonceAead(comptime InnerAead: type) type {
                 dest.items[tag_start..new_len][0..tag_length],
                 plaintext,
                 additional_data,
-                nonce[0..nonce_length].*,
+                nonce_copy,
             );
         }
 

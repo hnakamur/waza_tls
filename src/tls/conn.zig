@@ -337,8 +337,11 @@ pub const Conn = struct {
         if (self.input.items.len != 0) {
             return error.InternalError;
         }
-        var hdr: [record_header_len]u8 = undefined;
-        const header_bytes_read = try self.raw_input.reader().readAll(&hdr);
+        var record = try std.ArrayListUnmanaged(u8).initCapacity(allocator, record_header_len);
+        defer record.deinit(allocator);
+
+        record.expandToCapacity();
+        const header_bytes_read = try self.raw_input.reader().readAll(record.items);
         if (header_bytes_read == 0) {
             // RFC 8446, Section 6.1 suggests that EOF without an alertCloseNotify
             // is an error, but popular web sites seem to do this, so we accept it
@@ -348,7 +351,7 @@ pub const Conn = struct {
             return error.UnexpectedEof;
         }
 
-        var fbs = io.fixedBufferStream(&hdr);
+        var fbs = io.fixedBufferStream(record.items);
         var r = fbs.reader();
         const rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
@@ -379,13 +382,14 @@ pub const Conn = struct {
         }
 
         const data = blk: {
-            var payload = try allocator.alloc(u8, payload_len);
-            errdefer allocator.free(payload);
-            const payload_bytes_read = try self.raw_input.reader().readAll(payload);
+            try record.resize(allocator, record_header_len + payload_len);
+            const payload_bytes_read = try self.raw_input.reader().readAll(
+                record.items[record_header_len..],
+            );
             if (payload_bytes_read < payload_len) {
                 return error.UnexpectedEof;
             }
-            break :blk try self.in.decrypt(allocator, rec_type, rec_ver, payload);
+            break :blk try self.in.decrypt(allocator, record);
         };
         errdefer allocator.free(data);
 
@@ -448,28 +452,56 @@ const HalfConn = struct {
         record: *std.ArrayListUnmanaged(u8),
         payload: []const u8,
     ) !void {
+        std.log.debug(
+            "HalfConn.encrypt start record.ptr=0x{x}, record.items.len={}",
+            .{ @ptrToInt(record.items.ptr), record.items.len },
+        );
         if (self.cipher) |*cipher| {
             var explicit_nonce: ?[]u8 = null;
-            defer if (explicit_nonce) |n| allocator.free(n);
             const explicit_nonce_len = self.explicitNonceLen();
             if (explicit_nonce_len > 0) {
+                const rec_old_len = record.items.len;
+                try record.resize(allocator, rec_old_len + explicit_nonce_len);
+                std.log.debug(
+                    "HalfConn.encrypt after resize for explicit_nonce record.ptr=0x{x}, record.items.len={}",
+                    .{ @ptrToInt(record.items.ptr), record.items.len },
+                );
+                explicit_nonce = record.items[rec_old_len..];
+                std.log.debug(
+                    "HalfConn.encrypt after resize for explicit_nonce[0]#1={x}",
+                    .{explicit_nonce.?[0]},
+                );
+                explicit_nonce.?[0] = '\x01';
+                std.log.debug(
+                    "HalfConn.encrypt after resize for explicit_nonce[0]#2={x}",
+                    .{explicit_nonce.?[0]},
+                );
+
                 // TODO: implement if (isCBC) {
                 // } else {
-                explicit_nonce = try allocator.alloc(u8, explicit_nonce_len);
                 std.crypto.random.bytes(explicit_nonce.?);
+                std.log.debug(
+                    "HalfConn.encrypt after random.bytes record={}",
+                    .{fmtx.fmtSliceHexEscapeLower(record.items)},
+                );
                 // }
             }
-            const nonce = if (explicit_nonce_len > 0) explicit_nonce.? else &self.seq;
+            const nonce: []const u8 = if (explicit_nonce_len > 0) explicit_nonce.? else &self.seq;
             if (self.ver.? == .v1_3) {
                 @panic("not implemented yet");
             } else {
                 mem.copy(u8, self.scratch_buf[0..], &self.seq);
                 mem.copy(u8, self.scratch_buf[self.seq.len..], record.items[0..record_header_len]);
                 const additional_data = self.scratch_buf[0 .. self.seq.len + record_header_len];
+                std.log.debug(
+                    "HalfConn.encrypt before cipher.encrypt, record.ptr=0x{x}, record.len={}, nonce.ptr=0x{x}, nonce.len={}",
+                    .{ @ptrToInt(record.items.ptr), record.items.len, @ptrToInt(nonce.ptr), nonce.len },
+                );
                 try cipher.encrypt(allocator, record, nonce, payload, additional_data);
             }
 
             // Update length to include nonce, MAC and any block padding needed.
+            std.log.debug("HalfConn.encrypt updated record.items.len={}", .{record.items.len});
             const n = record.items.len - record_header_len;
             mem.writeIntBig(u16, record.items[3..5], @intCast(u16, n));
             self.incSeq();
@@ -481,16 +513,17 @@ const HalfConn = struct {
     fn decrypt(
         self: *HalfConn,
         allocator: mem.Allocator,
-        rec_type: RecordType,
-        rec_ver: ProtocolVersion,
-        payload: []const u8,
+        record: []const u8,
     ) ![]const u8 {
         var plaintext: []const u8 = undefined;
+        const rec_type = @intToEnum(RecordType, record[0]);
+        var payload = record[record_header_len..];
+
         // In TLS 1.3, change_cipher_spec messages are to be ignored without being
         // decrypted. See RFC 8446, Appendix D.4.
         if (self.ver) |con_ver| {
             if (con_ver == .v1_3 and rec_type == .change_cipher_spec) {
-                return payload;
+                return try allocator.dupe(u8, payload);
             }
         }
 
@@ -505,24 +538,37 @@ const HalfConn = struct {
             else
                 payload[0..explicit_nonce_len];
             const ciphertext_and_tag = payload[explicit_nonce_len..];
+            std.log.debug(
+                "HalfConn.decrypt nonce={}, ciphertext_and_tag={}",
+                .{
+                    fmtx.fmtSliceHexEscapeLower(nonce),
+                    fmtx.fmtSliceHexEscapeLower(ciphertext_and_tag),
+                },
+            );
             var additional_data: []const u8 = undefined;
             if (self.ver.? == .v1_3) {
                 @panic("not implemented yet");
             } else {
-                mem.copy(u8, self.scratch_buf[0..], &self.seq);
-                self.scratch_buf[self.seq.len] = @enumToInt(rec_type);
-                mem.writeIntBig(u16, self.scratch_buf[self.seq.len + 1 .. self.seq.len + 3], @enumToInt(rec_ver));
+                mem.copy(u8, &self.scratch_buf, &self.seq);
+                mem.copy(u8, self.scratch_buf[self.seq.len..], record[0..3]);
                 const n = ciphertext_and_tag.len - cipher.overhead();
+                std.log.debug("ciphertext_and_tag.len={}, cipher.overhead={}", .{
+                    ciphertext_and_tag.len, cipher.overhead(),
+                });
                 mem.writeIntBig(u16, self.scratch_buf[self.seq.len + 3 .. self.seq.len + 5], @intCast(u16, n));
                 additional_data = self.scratch_buf[0 .. self.seq.len + 5];
             }
+            std.log.debug(
+                "HalfConn.decrypt additional_data={}",
+                .{fmtx.fmtSliceHexEscapeLower(additional_data)},
+            );
 
             var dest = std.ArrayListUnmanaged(u8){};
+            errdefer dest.deinit(allocator);
             try cipher.decrypt(allocator, &dest, nonce, ciphertext_and_tag, additional_data);
-            allocator.free(payload);
             plaintext = dest.items;
         } else {
-            plaintext = payload;
+            plaintext = try allocator.dupe(u8, payload);
         }
 
         self.incSeq();
@@ -625,6 +671,43 @@ pub fn atLeastReader(inner_reader: anytype, bytes_left: u64) AtLeastReader(@Type
 }
 
 const testing = std.testing;
+
+test "halfConn encrypt decrypt" {
+    const PrefixNonceAeadAes128Gcm = @import("cipher_suites.zig").PrefixNonceAeadAes128Gcm;
+    const nonce_prefix_length = @import("cipher_suites.zig").nonce_prefix_length;
+
+    testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+
+    var out_buf = try std.ArrayListUnmanaged(u8).initCapacity(allocator, record_header_len);
+    defer out_buf.deinit(allocator);
+
+    const key = [_]u8{'k'} ** PrefixNonceAeadAes128Gcm.key_length;
+    const nonce_prefix = [_]u8{'p'} ** nonce_prefix_length;
+    var cipher = Aead.initPrefixNonceAeadAes128Gcm(&key, &nonce_prefix);
+    var hc = HalfConn{ .ver = .v1_2, .cipher = cipher };
+
+    const plaintext = "exampleplaintext";
+
+    const rec_type: RecordType = .application_data;
+    const rec_ver: ProtocolVersion = .v1_2;
+    var writer = out_buf.writer(allocator);
+    try writer.writeByte(@enumToInt(rec_type));
+    try writer.writeIntBig(u16, @enumToInt(rec_ver));
+    try writer.writeIntBig(u16, @intCast(u16, plaintext.len));
+
+    try hc.encrypt(allocator, &out_buf, plaintext);
+    std.log.debug(
+        "out_buf={}, len={}",
+        .{ fmtx.fmtSliceHexEscapeLower(out_buf.items), out_buf.items.len },
+    );
+
+    mem.set(u8, &hc.seq, 0);
+    const decrypted = try hc.decrypt(allocator, out_buf.items);
+    defer allocator.free(decrypted);
+    std.log.debug("decrypted={s}", .{decrypted});
+}
 
 test "atLeastReader" {
     {
