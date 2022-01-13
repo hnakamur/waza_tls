@@ -47,6 +47,14 @@ const Server = struct {
 const ServerConn = struct {
     address: net.Address,
     conn: Conn,
+
+    pub fn deinit(self: *ServerConn, allocator: mem.Allocator) void {
+        self.conn.deinit(allocator);
+    }
+
+    pub fn close(self: *ServerConn) !void {
+        try self.conn.close();
+    }
 };
 
 const Client = struct {
@@ -63,8 +71,8 @@ const Client = struct {
         self.conn.deinit(allocator);
     }
 
-    pub fn close(self: *Client) void {
-        self.conn.stream.close();
+    pub fn close(self: *Client) !void {
+        try self.conn.close();
     }
 };
 
@@ -117,7 +125,8 @@ test "Conn ClientServer" {
         fn testServer(server: *Server) !void {
             var client = try server.accept();
             const allocator = server.allocator;
-            defer client.conn.deinit(allocator);
+            defer client.deinit(allocator);
+            defer client.close() catch {};
             std.log.debug(
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
@@ -132,7 +141,7 @@ test "Conn ClientServer" {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var client = try Client.init(allocator, addr);
             defer client.deinit(allocator);
-            defer client.close();
+            defer client.close() catch {};
 
             std.log.debug(
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",

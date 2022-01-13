@@ -22,6 +22,9 @@ const Handshake = @import("handshake.zig").Handshake;
 const Role = @import("handshake.zig").Role;
 const Aead = @import("cipher_suites.zig").Aead;
 const fmtx = @import("../fmtx.zig");
+const AlertError = @import("alert.zig").AlertError;
+const AlertLevel = @import("alert.zig").AlertLevel;
+const AlertDescription = @import("alert.zig").AlertDescription;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext_tls13 = 16640;
@@ -109,6 +112,8 @@ pub const Conn = struct {
     config: Config,
     handshake_fn: fn (self: *Conn, allocator: mem.Allocator) anyerror!void,
     handshaker: ?Handshake = null,
+    close_notify_sent: bool = false,
+    close_notify_err: ?anyerror = null,
 
     // clientFinished and serverFinished contain the Finished message sent
     // by the client or server in the most recent handshake. This is
@@ -169,6 +174,47 @@ pub const Conn = struct {
             try self.readRecord(self.allocator);
         }
         return n;
+    }
+
+    pub fn close(self: *Conn) !void {
+        var alert_err: ?anyerror = null;
+        if (self.handshake_complete) {
+            if (self.closeNotify()) |_| {} else |err| alert_err = err;
+        }
+        self.stream.close();
+        if (alert_err) |err| {
+            return err;
+        }
+    }
+
+    fn closeNotify(self: *Conn) !void {
+        if (!self.close_notify_sent) {
+            // TODO: set write timeout
+            self.sendAlert(error.CloseNotify) catch |err| {
+                self.close_notify_err = err;
+            };
+            self.close_notify_sent = true;
+        }
+        if (self.close_notify_err) |err| {
+            return err;
+        }
+    }
+
+    fn sendAlert(self: *Conn, err: AlertError) !void {
+        const level = AlertLevel.fromAlertError(err);
+        const desc = AlertDescription.fromAlertError(err);
+        std.log.debug("Conn.sendAlert, level={}, desc={}", .{ level, desc });
+        const data = [_]u8{ @enumToInt(level), @enumToInt(desc) };
+        self.writeRecord(self.allocator, .alert, &data) catch |w_err| {
+            std.log.err("Conn.sendAlert, w_err={s}", .{@errorName(w_err)});
+            if (err == error.CloseNotify) {
+                std.log.err("Conn.sendAlert, return w_err={s}", .{@errorName(w_err)});
+                return w_err;
+            }
+        };
+        // TODO: save error
+        std.log.debug("Conn.sendAlert, return err={s}", .{@errorName(err)});
+        return err;
     }
 
     pub fn handshake(self: *Conn, allocator: mem.Allocator) !void {

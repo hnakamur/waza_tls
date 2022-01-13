@@ -27,6 +27,7 @@ const ticket = @import("tls/ticket.zig");
 const x509 = @import("tls/x509.zig");
 const conn = @import("tls/conn.zig");
 const socket = @import("tls/socket.zig");
+const alert = @import("tls/alert.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
