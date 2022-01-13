@@ -19,6 +19,7 @@ const RecordType = @import("record.zig").RecordType;
 const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
 const ClientHandshake = @import("handshake_client.zig").ClientHandshake;
 const Handshake = @import("handshake.zig").Handshake;
+const Role = @import("handshake.zig").Role;
 const Aead = @import("cipher_suites.zig").Aead;
 const fmtx = @import("../fmtx.zig");
 
@@ -91,7 +92,8 @@ pub const Conn = struct {
     retry_count: usize = 0,
     handshake_bytes: []const u8 = &[_]u8{},
     config: Config,
-    handshake: ?Handshake = null,
+    handshake_fn: fn (self: *Conn, allocator: mem.Allocator) anyerror!void,
+    handshaker: ?Handshake = null,
 
     // clientFinished and serverFinished contain the Finished message sent
     // by the client or server in the most recent handshake. This is
@@ -100,20 +102,37 @@ pub const Conn = struct {
     client_finished: [finished_verify_length]u8 = undefined,
     server_finished: [finished_verify_length]u8 = undefined,
 
-    pub fn init(stream: net.Stream, in: HalfConn, out: HalfConn, config: Config) Conn {
+    pub fn init(
+        role: Role,
+        stream: net.Stream,
+        in: HalfConn,
+        out: HalfConn,
+        config: Config,
+    ) Conn {
+        const handshake_fn = switch (role) {
+            .client => clientHandshake,
+            .server => serverHandshake,
+        };
         return .{
             .stream = stream,
             .in = in,
             .out = out,
             .raw_input = io.bufferedReader(stream.reader()),
             .config = config,
+            .handshake_fn = handshake_fn,
         };
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
         self.send_buf.deinit(allocator);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
-        if (self.handshake) |*hs| hs.deinit(allocator);
+        if (self.handshaker) |*hs| hs.deinit(allocator);
+    }
+
+    pub fn handshake(self: *Conn, allocator: mem.Allocator) !void {
+        if (!self.handshake_complete) {
+            try self.handshake_fn(self, allocator);
+        }
     }
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
@@ -133,18 +152,18 @@ pub const Conn = struct {
 
         try self.pickTlsVersion(&server_hello);
 
-        self.handshake = Handshake{
+        self.handshaker = Handshake{
             .client = ClientHandshake.init(self.version.?, self, client_hello, server_hello),
         };
-        try self.handshake.?.client.handshake(allocator);
+        try self.handshaker.?.client.handshake(allocator);
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
-        self.handshake = Handshake{
+        self.handshaker = Handshake{
             .server = ServerHandshake.init(self.version.?, self, client_hello),
         };
-        try self.handshake.?.server.handshake(allocator);
+        try self.handshaker.?.server.handshake(allocator);
     }
 
     fn makeClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {

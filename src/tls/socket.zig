@@ -30,7 +30,7 @@ const Server = struct {
         var conn = try self.server.accept();
         var sc = ServerConn{
             .address = conn.address,
-            .conn = Conn.init(conn.stream, .{}, .{}, .{ .max_version = .v1_2 }),
+            .conn = Conn.init(.server, conn.stream, .{}, .{}, .{ .max_version = .v1_2 }),
         };
         try self.connections.append(self.allocator, sc);
         return sc;
@@ -47,7 +47,7 @@ const Client = struct {
 
     pub fn init(addr: net.Address) !Client {
         var stream = try net.tcpConnectToAddress(addr);
-        return Client{ .conn = Conn.init(stream, .{}, .{}, .{ .max_version = .v1_2 }) };
+        return Client{ .conn = Conn.init(.client, stream, .{}, .{}, .{ .max_version = .v1_2 }) };
     }
 
     pub fn deinit(self: *Client, allocator: mem.Allocator) void {
@@ -109,7 +109,7 @@ test "Conn ClientServer" {
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
-            try client.conn.serverHandshake(allocator);
+            try client.conn.handshake(allocator);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
         }
 
@@ -122,7 +122,7 @@ test "Conn ClientServer" {
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
-            try client.conn.clientHandshake(allocator);
+            try client.conn.handshake(allocator);
         }
 
         fn runTest() !void {
