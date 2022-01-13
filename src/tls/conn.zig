@@ -28,6 +28,18 @@ const max_ciphertext_tls13 = 16640;
 const max_ciphertext = 18432;
 const record_header_len = 5;
 
+// tcp_mss_estimate is a conservative estimate of the TCP maximum segment
+// size (MSS). A constant is used, rather than querying the kernel for
+// the actual MSS, to avoid complexity. The value here is the IPv6
+// minimum MTU (1280 bytes) minus the overhead of an IPv6 header (40
+// bytes) and a TCP header with timestamps (32 bytes).
+const tcp_mss_estimate = 1208;
+
+// record_size_boost_threshold is the number of bytes of application data
+// sent after which the TLS record size will be increased to the
+// maximum.
+const record_size_boost_threshold = 128 * 1024;
+
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     const Config = struct {
@@ -79,16 +91,19 @@ pub const Conn = struct {
         }
     };
 
+    const FifoType = fifo.LinearFifo(u8, .{ .Static = max_plain_text });
+    allocator: mem.Allocator,
     stream: net.Stream,
     in: HalfConn,
     out: HalfConn,
     version: ?ProtocolVersion = null,
     buffering: bool = false,
     send_buf: std.ArrayListUnmanaged(u8) = .{},
+    packets_sent: usize = 0,
     bytes_sent: usize = 0,
     handshake_complete: bool = false,
     raw_input: io.BufferedReader(4096, net.Stream.Reader),
-    input: std.ArrayListUnmanaged(u8) = .{},
+    input: FifoType = FifoType.init(),
     retry_count: usize = 0,
     handshake_bytes: []const u8 = &[_]u8{},
     config: Config,
@@ -103,6 +118,7 @@ pub const Conn = struct {
     server_finished: [finished_verify_length]u8 = undefined,
 
     pub fn init(
+        allocator: mem.Allocator,
         role: Role,
         stream: net.Stream,
         in: HalfConn,
@@ -114,6 +130,7 @@ pub const Conn = struct {
             .server => serverHandshake,
         };
         return .{
+            .allocator = allocator,
             .stream = stream,
             .in = in,
             .out = out,
@@ -127,6 +144,31 @@ pub const Conn = struct {
         self.send_buf.deinit(allocator);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
         if (self.handshaker) |*hs| hs.deinit(allocator);
+    }
+
+    pub fn write(self: *Conn, bytes: []const u8) !usize {
+        try self.handshake(self.allocator);
+        try self.writeRecord(self.allocator, .application_data, bytes);
+        return 0; // TODO: return number of bytes written
+    }
+
+    pub fn read(self: *Conn, buffer: []u8) !usize {
+        try self.handshake(self.allocator);
+        while (self.input.readableLength() == 0) {
+            try self.readRecord(self.allocator);
+            if (self.handshake_bytes.len > 0) {
+                @panic("not implemented yet");
+            }
+        }
+        const n = self.input.read(buffer);
+
+        if (n > 0 and self.input.readableLength() == 0 and
+            self.raw_input.fifo.readableLength() > 0 and
+            @intToEnum(RecordType, self.raw_input.fifo.readableSlice(0)[0]) == .alert)
+        {
+            try self.readRecord(self.allocator);
+        }
+        return n;
     }
 
     pub fn handshake(self: *Conn, allocator: mem.Allocator) !void {
@@ -257,7 +299,7 @@ pub const Conn = struct {
             try writer.writeIntBig(u16, @intCast(u16, m));
 
             try self.out.encrypt(allocator, &out_buf, rest[0..m]);
-            try self.write(allocator, out_buf.items);
+            try self.doWrite(allocator, out_buf.items);
             n += m;
             rest = rest[m..];
         }
@@ -279,11 +321,33 @@ pub const Conn = struct {
         if (rec_type != .application_data) {
             return max_plain_text;
         }
-        _ = self;
-        @panic("not implemented yet");
+
+        if (self.bytes_sent >= record_size_boost_threshold) {
+            return max_plain_text;
+        }
+
+        // Subtract TLS overheads to get the maximum payload size.
+        var payload_bytes = tcp_mss_estimate - record_header_len - self.out.explicitNonceLen();
+        if (self.out.cipher) |cipher| {
+            payload_bytes -= cipher.overhead();
+        }
+        if (self.version) |ver| {
+            if (ver == .v1_3) {
+                payload_bytes -= 1; // encrypted ContentType
+            }
+        }
+
+        // Allow packet growth in arithmetic progression up to max.
+        const pkt = self.packets_sent;
+        self.packets_sent += 1;
+        if (pkt > 1000) {
+            return max_plain_text; // avoid overflow in multiply below
+        }
+
+        return math.min(payload_bytes * (pkt + 1), max_plain_text);
     }
 
-    fn write(self: *Conn, allocator: mem.Allocator, data: []const u8) !void {
+    fn doWrite(self: *Conn, allocator: mem.Allocator, data: []const u8) !void {
         if (self.buffering) {
             try self.send_buf.appendSlice(allocator, data);
             return;
@@ -357,7 +421,7 @@ pub const Conn = struct {
         allocator: mem.Allocator,
         expect_change_cipher_spec: bool,
     ) !void {
-        if (self.input.items.len != 0) {
+        if (self.input.readableLength() != 0) {
             return error.InternalError;
         }
         var record = try std.ArrayListUnmanaged(u8).initCapacity(allocator, record_header_len);
@@ -467,6 +531,10 @@ pub const Conn = struct {
                     .{ @ptrToInt(self), @ptrToInt(&self.in) },
                 );
                 try self.in.changeCipherSpec();
+            },
+            .application_data => {
+                try self.input.write(data);
+                allocator.free(data);
             },
             else => {
                 // TODO: send alert
