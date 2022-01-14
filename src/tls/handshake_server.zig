@@ -19,7 +19,6 @@ const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
 const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
-const FakeConnection = @import("fake_connection.zig").FakeConnection;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const ConnectionKeys = @import("prf.zig").ConnectionKeys;
@@ -41,7 +40,6 @@ pub const ServerHandshakeState = struct {
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
     cert_chain: ?CertificateChain = null,
-    fake_con: ?*FakeConnection = null,
 
     pub fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
         self.client_hello.deinit(allocator);
@@ -49,146 +47,6 @@ pub const ServerHandshakeState = struct {
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.cert_chain) |*cc| cc.deinit(allocator);
         if (self.master_secret) |s| allocator.free(s);
-    }
-
-    pub fn processClientHello(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
-        const random = try generateRandom(allocator);
-        // TODO: stop hardcoding field values.
-        var hello = ServerHelloMsg{
-            .vers = .v1_2,
-            .random = random,
-            .session_id = &[_]u8{0} ** 32,
-            .cipher_suite = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-            .compression_method = .none,
-            .ocsp_stapling = false,
-            .supported_version = .v1_2,
-        };
-        if (self.ecdhe_ok) {
-            // Although omitting the ec_point_formats extension is permitted, some
-            // old OpenSSL version will refuse to handshake if not present.
-            //
-            // Per RFC 4492, section 5.1.2, implementations MUST support the
-            // uncompressed point format. See golang.org/issue/31943.
-            hello.supported_points = try allocator.dupe(
-                EcPointFormat,
-                &[_]EcPointFormat{.uncompressed},
-            );
-        }
-
-        self.hello = hello;
-
-        const certificate_chain = try allocator.dupe(
-            []const u8,
-            &[_][]const u8{testEd25519Certificate},
-        );
-        self.cert_chain = CertificateChain{
-            .certificate_chain = certificate_chain,
-            .private_key = .{ .raw = testEd25519PrivateKey },
-        };
-    }
-
-    pub fn pickCipherSuite(self: *ServerHandshakeState) !void {
-        // TODO: stop hardcoding.
-        self.suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
-    }
-
-    pub fn doFullHandshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
-        const conn_protocol_vers = .v1_2;
-        var finished_hash = FinishedHash.new(allocator, conn_protocol_vers, self.suite.?);
-
-        if (false) { // TODO: stop hardcoding
-            // No need to keep a full record of the handshake if client
-            // certificates won't be used.
-            finished_hash.discardHandshakeBuffer();
-        }
-
-        try finished_hash.write(try self.client_hello.marshal(allocator));
-        try finished_hash.write(try self.hello.?.marshal(allocator));
-        // TODO: implement write record self.hello.marshal()
-
-        {
-            const certificates = try allocator.dupe(
-                []const u8,
-                &[_][]const u8{testEd25519Certificate},
-            );
-            var cert_msg = CertificateMsg{
-                .certificates = certificates,
-            };
-            defer if (self.fake_con) |con| {
-                con.cert_msg = cert_msg;
-            } else {
-                cert_msg.deinit(allocator);
-            };
-
-            try finished_hash.write(try cert_msg.marshal(allocator));
-            // TODO: implement write record cert_msg.marshal()
-        }
-
-        if (self.hello.?.ocsp_stapling) {
-            // TODO: implement
-        }
-
-        var key_agreement = self.suite.?.ka(conn_protocol_vers);
-        var skx = try key_agreement.generateServerKeyExchange(
-            allocator,
-            &self.cert_chain.?,
-            &self.client_hello,
-            &self.hello.?,
-        );
-        defer if (self.fake_con) |con| {
-            con.skx_msg = skx;
-        } else {
-            skx.deinit(allocator);
-        };
-
-        try finished_hash.write(try skx.marshal(allocator));
-        // TODO: implement write record skx.marshal()
-
-        var hello_done = ServerHelloDoneMsg{};
-        defer if (self.fake_con) |con| {
-            con.hello_done_msg = hello_done;
-        } else {
-            hello_done.deinit(allocator);
-        };
-        try finished_hash.write(try hello_done.marshal(allocator));
-        // TODO: implement write record hello_done.marshal()
-
-        // TODO: implement
-        self.finished_hash = finished_hash;
-
-        if (self.fake_con) |con| {
-            con.server_key_agreement = key_agreement;
-        } else {
-            try self.doFullHandshake2(allocator, &key_agreement, conn_protocol_vers);
-        }
-    }
-
-    pub fn doFullHandshake2(
-        self: *ServerHandshakeState,
-        allocator: mem.Allocator,
-        key_agreement: *KeyAgreement,
-        conn_protocol_vers: ProtocolVersion,
-    ) !void {
-        defer key_agreement.deinit(allocator);
-
-        const ckx = if (self.fake_con) |con| &con.ckx_msg.? else @panic("not implemented yet");
-        const pre_master_secret = try key_agreement.processClientKeyExchange(
-            allocator,
-            &self.cert_chain.?,
-            ckx,
-            conn_protocol_vers,
-        );
-        defer allocator.free(pre_master_secret);
-        try self.finished_hash.?.write(try ckx.marshal(allocator));
-
-        self.master_secret = try masterFromPreMasterSecret(
-            allocator,
-            conn_protocol_vers,
-            self.suite.?,
-            pre_master_secret,
-            self.client_hello.random,
-            self.hello.?.random,
-        );
     }
 };
 
