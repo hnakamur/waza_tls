@@ -27,8 +27,10 @@ const AlertLevel = @import("alert.zig").AlertLevel;
 const AlertDescription = @import("alert.zig").AlertDescription;
 
 const max_plain_text = 16384; // maximum plaintext payload length
-const max_ciphertext_tls13 = 16640;
 const max_ciphertext = 18432;
+const max_ciphertext_tls13 = 16640;
+const max_useless_records = 16; // maximum number of consecutive non-advancing records
+
 const record_header_len = 5;
 
 // tcp_mss_estimate is a conservative estimate of the TCP maximum segment
@@ -45,7 +47,7 @@ const record_size_boost_threshold = 128 * 1024;
 
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
-    const Config = struct {
+    pub const Config = struct {
         min_version: ProtocolVersion = .v1_2,
         max_version: ProtocolVersion = .v1_3,
 
@@ -152,6 +154,9 @@ pub const Conn = struct {
     }
 
     pub fn write(self: *Conn, bytes: []const u8) !usize {
+        if (self.out.err) |err| {
+            return err;
+        }
         try self.handshake(self.allocator);
         try self.writeRecord(self.allocator, .application_data, bytes);
         return 0; // TODO: return number of bytes written
@@ -159,14 +164,28 @@ pub const Conn = struct {
 
     pub fn read(self: *Conn, buffer: []u8) !usize {
         try self.handshake(self.allocator);
+        if (buffer.len == 0) {
+            // Put this after Handshake, in case people were calling
+            // Read(nil) for the side effect of the Handshake.
+            return 0;
+        }
+
         while (self.input.readableLength() == 0) {
             try self.readRecord(self.allocator);
             if (self.handshake_bytes.len > 0) {
                 @panic("not implemented yet");
             }
         }
+
         const n = self.input.read(buffer);
 
+        // If a close-notify alert is waiting, read it so that we can return (n,
+        // EOF) instead of (n, nil), to signal to the HTTP response reading
+        // goroutine that the connection is now closed. This eliminates a race
+        // where the HTTP response reading goroutine would otherwise not observe
+        // the EOF until its next read, by which time a client goroutine might
+        // have already tried to reuse the HTTP connection for a new request.
+        // See https://golang.org/cl/76400046 and https://golang.org/issue/3514
         if (n > 0 and self.input.readableLength() == 0 and
             self.raw_input.fifo.readableLength() > 0 and
             @intToEnum(RecordType, self.raw_input.fifo.readableSlice(0)[0]) == .alert)
@@ -190,7 +209,7 @@ pub const Conn = struct {
     fn closeNotify(self: *Conn) !void {
         if (!self.close_notify_sent) {
             // TODO: set write timeout
-            self.sendAlert(error.CloseNotify) catch |err| {
+            self.sendAlert(.close_notify) catch |err| {
                 self.close_notify_err = err;
             };
             self.close_notify_sent = true;
@@ -200,21 +219,20 @@ pub const Conn = struct {
         }
     }
 
-    fn sendAlert(self: *Conn, err: AlertError) !void {
-        const level = AlertLevel.fromAlertError(err);
-        const desc = AlertDescription.fromAlertError(err);
+    fn sendAlert(self: *Conn, desc: AlertDescription) !void {
+        const level = desc.level();
         std.log.debug("Conn.sendAlert, level={}, desc={}", .{ level, desc });
         const data = [_]u8{ @enumToInt(level), @enumToInt(desc) };
         self.writeRecord(self.allocator, .alert, &data) catch |w_err| {
             std.log.err("Conn.sendAlert, w_err={s}", .{@errorName(w_err)});
-            if (err == error.CloseNotify) {
+            if (desc == .close_notify) {
                 std.log.err("Conn.sendAlert, return w_err={s}", .{@errorName(w_err)});
                 return w_err;
             }
         };
-        // TODO: save error
+        const err = desc.toError();
         std.log.debug("Conn.sendAlert, return err={s}", .{@errorName(err)});
-        return err;
+        return self.out.setError(err);
     }
 
     pub fn handshake(self: *Conn, allocator: mem.Allocator) !void {
@@ -227,6 +245,7 @@ pub const Conn = struct {
         var client_hello = try self.makeClientHello(allocator);
 
         const client_hello_bytes = try client_hello.marshal(allocator);
+        errdefer client_hello.deinit(allocator);
         try self.writeRecord(allocator, .handshake, client_hello_bytes);
 
         var hs_msg = try self.readHandshake(allocator);
@@ -306,7 +325,7 @@ pub const Conn = struct {
 
         const ver = self.config.mutualVersion(&[_]ProtocolVersion{peer_ver});
         if (ver) |_| {} else {
-            // TODO: send alert
+            self.sendAlert(.protocol_version) catch {};
             return error.UnsupportedVersion;
         }
         self.version = ver;
@@ -416,6 +435,7 @@ pub const Conn = struct {
 
     fn readClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
         var hs_msg = try self.readHandshake(allocator);
+        errdefer hs_msg.deinit(allocator);
         const client_hello = switch (hs_msg) {
             .ClientHello => |msg| msg,
             else => {
@@ -437,7 +457,7 @@ pub const Conn = struct {
             self.in.ver = ver;
             self.out.ver = ver;
         } else {
-            // TODO: send alert
+            self.sendAlert(.protocol_version) catch {};
             return error.ProtocolVersionMismatch;
         }
 
@@ -449,6 +469,7 @@ pub const Conn = struct {
             try self.readRecord(allocator);
         }
         var msg = try HandshakeMsg.unmarshal(allocator, self.handshake_bytes);
+        errdefer msg.deinit(allocator);
         allocator.free(self.handshake_bytes);
         self.handshake_bytes = &[_]u8{};
         return msg;
@@ -466,7 +487,10 @@ pub const Conn = struct {
         self: *Conn,
         allocator: mem.Allocator,
         expect_change_cipher_spec: bool,
-    ) !void {
+    ) anyerror!void {
+        if (self.in.err) |err| {
+            return err;
+        }
         if (self.input.readableLength() != 0) {
             return error.InternalError;
         }
@@ -544,8 +568,36 @@ pub const Conn = struct {
         }
 
         switch (rec_type) {
-            .handshake => {
-                self.handshake_bytes = data;
+            .alert => {
+                if (data.len != 2) {
+                    self.sendAlert(.unexpected_message) catch |err| {
+                        return self.in.setError(err);
+                    };
+                }
+                const desc = @intToEnum(AlertDescription, data[1]);
+                if (desc != .close_notify) {
+                    return self.in.setError(error.Eof);
+                }
+                if (self.version) |ver| {
+                    if (ver == .v1_3) {
+                        return self.in.setError(error.RemoteError);
+                    }
+                }
+                switch (@intToEnum(AlertLevel, data[0])) {
+                    .warning => {
+                        // Drop the record on the floor and retry.
+                        return self.retryReadRecord(expect_change_cipher_spec);
+                    },
+                    .fatal => {
+                        std.log.err("tls.Conn remote fatal error {}", .{desc});
+                        return self.in.setError(error.RemoteError);
+                    },
+                    else => {
+                        self.sendAlert(.unexpected_message) catch |err| {
+                            return self.in.setError(err);
+                        };
+                    },
+                }
             },
             .change_cipher_spec => {
                 defer allocator.free(data);
@@ -582,11 +634,27 @@ pub const Conn = struct {
                 try self.input.write(data);
                 allocator.free(data);
             },
-            else => {
-                // TODO: send alert
-                return error.UnexpectedMessage;
+            .handshake => {
+                if (data.len == 0 or expect_change_cipher_spec) {
+                    if (self.sendAlert(.unexpected_message)) |_| {} else |err| {
+                        return self.in.setError(err);
+                    }
+                }
+                self.handshake_bytes = data;
             },
         }
+    }
+
+    fn retryReadRecord(
+        self: *Conn,
+        expect_change_cipher_spec: bool,
+    ) anyerror!void {
+        self.retry_count += 1;
+        if (self.retry_count > max_useless_records) {
+            self.sendAlert(.unexpected_message) catch {};
+            return self.in.setError(error.TooManyIgnoredRecords);
+        }
+        try self.readRecordOrChangeCipherSpec(self.allocator, expect_change_cipher_spec);
     }
 };
 
@@ -598,6 +666,7 @@ const HalfConn = struct {
     scratch_buf: [13]u8 = [_]u8{0} ** 13, // to avoid allocs; interface method args escape
 
     next_cipher: ?Aead = null,
+    err: ?anyerror = null,
 
     fn encrypt(
         self: *HalfConn,
@@ -786,6 +855,11 @@ const HalfConn = struct {
         // Instead, must renegotiate before it does.
         // Not likely enough to bother.
         @panic("TLS: sequence number wraparound");
+    }
+
+    fn setError(self: *HalfConn, err: anyerror) !void {
+        self.err = err;
+        return err;
     }
 };
 

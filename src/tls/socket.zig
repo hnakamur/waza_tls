@@ -7,11 +7,13 @@ const Server = struct {
     server: net.StreamServer,
     connections: std.ArrayListUnmanaged(ServerConn),
     allocator: mem.Allocator,
+    conn_config: Conn.Config,
 
     pub fn init(
         allocator: mem.Allocator,
         address: net.Address,
         options: net.StreamServer.Options,
+        conn_config: Conn.Config,
     ) !Server {
         var server = net.StreamServer.init(options);
         try server.listen(address);
@@ -19,6 +21,7 @@ const Server = struct {
             .server = server,
             .connections = try std.ArrayListUnmanaged(ServerConn).initCapacity(allocator, 1),
             .allocator = allocator,
+            .conn_config = conn_config,
         };
     }
 
@@ -36,7 +39,7 @@ const Server = struct {
                 conn.stream,
                 .{},
                 .{},
-                .{ .max_version = .v1_2 },
+                self.conn_config,
             ),
         };
         try self.connections.append(self.allocator, sc);
@@ -60,10 +63,10 @@ const ServerConn = struct {
 const Client = struct {
     conn: Conn,
 
-    pub fn init(allocator: mem.Allocator, addr: net.Address) !Client {
+    pub fn init(allocator: mem.Allocator, addr: net.Address, conn_config: Conn.Config) !Client {
         var stream = try net.tcpConnectToAddress(addr);
         return Client{
-            .conn = Conn.init(allocator, .client, stream, .{}, .{}, .{ .max_version = .v1_2 }),
+            .conn = Conn.init(allocator, .client, stream, .{}, .{}, conn_config),
         };
     }
 
@@ -89,8 +92,8 @@ test "socket ClientServer" {
         }
 
         fn testClient(allocator: mem.Allocator, addr: net.Address) !void {
-            var client = try Client.init(allocator, addr);
-            defer client.close();
+            var client = try Client.init(allocator, addr, .{ .max_version = .v1_2 });
+            defer client.close() catch {};
 
             var buf: [100]u8 = undefined;
             const len = try client.conn.raw_input.read(&buf);
@@ -102,7 +105,12 @@ test "socket ClientServer" {
             const allocator = testing.allocator;
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var server = try Server.init(allocator, listen_addr, .{});
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{ .max_version = .v1_2 },
+            );
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -139,7 +147,7 @@ test "Conn ClientServer" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr);
+            var client = try Client.init(allocator, addr, .{ .max_version = .v1_2 });
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -155,7 +163,64 @@ test "Conn ClientServer" {
             const allocator = testing.allocator;
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var server = try Server.init(allocator, listen_addr, .{});
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{ .max_version = .v1_2 },
+            );
+            defer server.deinit();
+
+            const t = try std.Thread.spawn(
+                .{},
+                testClient,
+                .{ server.server.listen_address, allocator },
+            );
+            defer t.join();
+
+            try testServer(&server);
+        }
+    }.runTest();
+}
+
+test "Conn ClientServer pickTlsVersion error" {
+    testing.log_level = .debug;
+    try struct {
+        fn testServer(server: *Server) !void {
+            var client = try server.accept();
+            const allocator = server.allocator;
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            var buffer = [_]u8{0} ** 1024;
+            try testing.expectError(error.ProtocolVersionMismatch, client.conn.read(&buffer));
+        }
+
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{ .max_version = .v1_2 });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            try testing.expectError(error.Eof, client.conn.write("hello"));
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{ .min_version = .v1_3 },
+            );
             defer server.deinit();
 
             const t = try std.Thread.spawn(

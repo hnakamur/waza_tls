@@ -3,13 +3,7 @@ const std = @import("std");
 pub const AlertLevel = enum(u8) {
     warning = 1,
     fatal = 2,
-
-    pub fn fromAlertError(err: AlertError) AlertLevel {
-        return switch (err) {
-            error.NoRenegotiation, error.CloseNotify => .warning,
-            else => .fatal,
-        };
-    }
+    _,
 };
 
 pub const AlertDescription = enum(u8) {
@@ -46,42 +40,51 @@ pub const AlertDescription = enum(u8) {
     unknown_psk_identity = 115,
     certificate_required = 116,
     no_application_protocol = 120,
+    _,
 
-    pub fn fromAlertError(err: AlertError) AlertDescription {
-        return switch (err) {
-            error.CloseNotify => .close_notify,
-            error.UnexpectedMessage => .unexpected_message,
-            error.BadRecordMAC => .bad_record_mac,
-            error.DecryptionFailed => .decryption_failed,
-            error.RecordOverflow => .record_overflow,
-            error.DecompressionFailure => .decompression_failure,
-            error.HandshakeFailure => .handshake_failure,
-            error.BadCertificate => .bad_certificate,
-            error.UnsupportedCertificate => .unsupported_certificate,
-            error.CertificateRevoked => .certificate_revoked,
-            error.CertificateExpired => .certificate_expired,
-            error.CertificateUnknown => .certificate_unknown,
-            error.IllegalParameter => .illegal_parameter,
-            error.UnknownCA => .unknown_ca,
-            error.AccessDenied => .access_denied,
-            error.DecodeError => .decode_error,
-            error.DecryptError => .decrypt_error,
-            error.ExportRestriction => .export_restriction,
-            error.ProtocolVersion => .protocol_version,
-            error.InsufficientSecurity => .insufficient_security,
-            error.InternalError => .internal_error,
-            error.InappropriateFallback => .inappropriate_fallback,
-            error.UserCanceled => .user_canceled,
-            error.NoRenegotiation => .no_renegotiation,
-            error.MissingExtension => .missing_extension,
-            error.UnsupportedExtension => .unsupported_extension,
-            error.CertificateUnobtainable => .certificate_unobtainable,
-            error.UnrecognizedName => .unrecognized_name,
-            error.BadCertificateStatusResponse => .bad_certificate_status_response,
-            error.BadCertificateHashValue => .bad_certificate_hash_value,
-            error.UnknownPSKIdentity => .unknown_psk_identity,
-            error.CertificateRequired => .certificate_required,
-            error.NoApplicationProtocol => .no_application_protocol,
+    pub fn level(self: AlertDescription) AlertLevel {
+        return switch (self) {
+            .no_renegotiation, .close_notify => .warning,
+            else => .fatal,
+        };
+    }
+
+    pub fn toError(self: AlertDescription) AlertError {
+        return switch (self) {
+            .close_notify => error.CloseNotify,
+            .unexpected_message => error.UnexpectedMessage,
+            .bad_record_mac => error.BadRecordMAC,
+            .decryption_failed => error.DecryptionFailed,
+            .record_overflow => error.RecordOverflow,
+            .decompression_failure => error.DecompressionFailure,
+            .handshake_failure => error.HandshakeFailure,
+            .bad_certificate => error.BadCertificate,
+            .unsupported_certificate => error.UnsupportedCertificate,
+            .certificate_revoked => error.CertificateRevoked,
+            .certificate_expired => error.CertificateExpired,
+            .certificate_unknown => error.CertificateUnknown,
+            .illegal_parameter => error.IllegalParameter,
+            .unknown_ca => error.UnknownCA,
+            .access_denied => error.AccessDenied,
+            .decode_error => error.DecodeError,
+            .decrypt_error => error.DecryptError,
+            .export_restriction => error.ExportRestriction,
+            .protocol_version => error.ProtocolVersion,
+            .insufficient_security => error.InsufficientSecurity,
+            .internal_error => error.InternalError,
+            .inappropriate_fallback => error.InappropriateFallback,
+            .user_canceled => error.UserCanceled,
+            .no_renegotiation => error.NoRenegotiation,
+            .missing_extension => error.MissingExtension,
+            .unsupported_extension => error.UnsupportedExtension,
+            .certificate_unobtainable => error.CertificateUnobtainable,
+            .unrecognized_name => error.UnrecognizedName,
+            .bad_certificate_status_response => error.BadCertificateStatusResponse,
+            .bad_certificate_hash_value => error.BadCertificateHashValue,
+            .unknown_psk_identity => error.UnknownPSKIdentity,
+            .certificate_required => error.CertificateRequired,
+            .no_application_protocol => error.NoApplicationProtocol,
+            else => @panic("invalid AlertDescription value"),
         };
     }
 };
@@ -124,86 +127,86 @@ pub const AlertError = error{
 
 const testing = std.testing;
 
-test "AlertLevel.fromAlertError" {
+test "AlertDescription.level" {
     const f = struct {
-        fn f(want: AlertLevel, err: AlertError) !void {
-            try testing.expectEqual(want, AlertLevel.fromAlertError(err));
+        fn f(want: AlertLevel, desc: AlertDescription) !void {
+            try testing.expectEqual(want, desc.level());
         }
     }.f;
 
-    try f(.warning, error.CloseNotify);
-    try f(.fatal, error.UnexpectedMessage);
-    try f(.fatal, error.BadRecordMAC);
-    try f(.fatal, error.DecryptionFailed);
-    try f(.fatal, error.RecordOverflow);
-    try f(.fatal, error.DecompressionFailure);
-    try f(.fatal, error.HandshakeFailure);
-    try f(.fatal, error.BadCertificate);
-    try f(.fatal, error.UnsupportedCertificate);
-    try f(.fatal, error.CertificateRevoked);
-    try f(.fatal, error.CertificateExpired);
-    try f(.fatal, error.CertificateUnknown);
-    try f(.fatal, error.IllegalParameter);
-    try f(.fatal, error.UnknownCA);
-    try f(.fatal, error.AccessDenied);
-    try f(.fatal, error.DecodeError);
-    try f(.fatal, error.DecryptError);
-    try f(.fatal, error.ExportRestriction);
-    try f(.fatal, error.ProtocolVersion);
-    try f(.fatal, error.InsufficientSecurity);
-    try f(.fatal, error.InternalError);
-    try f(.fatal, error.InappropriateFallback);
-    try f(.fatal, error.UserCanceled);
-    try f(.warning, error.NoRenegotiation);
-    try f(.fatal, error.MissingExtension);
-    try f(.fatal, error.UnsupportedExtension);
-    try f(.fatal, error.CertificateUnobtainable);
-    try f(.fatal, error.UnrecognizedName);
-    try f(.fatal, error.BadCertificateStatusResponse);
-    try f(.fatal, error.BadCertificateHashValue);
-    try f(.fatal, error.UnknownPSKIdentity);
-    try f(.fatal, error.CertificateRequired);
-    try f(.fatal, error.NoApplicationProtocol);
+    try f(.warning, .close_notify);
+    try f(.fatal, .unexpected_message);
+    try f(.fatal, .bad_record_mac);
+    try f(.fatal, .decryption_failed);
+    try f(.fatal, .record_overflow);
+    try f(.fatal, .decompression_failure);
+    try f(.fatal, .handshake_failure);
+    try f(.fatal, .bad_certificate);
+    try f(.fatal, .unsupported_certificate);
+    try f(.fatal, .certificate_revoked);
+    try f(.fatal, .certificate_expired);
+    try f(.fatal, .certificate_unknown);
+    try f(.fatal, .illegal_parameter);
+    try f(.fatal, .unknown_ca);
+    try f(.fatal, .access_denied);
+    try f(.fatal, .decode_error);
+    try f(.fatal, .decrypt_error);
+    try f(.fatal, .export_restriction);
+    try f(.fatal, .protocol_version);
+    try f(.fatal, .insufficient_security);
+    try f(.fatal, .internal_error);
+    try f(.fatal, .inappropriate_fallback);
+    try f(.fatal, .user_canceled);
+    try f(.warning, .no_renegotiation);
+    try f(.fatal, .missing_extension);
+    try f(.fatal, .unsupported_extension);
+    try f(.fatal, .certificate_unobtainable);
+    try f(.fatal, .unrecognized_name);
+    try f(.fatal, .bad_certificate_status_response);
+    try f(.fatal, .bad_certificate_hash_value);
+    try f(.fatal, .unknown_psk_identity);
+    try f(.fatal, .certificate_required);
+    try f(.fatal, .no_application_protocol);
 }
 
-test "AlertDescription.fromAlertError" {
+test "AlertDescription.toError" {
     const f = struct {
-        fn f(want: AlertDescription, err: AlertError) !void {
-            try testing.expectEqual(want, AlertDescription.fromAlertError(err));
+        fn f(want: AlertError, desc: AlertDescription) !void {
+            try testing.expectEqual(want, desc.toError());
         }
     }.f;
 
-    try f(.close_notify, error.CloseNotify);
-    try f(.unexpected_message, error.UnexpectedMessage);
-    try f(.bad_record_mac, error.BadRecordMAC);
-    try f(.decryption_failed, error.DecryptionFailed);
-    try f(.record_overflow, error.RecordOverflow);
-    try f(.decompression_failure, error.DecompressionFailure);
-    try f(.handshake_failure, error.HandshakeFailure);
-    try f(.bad_certificate, error.BadCertificate);
-    try f(.unsupported_certificate, error.UnsupportedCertificate);
-    try f(.certificate_revoked, error.CertificateRevoked);
-    try f(.certificate_expired, error.CertificateExpired);
-    try f(.certificate_unknown, error.CertificateUnknown);
-    try f(.illegal_parameter, error.IllegalParameter);
-    try f(.unknown_ca, error.UnknownCA);
-    try f(.access_denied, error.AccessDenied);
-    try f(.decode_error, error.DecodeError);
-    try f(.decrypt_error, error.DecryptError);
-    try f(.export_restriction, error.ExportRestriction);
-    try f(.protocol_version, error.ProtocolVersion);
-    try f(.insufficient_security, error.InsufficientSecurity);
-    try f(.internal_error, error.InternalError);
-    try f(.inappropriate_fallback, error.InappropriateFallback);
-    try f(.user_canceled, error.UserCanceled);
-    try f(.no_renegotiation, error.NoRenegotiation);
-    try f(.missing_extension, error.MissingExtension);
-    try f(.unsupported_extension, error.UnsupportedExtension);
-    try f(.certificate_unobtainable, error.CertificateUnobtainable);
-    try f(.unrecognized_name, error.UnrecognizedName);
-    try f(.bad_certificate_status_response, error.BadCertificateStatusResponse);
-    try f(.bad_certificate_hash_value, error.BadCertificateHashValue);
-    try f(.unknown_psk_identity, error.UnknownPSKIdentity);
-    try f(.certificate_required, error.CertificateRequired);
-    try f(.no_application_protocol, error.NoApplicationProtocol);
+    try f(error.CloseNotify, .close_notify);
+    try f(error.UnexpectedMessage, .unexpected_message);
+    try f(error.BadRecordMAC, .bad_record_mac);
+    try f(error.DecryptionFailed, .decryption_failed);
+    try f(error.RecordOverflow, .record_overflow);
+    try f(error.DecompressionFailure, .decompression_failure);
+    try f(error.HandshakeFailure, .handshake_failure);
+    try f(error.BadCertificate, .bad_certificate);
+    try f(error.UnsupportedCertificate, .unsupported_certificate);
+    try f(error.CertificateRevoked, .certificate_revoked);
+    try f(error.CertificateExpired, .certificate_expired);
+    try f(error.CertificateUnknown, .certificate_unknown);
+    try f(error.IllegalParameter, .illegal_parameter);
+    try f(error.UnknownCA, .unknown_ca);
+    try f(error.AccessDenied, .access_denied);
+    try f(error.DecodeError, .decode_error);
+    try f(error.DecryptError, .decrypt_error);
+    try f(error.ExportRestriction, .export_restriction);
+    try f(error.ProtocolVersion, .protocol_version);
+    try f(error.InsufficientSecurity, .insufficient_security);
+    try f(error.InternalError, .internal_error);
+    try f(error.InappropriateFallback, .inappropriate_fallback);
+    try f(error.UserCanceled, .user_canceled);
+    try f(error.NoRenegotiation, .no_renegotiation);
+    try f(error.MissingExtension, .missing_extension);
+    try f(error.UnsupportedExtension, .unsupported_extension);
+    try f(error.CertificateUnobtainable, .certificate_unobtainable);
+    try f(error.UnrecognizedName, .unrecognized_name);
+    try f(error.BadCertificateStatusResponse, .bad_certificate_status_response);
+    try f(error.BadCertificateHashValue, .bad_certificate_hash_value);
+    try f(error.UnknownPSKIdentity, .unknown_psk_identity);
+    try f(error.CertificateRequired, .certificate_required);
+    try f(error.NoApplicationProtocol, .no_application_protocol);
 }
