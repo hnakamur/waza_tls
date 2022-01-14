@@ -35,10 +35,3 @@ pub const Certificate = struct {
 pub const PrivateKey = struct {
     raw: []const u8,
 };
-
-test "CertificateChain" {
-    var cert = CertificateChain{
-        .certificate_chain = &[_][]const u8{ "cert1", "cert2" },
-    };
-    std.debug.print("CertificateChain={}\n", .{cert});
-}

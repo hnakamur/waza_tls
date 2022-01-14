@@ -1347,21 +1347,6 @@ pub fn fillRandomBytes(out: *[random_length]u8) void {
 
 const testing = std.testing;
 
-test "generateRandom" {
-    const allocator = testing.allocator;
-
-    const random = try generateRandom(allocator);
-    defer allocator.free(random);
-
-    std.debug.print("random={}\n", .{fmt.fmtSliceHexLower(random[0..random_length])});
-}
-
-test "fillRandomBytes" {
-    var random: [random_length]u8 = undefined;
-    fillRandomBytes(&random);
-    std.debug.print("random={}\n", .{fmt.fmtSliceHexLower(&random)});
-}
-
 test "ClientHelloMsg.marshal" {
     const allocator = testing.allocator;
 

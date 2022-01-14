@@ -90,8 +90,6 @@ fn HashAdapter(comptime HashImpl: type) type {
 const testing = std.testing;
 
 test "Hash.Sha256" {
-    testing.log_level = .debug;
-
     var h = Hash{ .Sha256 = Sha256Hash.init(.{}) };
     h.update("hello");
     const digest_len = Sha256Hash.digest_length;
@@ -110,8 +108,6 @@ test "Hash.Sha256" {
 }
 
 test "Hash.Sha384" {
-    testing.log_level = .debug;
-
     var h = Hash{ .Sha384 = Sha384Hash.init(.{}) };
     h.update("hello");
     const digest_len = Sha384Hash.digest_length;

@@ -674,42 +674,6 @@ test "readAsn1Integer" {
     try f(math.big.int.Managed, "18446744073709551615", "\x02\x09\x00" ++ "\xff" ** 8);
 }
 
-test "switchType" {
-    const f = struct {
-        fn f(comptime T: type) void {
-            switch (T) {
-                u64 => std.debug.print("T is u64\n", .{}),
-                u32 => std.debug.print("T is u32\n", .{}),
-                math.big.int.Managed => std.debug.print("T is bigint\n", .{}),
-                else => std.debug.print("T is other type\n", .{}),
-            }
-        }
-    }.f;
-
-    f(u64);
-    f(u32);
-    f(math.big.int.Managed);
-}
-
-test "bigInt" {
-    const allocator = testing.allocator;
-    // var i = try std.math.big.int.Managed.initSet(allocator, 0x1234_5678_9ABC_DEF0);
-    var i = try std.math.big.int.Managed.initSet(allocator, 0);
-    defer i.deinit();
-    // var m = i.toMutable();
-    var got_s = try i.toString(allocator, 10, .lower);
-    std.debug.print("got_s={s}\n", .{got_s});
-    defer allocator.free(got_s);
-
-    // m.addScalar(m.toConst(), 257);
-    // i = m.toManaged(allocator);
-    const b = @ptrCast([*]const u8, i.limbs.ptr);
-    std.debug.print(
-        "limbs.len={}, metadata={x}, limbs={any}\n",
-        .{ i.limbs.len, i.metadata, fmtx.fmtSliceHexEscapeLower(b[0 .. 8 * i.limbs.len]) },
-    );
-}
-
 test "readAsn1BigInt" {
     testing.log_level = .debug;
     const f = struct {

@@ -921,8 +921,6 @@ test "halfConn encrypt decrypt" {
     const PrefixNonceAeadAes128Gcm = @import("cipher_suites.zig").PrefixNonceAeadAes128Gcm;
     const nonce_prefix_length = @import("cipher_suites.zig").nonce_prefix_length;
 
-    testing.log_level = .debug;
-
     const allocator = testing.allocator;
 
     var out_buf = try std.ArrayListUnmanaged(u8).initCapacity(allocator, record_header_len);
@@ -977,38 +975,6 @@ test "atLeastReader" {
         try testing.expectEqual(input.len - buf.len, try reader.read(&buf));
         try testing.expectError(error.UnexpectedEof, reader.read(&buf));
     }
-}
-
-test "HalfConn.encrypt" {
-    const allocator = testing.allocator;
-
-    var record = std.ArrayListUnmanaged(u8){};
-    defer record.deinit(allocator);
-
-    try record.appendSlice(allocator, "hello, ");
-
-    var hc = HalfConn{};
-    try hc.encrypt(allocator, &record, "world");
-    try testing.expectEqualStrings("hello, world", record.items);
-}
-
-test "blk" {
-    const f = struct {
-        fn f(versions: ?[]const ProtocolVersion) bool {
-            return blk: {
-                if (versions) |vers| {
-                    if (vers.len > 0) {
-                        break :blk true;
-                    }
-                }
-                break :blk false;
-            };
-        }
-    }.f;
-
-    try testing.expect(f(&[_]ProtocolVersion{.v1_3}));
-    try testing.expect(!f(&[_]ProtocolVersion{}));
-    try testing.expect(!f(null));
 }
 
 test "supportedVersionsFromMax" {

@@ -112,36 +112,3 @@ pub const FinishedHash = struct {
         return out;
     }
 };
-
-const testing = std.testing;
-const cipher_suites12 = @import("cipher_suites.zig").cipher_suites12;
-
-test "FinishedHash" {
-    const allocator = testing.allocator;
-
-    {
-        var fh = FinishedHash.new(allocator, .v1_2, &cipher_suites12[0]);
-        defer fh.deinit();
-
-        try fh.write("hello");
-        try fh.write("world");
-        const out = try fh.allocSum(allocator);
-        defer allocator.free(out);
-        std.debug.print("out#1={}\n", .{ std.fmt.fmtSliceHexLower(out) });
-        const server_sum = try fh.serverSum(allocator, "my master secret");
-        std.debug.print("server_sum={}\n", .{std.fmt.fmtSliceHexLower(&server_sum)});
-    }
-
-    {
-        var fh = FinishedHash.new(allocator, .v1_2, &cipher_suites12[1]);
-        defer fh.deinit();
-
-        try fh.write("hello");
-        try fh.write("world");
-        const out = try fh.allocSum(allocator);
-        defer allocator.free(out);
-        std.debug.print(" out#2={}\n", .{ std.fmt.fmtSliceHexLower(out) });
-        const client_sum = try fh.clientSum(allocator, "my master secret");
-        std.debug.print("client_sum={}\n", .{std.fmt.fmtSliceHexLower(&client_sum)});
-    }
-}

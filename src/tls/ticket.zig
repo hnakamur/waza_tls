@@ -17,8 +17,3 @@ pub const SessionState = struct {
     // was encrypted with an older key and thus should be refreshed.
     used_old_key: bool = false,
 };
-
-test "SessionState" {
-    var s = SessionState{};
-    std.debug.print("SessionState={}\n", .{s});
-}

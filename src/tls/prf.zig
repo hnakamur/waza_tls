@@ -155,34 +155,3 @@ pub const ConnectionKeys = struct {
         allocator.free(self.key_material);
     }
 };
-
-const testing = std.testing;
-const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
-
-test "prfForVersion" {
-    const allocator = testing.allocator;
-    const suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256).?;
-    const prf = prfForVersion(.v1_2, suite);
-    const seed = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
-    var result: [12]u8 = undefined;
-    const secret = "my secret" ** 100;
-    try prf(allocator, secret, "master secret", &seed, &result);
-    std.debug.print("prf12 result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
-}
-
-test "Prf12" {
-    const allocator = testing.allocator;
-    const prf12Sha256 = Prf12(std.crypto.hash.sha2.Sha256).prf12;
-    const seed = [_]u8{0} ** std.crypto.hash.sha2.Sha256.digest_length;
-    var result: [12]u8 = undefined;
-    const secret = "my secret" ** 100;
-    try prf12Sha256(allocator, secret, "master secret", &seed, &result);
-    std.debug.print("prf12 result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
-}
-
-test "pHash" {
-    var result: [12]u8 = undefined;
-    const secret = "my secret" ** 100;
-    pHash(std.crypto.hash.sha2.Sha256, secret, "master secret" ++ "\x00" ** 32, &result);
-    std.debug.print("pHash result={}\n", .{std.fmt.fmtSliceHexLower(&result)});
-}
