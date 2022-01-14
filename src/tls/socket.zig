@@ -128,7 +128,6 @@ test "socket ClientServer" {
 test "Conn ClientServer" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .debug;
     try struct {
         fn testServer(server: *Server) !void {
             var client = try server.accept();
@@ -139,7 +138,6 @@ test "Conn ClientServer" {
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
-            // try client.conn.handshake(allocator);
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
@@ -155,7 +153,6 @@ test "Conn ClientServer" {
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
-            // try client.conn.handshake(allocator);
             _ = try client.conn.write("hello");
         }
 
@@ -184,17 +181,12 @@ test "Conn ClientServer" {
 }
 
 test "Conn ClientServer pickTlsVersion error" {
-    testing.log_level = .debug;
     try struct {
         fn testServer(server: *Server) !void {
             var client = try server.accept();
             const allocator = server.allocator;
             defer client.deinit(allocator);
             defer client.close() catch {};
-            std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
-            );
             var buffer = [_]u8{0} ** 1024;
             try testing.expectError(error.ProtocolVersionMismatch, client.conn.read(&buffer));
         }
@@ -204,10 +196,6 @@ test "Conn ClientServer pickTlsVersion error" {
             defer client.deinit(allocator);
             defer client.close() catch {};
 
-            std.log.debug(
-                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
-            );
             try testing.expectError(error.Eof, client.conn.write("hello"));
         }
 
