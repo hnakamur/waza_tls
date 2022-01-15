@@ -132,11 +132,12 @@ pub fn mutualCipherSuite12(have: []const CipherSuiteId, want: CipherSuiteId) ?*c
 pub fn selectCipherSuite12(
     ids: []const CipherSuiteId,
     supported_ids: []const CipherSuiteId,
-    ok: fn (*const CipherSuite12) bool,
+    context: anytype,
+    ok: fn (@TypeOf(context), *const CipherSuite12) bool,
 ) ?*const CipherSuite12 {
     for (ids) |id| {
         if (cipherSuite12ById(id)) |candidate| {
-            if (!ok(candidate)) {
+            if (!ok(context, candidate)) {
                 continue;
             }
 

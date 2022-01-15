@@ -31,7 +31,11 @@ pub const CipherSuiteId = enum(u16) {
     TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca9,
 
     // TLS signaling cipher suite values
-    scsvRenegotiation = 0x00ff,
+    scsv_renegotiation = 0x00ff,
+
+    // tls_fallback_scsv isn't a standard cipher suite but an indicator
+    // that the client is doing version fallback. See RFC 7507.
+    tls_fallback_scsv = 0x5600,
 
     _,
 };
@@ -201,7 +205,7 @@ pub const ClientHelloMsg = struct {
 
             const cipher_suites = try readEnumList(u16, CipherSuiteId, allocator, &bv);
             errdefer allocator.free(cipher_suites);
-            const idx = mem.indexOfScalar(CipherSuiteId, cipher_suites, .scsvRenegotiation);
+            const idx = mem.indexOfScalar(CipherSuiteId, cipher_suites, .scsv_renegotiation);
             const secure_renegotiation_supported = idx != null;
 
             const compression_methods = try readEnumList(u8, CompressionMethod, allocator, &bv);

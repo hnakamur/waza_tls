@@ -16,6 +16,7 @@ const generateRandom = @import("handshake_msg.zig").generateRandom;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const selectCipherSuite12 = @import("cipher_suites.zig").selectCipherSuite12;
 const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
 const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
@@ -139,11 +140,12 @@ pub const ServerHandshakeStateTls12 = struct {
         }
         hello.secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported;
 
-        self.ecdhe_ok = supportedEcdHe(
+        self.ecdhe_ok = supportsEcdHe(
             &self.conn.config,
             self.client_hello.supported_curves,
             self.client_hello.supported_points,
         );
+        std.log.debug("ServerHandshakeStateTls12 ecdhe_ok={}", .{self.ecdhe_ok});
         if (self.ecdhe_ok) {
             // Although omitting the ec_point_formats extension is permitted, some
             // old OpenSSL version will refuse to handshake if not present.
@@ -183,7 +185,40 @@ pub const ServerHandshakeStateTls12 = struct {
             self.conn.config.cipher_suites,
         );
         defer allocator.free(preference_list);
-        self.suite = cipherSuite12ById(.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
+        self.suite = selectCipherSuite12(
+            preference_list,
+            self.client_hello.cipher_suites,
+            self,
+            cipherSuiteOk,
+        );
+        if (self.suite) |_| {} else {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.CipherNegotiationFailed;
+        }
+
+        if (memx.containsScalar(
+            CipherSuiteId,
+            self.client_hello.cipher_suites,
+            .tls_fallback_scsv,
+        )) {
+            // The client is doing a fallback connection. See RFC 7507.
+            const cli_ver = self.client_hello.vers;
+            const max_ver = self.conn.config.maxSupportedVersion();
+            std.log.debug("ServerHandshakeStateTls12.pickCipherSuite max_ver={}", .{max_ver});
+            if (@enumToInt(cli_ver) < @enumToInt(max_ver)) {
+                self.conn.sendAlert(.inappropriate_fallback) catch {};
+                return error.InnapropriateProtocolFallback;
+            }
+        }
+    }
+
+    fn cipherSuiteOk(self: *const ServerHandshakeStateTls12, c: *const CipherSuite12) bool {
+        if (c.flags.ecdhe) {
+            if (!self.ecdhe_ok) {
+                return false;
+            }
+        }
+        return true;
     }
 
     pub fn doFullHandshake(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
@@ -369,11 +404,14 @@ pub const ServerHandshakeStateTls12 = struct {
 
 // supportsECDHE returns whether ECDHE key exchanges can be used with this
 // pre-TLS 1.3 client.
-fn supportedEcdHe(
+fn supportsEcdHe(
     c: *const Conn.Config,
     supported_curves: []const CurveId,
     supported_points: []const EcPointFormat,
 ) bool {
+    std.log.debug("supportsEcdHe supported_curves={any}, supported_points={any}", .{
+        supported_curves, supported_points,
+    });
     const supports_curve = memx.containsScalarFn(
         CurveId,
         supported_curves,
@@ -392,7 +430,7 @@ fn supportedEcdHe(
 
 const testing = std.testing;
 
-test "supportedEcdHe" {
+test "supportsEcdHe" {
     const f = struct {
         fn f(
             want: bool,
@@ -400,7 +438,7 @@ test "supportedEcdHe" {
             supported_curves: []const CurveId,
             supported_points: []const EcPointFormat,
         ) !void {
-            const got = supportedEcdHe(&c, supported_curves, supported_points);
+            const got = supportsEcdHe(&c, supported_curves, supported_points);
             try testing.expectEqual(want, got);
         }
     }.f;

@@ -127,6 +127,7 @@ test "socket ClientServer" {
 
 test "Conn ClientServer" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    // testing.log_level = .debug;
 
     try struct {
         fn testServer(server: *Server) !void {

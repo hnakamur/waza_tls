@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const fifo = std.fifo;
 const io = std.io;
 const math = std.math;
@@ -10,6 +11,7 @@ const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites
 const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CurveId = @import("handshake_msg.zig").CurveId;
+const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
@@ -64,11 +66,9 @@ pub const Conn = struct {
         cipher_suites: []const CipherSuiteId = &default_cipher_suites,
         curve_preferences: []const CurveId = &default_curve_preferences,
 
-        fn maxSupportedVersion(self: *const Config) ?ProtocolVersion {
+        pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
             const sup_vers = self.supportedVersions();
-            if (sup_vers.len == 0) {
-                return null;
-            }
+            assert(sup_vers.len > 0);
             return sup_vers[0];
         }
 
@@ -296,7 +296,7 @@ pub const Conn = struct {
             return error.NoSupportedVersion;
         }
 
-        var cli_hello_ver = self.config.maxSupportedVersion().?;
+        var cli_hello_ver = self.config.maxSupportedVersion();
         // The version at the beginning of the ClientHello was capped at TLS 1.2
         // for compatibility reasons. The supported_versions extension is used
         // to negotiate versions now. See RFC 8446, Section 4.2.1.
@@ -321,12 +321,26 @@ pub const Conn = struct {
             );
             errdefer allocator.free(compression_methods);
 
+            const supported_curves = try allocator.dupe(
+                CurveId,
+                self.config.curve_preferences,
+            );
+            errdefer allocator.free(supported_curves);
+
+            const supported_points = try allocator.dupe(
+                EcPointFormat,
+                &[_]EcPointFormat{.uncompressed},
+            );
+            errdefer allocator.free(supported_points);
+
             break :blk ClientHelloMsg{
                 .vers = cli_hello_ver,
                 .random = random[0..random_length],
                 .session_id = session_id[0..random_length],
                 .cipher_suites = cipher_suites,
                 .compression_methods = compression_methods,
+                .supported_curves = supported_curves,
+                .supported_points = supported_points,
             };
         };
 
