@@ -393,7 +393,21 @@ fn asn1Unsigned(bytes: []const u8) !u64 {
 }
 
 pub const ObjectIdentifier = struct {
+    const country = initConst(&.{ 2, 5, 4, 6 });
+    const organization = initConst(&.{ 2, 5, 4, 10 });
+    const organizational_unit = initConst(&.{ 2, 5, 4, 11 });
+    const common_name = initConst(&.{ 2, 5, 4, 3 });
+    const serial_number = initConst(&.{ 2, 5, 4, 5 });
+    const locality = initConst(&.{ 2, 5, 4, 7 });
+    const province = initConst(&.{ 2, 5, 4, 8 });
+    const street_address = initConst(&.{ 2, 5, 4, 9 });
+    const postal_code = initConst(&.{ 2, 5, 4, 17 });
+
     components: []const u32,
+
+    pub fn initConst(components: []const u32) ObjectIdentifier {
+        return .{ .components = components };
+    }
 
     // parse decodes an ASN.1 OBJECT IDENTIFIER and advances.
     pub fn parse(allocator: mem.Allocator, s: *String) !ObjectIdentifier {

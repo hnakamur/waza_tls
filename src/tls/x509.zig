@@ -286,6 +286,9 @@ const Certificate = struct {
         var issuer = try pkix.Name.fromRdnSequence(allocator, &issuer_rdns);
         errdefer issuer.deinit(allocator);
 
+        var validity = tbs.readAsn1(.sequence) catch return error.MalformedValidity;
+        _ = validity;
+
         return Certificate{
             .raw = raw,
             .raw_tbs_certificate = raw_tbs_certificate,
@@ -310,7 +313,6 @@ fn parseName(allocator: mem.Allocator, raw: *asn1.String) !pkix.RdnSequence {
 }
 
 pub fn parseAsn1String(allocator: mem.Allocator, tag: asn1.Tag, value: []const u8) ![]const u8 {
-    std.log.debug("parseAsn1String tag={}", .{tag});
     switch (tag) {
         .t61_string => return try allocator.dupe(u8, value),
         .printable_string => {
