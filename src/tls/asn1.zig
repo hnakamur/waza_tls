@@ -50,6 +50,10 @@ pub const Tag = enum(u8) {
 
 pub const RawContent = struct {
     bytes: []const u8,
+
+    pub fn deinit(self: *RawContent, allocator: mem.Allocator) void {
+        allocator.free(self.bytes);
+    }
 };
 
 // BitString is the structure to use when you want an ASN.1 BIT STRING type. A
@@ -58,7 +62,72 @@ pub const RawContent = struct {
 pub const BitString = struct {
     bytes: []const u8, // bits packed into bytes.
     bit_length: usize, // length in bits.
+
+    pub fn read(input: *String, allocator: mem.Allocator) !BitString {
+        var bytes = try input.readAsn1(.bit_string);
+        if (bytes.empty() or bytes.bytes.len * 8 / 8 != bytes.bytes.len) {
+            return error.InvalidBitString;
+        }
+
+        const pad_len = try bytes.readIntOfType(u8);
+        const b = bytes.bytes;
+        if (pad_len > 7 or
+            b.len == 0 and pad_len != 0 or
+            b.len > 0 and b[b.len - 1] & (@shlExact(@as(u8, 1), @intCast(u3, pad_len)) - 1) != 0)
+        {
+            return error.InvalidBitString;
+        }
+
+        return BitString{
+            .bytes = try allocator.dupe(u8, b),
+            .bit_length = b.len * 8 - pad_len,
+        };
+    }
+
+    pub fn deinit(self: *BitString, allocator: mem.Allocator) void {
+        allocator.free(self.bytes);
+    }
+
+    // rightAlign returns a slice where the padding bits are at the beginning. The
+    // slice may share memory with the BitString.
+    pub fn rightAlign(self: *const BitString, allocator: mem.Allocator) ![]const u8 {
+        const shift_u4 = @intCast(u4, 8 - self.bit_length % 8);
+        if (shift_u4 == 8 or self.bytes.len == 0) {
+            return try allocator.dupe(u8, self.bytes);
+        }
+        const shift = @truncate(u3, shift_u4);
+        const shift_rev = @truncate(u3, 8 - shift_u4);
+
+        var a = try allocator.alloc(u8, self.bytes.len);
+        var prev = self.bytes[0];
+        a[0] = @shrExact(prev, shift);
+        var i: usize = 1;
+        while (i < self.bytes.len) : (i += 1) {
+            const b = self.bytes[i];
+            a[i] = @shlExact(prev, shift_rev) | @shrExact(b, shift);
+            prev = b;
+        }
+        return a;
+    }
 };
+
+test "mod" {
+    var bit_len: usize = struct {
+        fn f() usize {
+            return 7;
+        }
+    }.f();
+    try testing.expectEqual(@as(u3, 1), @intCast(u3, 8 - bit_len % 8));
+}
+
+test "shlExact" {
+    var padding_bits: u8 = struct {
+        fn f() u8 {
+            return 7;
+        }
+    }.f();
+    try testing.expectEqual(@as(u8, 0x7f), @shlExact(@as(u8, 1), @intCast(u3, padding_bits)) - 1);
+}
 
 pub const String = struct {
     bytes: []const u8,
@@ -209,26 +278,31 @@ pub const String = struct {
         return if (try self.readOptionalAsn1(tag)) |*i| blk: {
             break :blk try i.readAsn1Integer(T, allocator);
         } else switch (T) {
-            math.big.int.Managed => try default_value.cloneWithDifferentAllocator(allocator),
+            math.big.int.Const => blk: {
+                break :blk math.big.int.Const {
+                    .limbs = try allocator.dupe(math.big.Limb, default_value.limbs),
+                    .positive = default_value.positive,
+                };
+            },
             else => default_value,
         };
     }
 
     // readAsn1Integer decodes an ASN.1 INTEGER and advances.
     // Supported types are i8, i16, i24, i32, i64, u8, u16, u24, u32, u64, and
-    // std.math.big.int.Managed. It panics for other types.
-    // For std.math.big.int.Managed, deinit method must be called after use of the
+    // std.math.big.int.Const. It panics for other types.
+    // For std.math.big.int.Const, deinit method must be called after use of the
     // returned value.
     pub fn readAsn1Integer(self: *String, comptime T: type, allocator: mem.Allocator) !T {
         return switch (T) {
             i8, i16, i24, i32, i64 => @intCast(T, try self.readAsn1Int64()),
             u8, u16, u24, u32, u64 => @intCast(T, try self.readAsn1Uint64()),
-            math.big.int.Managed => try self.readAsn1BigInt(allocator),
+            math.big.int.Const => try self.readAsn1BigInt(allocator),
             else => @panic("unsupported type for readAsn1Integer"),
         };
     }
 
-    fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Managed {
+    pub fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Const {
         var input = try self.readAsn1(.integer);
         var bytes = input.bytes;
         try checkAsn1Integer(bytes);
@@ -252,7 +326,7 @@ pub const String = struct {
             const one = math.big.int.Mutable.init(&one_limbs_buf, 1).toConst();
             try ret.add(ret.toConst(), one);
             ret.negate();
-            return ret;
+            return ret.toConst();
         } else {
             if (bytes[0] == 0 and bytes.len > 1) {
                 bytes = bytes[1..];
@@ -267,7 +341,7 @@ pub const String = struct {
             }
             mem.set(u8, b[bytes.len .. limb_byte_len * capacity], 0);
             ret.metadata = capacity;
-            return ret;
+            return ret.toConst();
         }
     }
 
@@ -434,6 +508,7 @@ pub const ObjectIdentifier = struct {
     pub const public_key_ecdsa = initConst(&.{ 1, 2, 840, 10045, 2, 1 });
     pub const public_key_ed25519 = signature_ed25519;
 
+    pub const signature_rsa_pss = initConst(&.{ 1, 2, 840, 113549, 1, 1, 10 });
     pub const signature_ed25519 = initConst(&.{ 1, 3, 101, 112 });
 
     components: []const u32,
@@ -532,8 +607,14 @@ pub fn readBase128Int(self: *String) !u32 {
     return error.InvalidBase128Int; // truncated
 }
 
+// null_bytes contains bytes representing the DER-encoded ASN.1 NULL type.
+pub const null_bytes = &[_]u8{ @enumToInt(Tag.@"null"), 0 };
+
 // A RawValue represents an undecoded ASN.1 object.
 pub const RawValue = struct {
+    // null is a RawValue with its Tag set to the ASN.1 NULL type tag (5).
+    pub const @"null" = RawValue{ .tag = .@"null" };
+
     class: Tag = @intToEnum(Tag, 0),
     tag: Tag,
     is_compound: bool = false,
@@ -635,14 +716,14 @@ test "readOptionalAsn1Integer" {
             const allocator = testing.allocator;
             var s = String.init(input);
             var got = try s.readOptionalAsn1Integer(T, tag, allocator, default_value);
-            defer if (T == math.big.int.Managed) got.deinit();
+            defer if (T == math.big.int.Const) allocator.free(got.limbs);
             const got_str =
                 switch (T) {
                 i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
                     break :blk try std.fmt.allocPrint(allocator, "{}", .{got});
                 },
-                math.big.int.Managed => blk: {
-                    break :blk try got.toString(allocator, 10, .lower);
+                math.big.int.Const => blk: {
+                    break :blk try got.toStringAlloc(allocator, 10, .lower);
                 },
                 else => @panic("unsupported type"),
             };
@@ -658,15 +739,15 @@ test "readOptionalAsn1Integer" {
     try f(u64, "2", "\xa0\x03\x02\x01\x02", @intToEnum(Tag, 0).constructed().contextSpecific(), 0);
     {
         const allocator = testing.allocator;
-        var default_value = try math.big.int.Managed.initSet(allocator, 0);
-        defer default_value.deinit();
+        var default_value = (try math.big.int.Managed.initSet(allocator, 0)).toConst();
+        defer allocator.free(default_value.limbs);
 
         // var default_value_debug_str = try allocDebugPrintBigIntManaged(default_value, allocator);
         // std.debug.print("default_value: {s}\n", .{default_value_debug_str});
         // defer allocator.free(default_value_debug_str);
 
         try f(
-            math.big.int.Managed,
+            math.big.int.Const,
             "2",
             "\xa0\x03\x02\x01\x02",
             @intToEnum(Tag, 0).constructed().contextSpecific(),
@@ -675,15 +756,15 @@ test "readOptionalAsn1Integer" {
     }
     {
         const allocator = testing.allocator;
-        var default_value = try math.big.int.Managed.initSet(allocator, 0);
-        defer default_value.deinit();
+        var default_value = (try math.big.int.Managed.initSet(allocator, 0)).toConst();
+        defer allocator.free(default_value.limbs);
 
         // var default_value_debug_str = try allocDebugPrintBigIntManaged(default_value, allocator);
         // std.debug.print("default_value: {s}\n", .{default_value_debug_str});
         // defer allocator.free(default_value_debug_str);
 
         try f(
-            math.big.int.Managed,
+            math.big.int.Const,
             "0",
             "\x02\x01\x00",
             @intToEnum(Tag, 0).constructed().contextSpecific(),
@@ -700,15 +781,15 @@ test "readAsn1Integer" {
             const allocator = testing.allocator;
             var s = String.init(input);
             var got = try s.readAsn1Integer(T, allocator);
-            defer if (T == math.big.int.Managed) got.deinit();
+            defer if (T == math.big.int.Const) allocator.free(got.limbs);
 
             const got_str =
                 switch (T) {
                 i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
                     break :blk try std.fmt.allocPrint(allocator, "{}", .{got});
                 },
-                math.big.int.Managed => blk: {
-                    break :blk try got.toString(allocator, 10, .lower);
+                math.big.int.Const => blk: {
+                    break :blk try got.toStringAlloc(allocator, 10, .lower);
                 },
                 else => @panic("unsupported type"),
             };
@@ -724,21 +805,26 @@ test "readAsn1Integer" {
     try f(u64, "0", "\x02\x01\x00");
     try f(u8, "0", "\x02\x01\x00");
     try f(i8, "0", "\x02\x01\x00");
-    try f(math.big.int.Managed, "0", "\x02\x01\x00");
-    try f(math.big.int.Managed, "18446744073709551615", "\x02\x09\x00" ++ "\xff" ** 8);
+    try f(math.big.int.Const, "0", "\x02\x01\x00");
+    try f(math.big.int.Const, "18446744073709551615", "\x02\x09\x00" ++ "\xff" ** 8);
 }
 
 test "readAsn1BigInt" {
     testing.log_level = .debug;
     const f = struct {
         fn f(want_str: anyerror![]const u8, input: []const u8) !void {
+            const allocator = testing.allocator;
             var s = String.init(input);
             if (want_str) |str| {
-                var want = try math.big.int.Managed.init(testing.allocator);
-                defer want.deinit();
-                try want.setString(10, str);
-                var got = try s.readAsn1BigInt(testing.allocator);
-                defer got.deinit();
+                var want = blk: {
+                    var m = try math.big.int.Managed.init(allocator);
+                    errdefer m.deinit();
+                    try m.setString(10, str);
+                    break :blk m.toConst();
+                };
+                defer allocator.free(want.limbs);
+                var got = try s.readAsn1BigInt(allocator);
+                defer allocator.free(got.limbs);
                 if (!want.eq(got)) {
                     std.debug.print("input={}, want_str={s}, want={}, got={}\n", .{
                         fmtx.fmtSliceHexEscapeLower(input), str, want, got,
