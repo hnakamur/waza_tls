@@ -435,25 +435,26 @@ pub const ObjectIdentifier = struct {
         var input = try s.readAsn1(.object_identifier);
         if (input.empty()) return error.InvalidObjectIdentifier;
 
-        var components = try allocator.alloc(u32, input.bytes.len + 1);
-        errdefer allocator.free(components);
+        var components = try std.ArrayListUnmanaged(u32).initCapacity(
+            allocator,
+            input.bytes.len + 1,
+        );
+        errdefer components.deinit(allocator);
 
         const v = try readBase128Int(&input);
         if (v < 80) {
-            components[0] = v / 40;
-            components[1] = v % 40;
+            try components.append(allocator, v / 40);
+            try components.append(allocator, v % 40);
         } else {
-            components[0] = 2;
-            components[1] = v - 80;
+            try components.append(allocator, 2);
+            try components.append(allocator, v - 80);
         }
 
-        var i: usize = 2;
-        while (!input.empty()) : (i += 1) {
-            const v2 = try readBase128Int(&input);
-            components[i] = v2;
+        while (!input.empty()) {
+            try components.append(allocator, try readBase128Int(&input));
         }
 
-        return ObjectIdentifier{ .components = components };
+        return ObjectIdentifier{ .components = components.toOwnedSlice(allocator) };
     }
 
     pub fn deinit(self: *ObjectIdentifier, allocator: mem.Allocator) void {
