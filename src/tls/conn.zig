@@ -16,10 +16,10 @@ const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
 const finished_verify_length = @import("prf.zig").finished_verify_length;
 const RecordType = @import("record.zig").RecordType;
-const ServerHandshake = @import("handshake_server.zig").ServerHandshake;
-const ClientHandshake = @import("handshake_client.zig").ClientHandshake;
-const Handshake = @import("handshake.zig").Handshake;
-const Role = @import("handshake.zig").Role;
+const HandshakeState = @import("handshake_state.zig").HandshakeState;
+const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
+const ServerHandshakeState = @import("handshake_server.zig").ServerHandshakeState;
+const Role = @import("handshake_state.zig").Role;
 const Aead = @import("cipher_suites.zig").Aead;
 const fmtx = @import("../fmtx.zig");
 const AlertError = @import("alert.zig").AlertError;
@@ -97,6 +97,8 @@ pub const Conn = struct {
     };
 
     const FifoType = fifo.LinearFifo(u8, .{ .Static = max_plain_text });
+    config: Config,
+    role: Role,
     allocator: mem.Allocator,
     stream: net.Stream,
     in: HalfConn,
@@ -111,9 +113,7 @@ pub const Conn = struct {
     input: FifoType = FifoType.init(),
     retry_count: usize = 0,
     handshake_bytes: []const u8 = &[_]u8{},
-    config: Config,
-    handshake_fn: fn (self: *Conn, allocator: mem.Allocator) anyerror!void,
-    handshaker: ?Handshake = null,
+    handshake_state: ?HandshakeState = null,
     close_notify_sent: bool = false,
     close_notify_err: ?anyerror = null,
 
@@ -132,25 +132,21 @@ pub const Conn = struct {
         out: HalfConn,
         config: Config,
     ) Conn {
-        const handshake_fn = switch (role) {
-            .client => clientHandshake,
-            .server => serverHandshake,
-        };
         return .{
             .allocator = allocator,
+            .role = role,
             .stream = stream,
             .in = in,
             .out = out,
             .raw_input = io.bufferedReader(stream.reader()),
             .config = config,
-            .handshake_fn = handshake_fn,
         };
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
         self.send_buf.deinit(allocator);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
-        if (self.handshaker) |*hs| hs.deinit(allocator);
+        if (self.handshake_state) |*hs| hs.deinit(allocator);
     }
 
     pub fn write(self: *Conn, bytes: []const u8) !usize {
@@ -237,7 +233,11 @@ pub const Conn = struct {
 
     pub fn handshake(self: *Conn, allocator: mem.Allocator) !void {
         if (!self.handshake_complete) {
-            try self.handshake_fn(self, allocator);
+            const handshake_fn = switch (self.role) {
+                .client => clientHandshake,
+                .server => serverHandshake,
+            };
+            try handshake_fn(self, allocator);
         }
     }
 
@@ -259,18 +259,18 @@ pub const Conn = struct {
 
         try self.pickTlsVersion(&server_hello);
 
-        self.handshaker = Handshake{
-            .client = ClientHandshake.init(self.version.?, self, client_hello, server_hello),
+        self.handshake_state = HandshakeState{
+            .client = ClientHandshakeState.init(self.version.?, self, client_hello, server_hello),
         };
-        try self.handshaker.?.client.handshake(allocator);
+        try self.handshake_state.?.client.handshake(allocator);
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
-        self.handshaker = Handshake{
-            .server = ServerHandshake.init(self.version.?, self, client_hello),
+        self.handshake_state = HandshakeState{
+            .server = ServerHandshakeState.init(self.version.?, self, client_hello),
         };
-        try self.handshaker.?.server.handshake(allocator);
+        try self.handshake_state.?.server.handshake(allocator);
     }
 
     fn makeClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
