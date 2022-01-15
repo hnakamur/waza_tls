@@ -3,6 +3,7 @@ const crypto = std.crypto;
 const fmt = std.fmt;
 const math = std.math;
 const mem = std.mem;
+const CurveId = @import("handshake_msg.zig").CurveId;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CertificateMsg = @import("handshake_msg.zig").CertificateMsg;
@@ -15,6 +16,7 @@ const generateRandom = @import("handshake_msg.zig").generateRandom;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
 const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
@@ -73,7 +75,7 @@ pub const ServerHandshakeStateTls12 = struct {
     cert_chain: ?CertificateChain = null,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls12 {
-        return .{ .conn = conn, .client_hello = client_hello  };
+        return .{ .conn = conn, .client_hello = client_hello };
     }
 
     pub fn deinit(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) void {
@@ -119,11 +121,17 @@ pub const ServerHandshakeStateTls12 = struct {
             .vers = .v1_2,
             .random = random,
             .session_id = &[_]u8{0} ** 32,
-            .cipher_suite = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            .cipher_suite = .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, // updated in doFullHandshake
             .compression_method = .none,
             .ocsp_stapling = false,
             .supported_version = .v1_2,
         };
+
+        self.ecdhe_ok = supportedEcdHe(
+            &self.conn.config,
+            self.client_hello.supported_curves,
+            self.client_hello.supported_points,
+        );
         if (self.ecdhe_ok) {
             // Although omitting the ec_point_formats extension is permitted, some
             // old OpenSSL version will refuse to handshake if not present.
@@ -157,12 +165,19 @@ pub const ServerHandshakeStateTls12 = struct {
 
     pub fn pickCipherSuite(self: *ServerHandshakeStateTls12) !void {
         // TODO: stop hardcoding.
-        self.suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+        const allocator = self.conn.allocator;
+        var preference_list = try makeCipherPreferenceList12(
+            allocator,
+            self.conn.config.cipher_suites,
+        );
+        defer allocator.free(preference_list);
+        self.suite = cipherSuite12ById(.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
     }
 
     pub fn doFullHandshake(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
-        const conn_protocol_vers = .v1_2;
-        self.finished_hash = FinishedHash.new(allocator, conn_protocol_vers, self.suite.?);
+        self.hello.?.cipher_suite = self.suite.?.id;
+
+        self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
 
         if (false) { // TODO: stop hardcoding
             // No need to keep a full record of the handshake if client
@@ -192,7 +207,7 @@ pub const ServerHandshakeStateTls12 = struct {
             // TODO: implement
         }
 
-        var key_agreement = self.suite.?.ka(conn_protocol_vers);
+        var key_agreement = self.suite.?.ka(self.conn.version.?);
         defer key_agreement.deinit(allocator);
 
         var skx = try key_agreement.generateServerKeyExchange(
@@ -339,6 +354,32 @@ pub const ServerHandshakeStateTls12 = struct {
         );
     }
 };
+
+// supportsECDHE returns whether ECDHE key exchanges can be used with this
+// pre-TLS 1.3 client.
+fn supportedEcdHe(
+    c: *const Conn.Config,
+    supported_curves: []const CurveId,
+    supported_points: []const EcPointFormat,
+) bool {
+    var supports_curve = false;
+    for (supported_curves) |curve| {
+        if (c.supportsCurve(curve)) {
+            supports_curve = true;
+            break;
+        }
+    }
+
+    var supports_point_format = false;
+    for (supported_points) |point_format| {
+        if (point_format == .uncompressed) {
+            supports_point_format = true;
+            break;
+        }
+    }
+
+    return supports_curve and supports_point_format;
+}
 
 const testing = std.testing;
 

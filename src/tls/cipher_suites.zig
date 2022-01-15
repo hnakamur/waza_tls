@@ -34,6 +34,16 @@ pub const CipherSuite12 = struct {
     aead: ?fn (key: []const u8, nonce_prefix: []const u8) Aead,
 };
 
+pub const default_cipher_suites = cipher_suites_preference_order;
+
+const cipher_suites_preference_order = [_]CipherSuiteId{
+    .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+    .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+    .TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+    .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+};
+
 pub const cipher_suites12 = [_]CipherSuite12{
     .{
         .id = .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
@@ -43,6 +53,24 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .flags = .{ .ecdhe = true, .tls12 = true },
         .ka = ecdheRsaKa,
         .aead = Aead.initXorNonceAeadChaCha20Poly1305,
+    },
+    .{
+        .id = .TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+        .key_len = 32,
+        .mac_len = 0,
+        .iv_len = 12,
+        .flags = .{ .ecdhe = true, .ec_sign = true, .tls12 = true },
+        .ka = ecdheEcdsaKa,
+        .aead = Aead.initXorNonceAeadChaCha20Poly1305,
+    },
+    .{
+        .id = .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        .key_len = 16,
+        .mac_len = 0,
+        .iv_len = 4,
+        .flags = .{ .ecdhe = true, .ec_sign = true, .tls12 = true },
+        .ka = ecdheEcdsaKa,
+        .aead = Aead.initPrefixNonceAeadAes128Gcm,
     },
     .{
         .id = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
@@ -76,10 +104,51 @@ fn ecdheRsaKa(version: ProtocolVersion) KeyAgreement {
     return .{ .ecdhe = EcdheKeyAgreement{ .is_rsa = true, .version = version } };
 }
 
+pub fn makeCipherPreferenceList12(
+    allocator: mem.Allocator,
+    config_cipher_suites: []const CipherSuiteId,
+) ![]const CipherSuiteId {
+    var cipher_suites = try std.ArrayListUnmanaged(CipherSuiteId).initCapacity(
+        allocator,
+        config_cipher_suites.len,
+    );
+    errdefer cipher_suites.deinit(allocator);
+
+    for (cipher_suites_preference_order) |suite_id| {
+        if (mutualCipherSuite12(config_cipher_suites, suite_id)) |_| {
+            try cipher_suites.append(allocator, suite_id);
+        }
+    }
+    return cipher_suites.toOwnedSlice(allocator);
+}
+
 pub fn mutualCipherSuite12(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuite12 {
     for (have) |id| {
         if (id == want) {
             return cipherSuite12ById(id);
+        }
+    }
+    return null;
+}
+
+// selectCipherSuite12 returns the first TLS 1.0–1.2 cipher suite from ids which
+// is also in supportedIDs and passes the ok filter.
+pub fn selectCipherSuite12(
+    ids: []const CipherSuiteId,
+    supported_ids: []const CipherSuiteId,
+    ok: fn (*const CipherSuite12) bool,
+) ?*const CipherSuite12 {
+    for (ids) |id| {
+        if (cipherSuite12ById(id)) |candidate| {
+            if (!ok(candidate)) {
+                continue;
+            }
+
+            for (supported_ids) |sup_id| {
+                if (id == sup_id) {
+                    return candidate;
+                }
+            }
         }
     }
     return null;
@@ -510,7 +579,7 @@ test "mutualCipherSuite12" {
     };
 
     try testing.expectEqual(
-        @as(?*const CipherSuite12, &cipher_suites12[2]),
+        cipherSuite12ById(.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
         mutualCipherSuite12(&have, .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
     );
 

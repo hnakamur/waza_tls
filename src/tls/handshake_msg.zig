@@ -24,10 +24,11 @@ pub const CipherSuiteId = enum(u16) {
     TLS_AES_128_GCM_SHA256 = 0x1301,
 
     // TLS 1.0 - 1.2 cipher suites.
+    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = 0xc02b,
     TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xc02c,
     TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = 0xc02f,
-    // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xc030,
     TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca8,
+    TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca9,
 
     // TLS signaling cipher suite values
     scsvRenegotiation = 0x00ff,
@@ -150,8 +151,8 @@ pub const ClientHelloMsg = struct {
     compression_methods: []const CompressionMethod,
     server_name: ?[]const u8 = null,
     ocsp_stapling: bool = undefined,
-    supported_curves: ?[]const CurveId = null,
-    supported_points: ?[]const EcPointFormat = null,
+    supported_curves: []const CurveId = &[_]CurveId{},
+    supported_points: []const EcPointFormat = &[_]EcPointFormat{},
     ticket_supported: bool = false,
     session_ticket: []const u8 = "",
     supported_signature_algorithms: ?[]const SignatureScheme = null,
@@ -173,8 +174,8 @@ pub const ClientHelloMsg = struct {
         allocator.free(self.session_id);
         allocator.free(self.cipher_suites);
         allocator.free(self.compression_methods);
-        freeOptionalField(self, allocator, "supported_curves");
-        freeOptionalField(self, allocator, "supported_points");
+        if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
+        if (self.supported_points.len > 0) allocator.free(self.supported_points);
         freeOptionalField(self, allocator, "supported_signature_algorithms");
         freeOptionalField(self, allocator, "supported_signature_algorithms_cert");
         freeOptionalField(self, allocator, "alpn_protocols");
@@ -291,10 +292,8 @@ pub const ClientHelloMsg = struct {
                         allocator,
                         bv,
                     );
-                    if (self.supported_points) |points| {
-                        if (points.len == 0) {
-                            return error.EmptySupportedPoints;
-                        }
+                    if (self.supported_points.len == 0) {
+                        return error.EmptySupportedPoints;
                     }
                 },
                 .SessionTicket => {
@@ -402,15 +401,15 @@ pub const ClientHelloMsg = struct {
                 "\x00\x00", // empty request_extensions
                 writer);
         }
-        if (self.supported_curves) |curves| {
+        if (self.supported_curves.len > 0) {
             // RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
             try writeInt(u16, ExtensionType.SupportedCurves, writer);
-            try writeLenLenAndIntSlice(u16, u16, u16, CurveId, curves, writer);
+            try writeLenLenAndIntSlice(u16, u16, u16, CurveId, self.supported_curves, writer);
         }
-        if (self.supported_points) |points| {
+        if (self.supported_points.len > 0) {
             // RFC 4492, Section 5.1.2
             try writeInt(u16, ExtensionType.SupportedPoints, writer);
-            try writeLenLenAndIntSlice(u16, u8, u8, EcPointFormat, points, writer);
+            try writeLenLenAndIntSlice(u16, u8, u8, EcPointFormat, self.supported_points, writer);
         }
         if (self.ticket_supported) {
             // RFC 5077, Section 3.2

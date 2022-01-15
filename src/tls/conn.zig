@@ -5,7 +5,10 @@ const math = std.math;
 const mem = std.mem;
 const net = std.net;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
+const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
+const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+const CurveId = @import("handshake_msg.zig").CurveId;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
@@ -45,11 +48,20 @@ const tcp_mss_estimate = 1208;
 // maximum.
 const record_size_boost_threshold = 128 * 1024;
 
+const default_curve_preferences = [_]CurveId{
+    .x25519,
+    .secp256r1,
+    .secp384r1,
+    .secp521r1,
+};
+
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     pub const Config = struct {
         min_version: ProtocolVersion = .v1_2,
         max_version: ProtocolVersion = .v1_3,
+        cipher_suites: []const CipherSuiteId = &default_cipher_suites,
+        curve_preferences: []const CurveId = &default_curve_preferences,
 
         fn maxSupportedVersion(self: *const Config) ?ProtocolVersion {
             const sup_vers = self.supportedVersions();
@@ -93,6 +105,15 @@ pub const Conn = struct {
                 }
             }
             return null;
+        }
+
+        pub fn supportsCurve(self: *const Config, curve: CurveId) bool {
+            for (self.curve_preferences) |c| {
+                if (c == curve) {
+                    return true;
+                }
+            }
+            return false;
         }
     };
 
@@ -293,11 +314,10 @@ pub const Conn = struct {
             const session_id = try generateRandom(allocator);
             errdefer allocator.free(session_id);
 
-            const cipher_suites = try allocator.dupe(
-                CipherSuiteId,
-                &[_]CipherSuiteId{.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+            const cipher_suites = try makeCipherPreferenceList12(
+                allocator,
+                self.config.cipher_suites,
             );
-            errdefer allocator.free(cipher_suites);
 
             const compression_methods = try allocator.dupe(
                 CompressionMethod,
