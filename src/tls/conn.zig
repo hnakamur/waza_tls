@@ -65,6 +65,7 @@ pub const Conn = struct {
         max_version: ProtocolVersion = .v1_3,
         cipher_suites: []const CipherSuiteId = &default_cipher_suites,
         curve_preferences: []const CurveId = &default_curve_preferences,
+        next_protos: []const []const u8 = &[_][]u8{},
 
         pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
             const sup_vers = self.supportedVersions();
@@ -129,8 +130,9 @@ pub const Conn = struct {
     raw_input: io.BufferedReader(4096, net.Stream.Reader),
     input: FifoType = FifoType.init(),
     retry_count: usize = 0,
-    handshake_bytes: []const u8 = &[_]u8{},
+    handshake_bytes: []const u8 = "",
     handshake_state: ?HandshakeState = null,
+    client_protocol: []const u8 = "",
     close_notify_sent: bool = false,
     close_notify_err: ?anyerror = null,
 
@@ -164,6 +166,7 @@ pub const Conn = struct {
         self.send_buf.deinit(allocator);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
         if (self.handshake_state) |*hs| hs.deinit(allocator);
+        if (self.client_protocol.len > 0) allocator.free(self.client_protocol);
     }
 
     pub fn write(self: *Conn, bytes: []const u8) !usize {

@@ -163,7 +163,7 @@ pub const ClientHelloMsg = struct {
     supported_signature_algorithms_cert: ?[]const SignatureScheme = null,
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
-    alpn_protocols: ?[]const []const u8 = null,
+    alpn_protocols: []const []const u8 = &[_][]u8{},
     scts: bool = false,
     supported_versions: ?[]const ProtocolVersion = null,
     cookie: []const u8 = "",
@@ -180,9 +180,9 @@ pub const ClientHelloMsg = struct {
         allocator.free(self.compression_methods);
         if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
         if (self.supported_points.len > 0) allocator.free(self.supported_points);
+        if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
         freeOptionalField(self, allocator, "supported_signature_algorithms");
         freeOptionalField(self, allocator, "supported_signature_algorithms_cert");
-        freeOptionalField(self, allocator, "alpn_protocols");
         freeOptionalField(self, allocator, "supported_versions");
         freeOptionalField(self, allocator, "key_shares");
         freeOptionalField(self, allocator, "psk_modes");
@@ -435,17 +435,17 @@ pub const ClientHelloMsg = struct {
             try writeInt(u16, ExtensionType.RenegotiationInfo, writer);
             try writeLenLenAndBytes(u16, u8, self.secure_renegotiation, writer);
         }
-        if (self.alpn_protocols) |protocols| {
+        if (self.alpn_protocols.len > 0) {
             // RFC 7301, Section 3.1
             try writeInt(u16, ExtensionType.Alpn, writer);
             var len2: usize = 0;
-            for (protocols) |proto| {
+            for (self.alpn_protocols) |proto| {
                 len2 += intTypeLen(u8) + proto.len;
             }
             const len1 = intTypeLen(u16) + len2;
             try writeInt(u16, len1, writer);
             try writeInt(u16, len2, writer);
-            for (protocols) |proto| {
+            for (self.alpn_protocols) |proto| {
                 try writeLenAndBytes(u8, proto, writer);
             }
         }

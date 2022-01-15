@@ -125,13 +125,12 @@ pub const ServerHandshakeStateTls12 = struct {
         const random = try generateRandom(allocator);
         // TODO: stop hardcoding field values.
         var hello = ServerHelloMsg{
-            .vers = .v1_2,
+            .vers = self.conn.version.?,
             .random = random,
             .session_id = &[_]u8{0} ** 32,
             .cipher_suite = .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, // updated in doFullHandshake
             .compression_method = .none,
             .ocsp_stapling = false,
-            .supported_version = .v1_2,
         };
 
         if (self.client_hello.secure_renegotiation.len > 0) {
@@ -156,6 +155,17 @@ pub const ServerHandshakeStateTls12 = struct {
                 EcPointFormat,
                 &[_]EcPointFormat{.uncompressed},
             );
+        }
+
+        if (negotiateAlpn(
+            self.conn.config.next_protos,
+            self.client_hello.alpn_protocols,
+        )) |selected_proto| {
+            hello.alpn_protocol = try allocator.dupe(u8, selected_proto);
+            self.conn.client_protocol = try allocator.dupe(u8, selected_proto);
+        } else |err| {
+            self.conn.sendAlert(.no_application_protocol) catch {};
+            return err;
         }
 
         self.hello = hello;
@@ -218,6 +228,7 @@ pub const ServerHandshakeStateTls12 = struct {
                 return false;
             }
         }
+        // TODO: implement
         return true;
     }
 
@@ -426,6 +437,37 @@ fn supportsEcdHe(
     );
 
     return supports_curve and supports_point_format;
+}
+
+const alpn_h2 = "h2";
+const alpn_http_1_1 = "http/1.1";
+
+// negotiateAlpn picks a shared ALPN protocol that both sides support in server
+// preference order. If ALPN is not configured or the peer doesn't support it,
+// it returns "" and no error.
+pub fn negotiateAlpn(server_protos: []const []const u8, client_protos: []const []const u8) ![]const u8 {
+    if (server_protos.len == 0 or client_protos.len == 0) {
+        return "";
+    }
+    var http11_fallback = false;
+    for (server_protos) |s| {
+        for (client_protos) |c| {
+            if (mem.eql(u8, s, c)) {
+                return s;
+            }
+            if (mem.eql(u8, s, alpn_h2) and mem.eql(u8, c, alpn_http_1_1)) {
+                http11_fallback = true;
+            }
+        }
+    }
+    // As a special case, let http/1.1 clients connect to h2 servers as if they
+    // didn't support ALPN. We used not to enforce protocol overlap, so over
+    // time a number of HTTP servers were configured with only "h2", but
+    // expected to accept connections from "http/1.1" clients. See Issue 46310.
+    return if (http11_fallback)
+        ""
+    else
+        error.UnsupportedAlpn;
 }
 
 const testing = std.testing;
