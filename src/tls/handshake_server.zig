@@ -26,9 +26,9 @@ const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const fmtx = @import("../fmtx.zig");
 
-// ServerHandshakeState contains details of a server handshake in progress.
+// ServerHandshakeStateTls12 contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
-pub const ServerHandshakeState = struct {
+pub const ServerHandshakeStateTls12 = struct {
     client_hello: ClientHelloMsg,
     hello: ?ServerHelloMsg = null,
     suite: ?*const CipherSuite12 = null,
@@ -41,7 +41,7 @@ pub const ServerHandshakeState = struct {
     master_secret: ?[]const u8 = null,
     cert_chain: ?CertificateChain = null,
 
-    pub fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
+    pub fn deinit(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) void {
         self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
@@ -53,33 +53,35 @@ pub const ServerHandshakeState = struct {
 pub const ServerHandshake = union(ProtocolVersion) {
     v1_3: void,
     v1_2: ServerHandshakeTls12,
-    v1_0: ServerHandshakeTls12,
+    v1_0: void,
 
     pub fn init(ver: ProtocolVersion, conn: *Conn, client_hello: ClientHelloMsg) ServerHandshake {
         return switch (ver) {
             .v1_3 => @panic("not implemented yet"),
             .v1_2 => ServerHandshake{ .v1_2 = ServerHandshakeTls12.init(conn, client_hello) },
-            .v1_0 => ServerHandshake{ .v1_0 = ServerHandshakeTls12.init(conn, client_hello) },
+            .v1_0 => @panic("unsupported version"),
         };
     }
 
     pub fn deinit(self: *ServerHandshake, allocator: mem.Allocator) void {
         switch (self.*) {
             .v1_3 => @panic("not implemented yet"),
-            .v1_2, .v1_0 => |*hs| hs.deinit(allocator),
+            .v1_2 => |*hs| hs.deinit(allocator),
+            .v1_0 => @panic("unsupported version"),
         }
     }
 
     pub fn handshake(self: *ServerHandshake, allocator: mem.Allocator) !void {
         switch (self.*) {
             .v1_3 => @panic("not implemented yet"),
-            .v1_2, .v1_0 => |*hs| try hs.handshake(allocator),
+            .v1_2 => |*hs| try hs.handshake(allocator),
+            .v1_0 => @panic("unsupported version"),
         }
     }
 };
 
 pub const ServerHandshakeTls12 = struct {
-    state: ServerHandshakeState,
+    state: ServerHandshakeStateTls12,
     conn: *Conn,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeTls12 {
