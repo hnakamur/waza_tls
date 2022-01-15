@@ -1,4 +1,5 @@
 const std = @import("std");
+const memx = @import("../memx.zig");
 
 pub fn isDelimChar(c: u8) bool {
     return delimCharBitset.isSet(c);
@@ -53,7 +54,7 @@ fn makeStaticCharBitSet(predicate: fn (u8) bool) std.StaticBitSet(char_bitset_si
 const delim_chars = "\"(),/:;<=>?@[\\]{}";
 
 fn _isDelimChar(c: u8) bool {
-    return if (std.mem.indexOfScalar(u8, delim_chars, c)) |_| true else false;
+    return memx.containsScalar(u8, delim_chars, c);
 }
 
 fn _isTokenChar(c: u8) bool {

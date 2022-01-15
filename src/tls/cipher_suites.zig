@@ -6,6 +6,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const RsaKeyAgreement = @import("key_agreement.zig").RsaKeyAgreement;
 const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
+const memx = @import("../memx.zig");
 
 pub const CipherSuite = union(ProtocolVersion) {
     v1_3: CipherSuite13,
@@ -123,12 +124,7 @@ pub fn makeCipherPreferenceList12(
 }
 
 pub fn mutualCipherSuite12(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuite12 {
-    for (have) |id| {
-        if (id == want) {
-            return cipherSuite12ById(id);
-        }
-    }
-    return null;
+    return if (memx.containsScalar(CipherSuiteId, have, want)) cipherSuite12ById(want) else null;
 }
 
 // selectCipherSuite12 returns the first TLS 1.0–1.2 cipher suite from ids which
@@ -144,10 +140,8 @@ pub fn selectCipherSuite12(
                 continue;
             }
 
-            for (supported_ids) |sup_id| {
-                if (id == sup_id) {
-                    return candidate;
-                }
+            if (memx.containsScalar(CipherSuiteId, supported_ids, id)) {
+                return candidate;
             }
         }
     }

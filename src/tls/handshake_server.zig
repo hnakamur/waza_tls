@@ -27,6 +27,7 @@ const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const fmtx = @import("../fmtx.zig");
+const memx = @import("../memx.zig");
 
 pub const ServerHandshakeState = union(ProtocolVersion) {
     v1_3: void,
@@ -115,7 +116,7 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     pub fn processClientHello(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
-        if (mem.indexOfScalar(CompressionMethod, self.client_hello.compression_methods, .none)) |_| {} else {
+        if (!memx.containsScalar(CompressionMethod, self.client_hello.compression_methods, .none)) {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.ClientNotSupportUncompressedMethod;
         }
@@ -373,26 +374,41 @@ fn supportedEcdHe(
     supported_curves: []const CurveId,
     supported_points: []const EcPointFormat,
 ) bool {
-    var supports_curve = false;
-    for (supported_curves) |curve| {
-        if (c.supportsCurve(curve)) {
-            supports_curve = true;
-            break;
+    const supports_curve = blk: {
+        for (supported_curves) |curve| {
+            if (c.supportsCurve(curve)) {
+                break :blk true;
+            }
         }
-    }
+        break :blk false;
+    };
 
-    var supports_point_format = false;
-    for (supported_points) |point_format| {
-        if (point_format == .uncompressed) {
-            supports_point_format = true;
-            break;
-        }
-    }
+    const supports_point_format = memx.containsScalar(
+        EcPointFormat,
+        supported_points,
+        .uncompressed,
+    );
 
     return supports_curve and supports_point_format;
 }
 
 const testing = std.testing;
+
+test "supportedEcdHe" {
+    const f = struct {
+        fn f(
+            want: bool,
+            c: Conn.Config,
+            supported_curves: []const CurveId,
+            supported_points: []const EcPointFormat,
+        ) !void {
+            const got = supportedEcdHe(&c, supported_curves, supported_points);
+            try testing.expectEqual(want, got);
+        }
+    }.f;
+
+    try f(true, .{}, &.{.x25519}, &.{.uncompressed});
+}
 
 const testEd25519Certificate = "\x30\x82\x01\x2e\x30\x81\xe1\xa0\x03\x02\x01\x02\x02\x10\x0f\x43\x1c\x42\x57\x93\x94\x1d\xe9\x87\xe4\xf1\xad\x15\x00\x5d\x30\x05\x06\x03\x2b\x65\x70\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x1e\x17\x0d\x31\x39\x30\x35\x31\x36\x32\x31\x33\x38\x30\x31\x5a\x17\x0d\x32\x30\x30\x35\x31\x35\x32\x31\x33\x38\x30\x31\x5a\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00\x3f\xe2\x15\x2e\xe6\xe3\xef\x3f\x4e\x85\x4a\x75\x77\xa3\x64\x9e\xed\xe0\xbf\x84\x2c\xcc\x92\x26\x8f\xfa\x6f\x34\x83\xaa\xec\x8f\xa3\x4d\x30\x4b\x30\x0e\x06\x03\x55\x1d\x0f\x01\x01\xff\x04\x04\x03\x02\x05\xa0\x30\x13\x06\x03\x55\x1d\x25\x04\x0c\x30\x0a\x06\x08\x2b\x06\x01\x05\x05\x07\x03\x01\x30\x0c\x06\x03\x55\x1d\x13\x01\x01\xff\x04\x02\x30\x00\x30\x16\x06\x03\x55\x1d\x11\x04\x0f\x30\x0d\x82\x0b\x65\x78\x61\x6d\x70\x6c\x65\x2e\x63\x6f\x6d\x30\x05\x06\x03\x2b\x65\x70\x03\x41\x00\x63\x44\xed\x9c\xc4\xbe\x53\x24\x53\x9f\xd2\x10\x8d\x9f\xe8\x21\x08\x90\x95\x39\xe5\x0d\xc1\x55\xff\x2c\x16\xb7\x1d\xfc\xab\x7d\x4d\xd4\xe0\x93\x13\xd0\xa9\x42\xe0\xb6\x6b\xfe\x5d\x67\x48\xd7\x9f\x50\xbc\x6c\xcd\x4b\x03\x83\x7c\xf2\x08\x58\xcd\xac\xcf\x0c";
 const testEd25519PrivateKey = "\x3a\x88\x49\x65\xe7\x6b\x3f\x55\xe5\xfa\xf9\x61\x54\x58\xa9\x23\x54\x89\x42\x34\xde\x3e\xc9\xf6\x84\xd4\x6d\x55\xce\xbf\x3d\xc6\x3f\xe2\x15\x2e\xe6\xe3\xef\x3f\x4e\x85\x4a\x75\x77\xa3\x64\x9e\xed\xe0\xbf\x84\x2c\xcc\x92\x26\x8f\xfa\x6f\x34\x83\xaa\xec\x8f";

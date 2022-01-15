@@ -3,6 +3,7 @@ const mem = std.mem;
 const FieldLine = @import("fields.zig").FieldLine;
 const FieldLineIterator = @import("fields.zig").FieldLineIterator;
 const FieldsScanner = @import("fields_scanner.zig").FieldsScanner;
+const memx = @import("memx.zig");
 
 const http_log = std.log.scoped(.http);
 
@@ -231,7 +232,7 @@ pub const FieldsEditor = struct {
     }
 
     fn validateName(name: []const u8) !void {
-        if (std.mem.indexOfScalar(u8, name, ':')) |_| {
+        if (memx.containsScalar(u8, name, ':')) {
             return error.InvalidInput;
         }
     }
