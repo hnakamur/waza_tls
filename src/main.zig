@@ -28,6 +28,7 @@ const BytesView = @import("BytesView.zig");
 const dns = @import("dns.zig");
 const tls = @import("tls.zig");
 const fmtx = @import("fmtx.zig");
+const memx = @import("memx.zig");
 
 pub const config = @import("config.zig");
 

@@ -4,6 +4,7 @@ const io = std.io;
 const math = std.math;
 const mem = std.mem;
 const net = std.net;
+const memx = @import("../memx.zig");
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
 const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
@@ -108,12 +109,7 @@ pub const Conn = struct {
         }
 
         pub fn supportsCurve(self: *const Config, curve: CurveId) bool {
-            for (self.curve_preferences) |c| {
-                if (c == curve) {
-                    return true;
-                }
-            }
-            return false;
+            return memx.containsScalar(CurveId, self.curve_preferences, curve);
         }
     };
 

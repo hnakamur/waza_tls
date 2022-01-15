@@ -374,14 +374,12 @@ fn supportedEcdHe(
     supported_curves: []const CurveId,
     supported_points: []const EcPointFormat,
 ) bool {
-    const supports_curve = blk: {
-        for (supported_curves) |curve| {
-            if (c.supportsCurve(curve)) {
-                break :blk true;
-            }
-        }
-        break :blk false;
-    };
+    const supports_curve = memx.containsScalarFn(
+        CurveId,
+        supported_curves,
+        c,
+        Conn.Config.supportsCurve,
+    );
 
     const supports_point_format = memx.containsScalar(
         EcPointFormat,
