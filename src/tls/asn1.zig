@@ -48,6 +48,18 @@ pub const Tag = enum(u8) {
     }
 };
 
+pub const RawContent = struct {
+    bytes: []const u8,
+};
+
+// BitString is the structure to use when you want an ASN.1 BIT STRING type. A
+// bit string is padded up to the nearest byte in memory and the number of
+// valid bits is recorded. Padding bits will be zero.
+pub const BitString = struct {
+    bytes: []const u8, // bits packed into bytes.
+    bit_length: usize, // length in bits.
+};
+
 pub const String = struct {
     bytes: []const u8,
 

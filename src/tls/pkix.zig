@@ -9,19 +9,19 @@ pub const AlgorithmIdentifier = struct {
     algorithm: asn1.ObjectIdentifier,
     parameters: ?asn1.RawValue = null,
 
-    pub fn parse(allocator: mem.Allocator, self: *asn1.String) !AlgorithmIdentifier {
+    pub fn parse(allocator: mem.Allocator, input: *asn1.String) !AlgorithmIdentifier {
         var algorithm = asn1.ObjectIdentifier.parse(
             allocator,
-            self,
+            input,
         ) catch return error.MalformedOid;
         errdefer algorithm.deinit(allocator);
 
-        if (self.empty()) {
+        if (input.empty()) {
             return AlgorithmIdentifier{ .algorithm = algorithm };
         }
 
         var tag: asn1.Tag = undefined;
-        var params = self.readAnyAsn1Element(&tag) catch return error.MalformedParameters;
+        var params = input.readAnyAsn1Element(&tag) catch return error.MalformedParameters;
         return AlgorithmIdentifier{
             .algorithm = algorithm,
             .parameters = .{ .tag = tag, .full_bytes = try allocator.dupe(u8, params.bytes) },

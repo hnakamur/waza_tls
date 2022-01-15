@@ -99,7 +99,8 @@ pub const PrivateKey = union(KeyType) {
 };
 
 pub const SignatureAlgorithm = enum(u8) {
-    md2_with_rsa = 1, // Unsupported.
+    unknown,
+    md2_with_rsa, // Unsupported.
     md5_with_rsa, // Only supported for signing, not verification.
     sha1WithRSA, // Only supported for signing, not verification.
     sha256_with_rsa,
@@ -139,6 +140,21 @@ pub const SignatureAlgorithm = enum(u8) {
         // RSA PSS is special because it encodes important parameters
         // in the Parameters.
 
+        @panic("not implemented yet");
+    }
+};
+
+// PssParameters reflects the parameters in an AlgorithmIdentifier that
+// specifies RSA PSS. See RFC 3447, Appendix A.2.3.
+const PssParameters = struct {
+    hash: pkix.AlgorithmIdentifier,
+    mgf: pkix.AlgorithmIdentifier,
+    salt_length: usize,
+    trailer_field: usize = 1,
+
+    pub fn parse(input: []const u8, allocator: mem.Allocator) !PssParameters {
+        _ = input;
+        _ = allocator;
         @panic("not implemented yet");
     }
 };
@@ -194,18 +210,6 @@ const signature_algorithm_details = [_]SignatureAlgorithmDetail{
     },
 };
 
-// PssParameters reflects the parameters in an AlgorithmIdentifier that
-// specifies RSA PSS. See RFC 3447, Appendix A.2.3.
-const PssParameters = struct {
-    // The following three fields are not marked as
-    // optional because the default values specify SHA-1,
-    // which is no longer suitable for use in signatures.
-    hash_algorithm: ?pkix.AlgorithmIdentifier = null,
-    mask_gen_algorithm: ?pkix.AlgorithmIdentifier = null,
-    salt_length: ?usize = null,
-    trailer_field: usize,
-};
-
 // fieldParameters is the parsed representation of tag string from a structure field.
 const FieldParameters = struct {
     optional: bool, // true iff the field is OPTIONAL
@@ -221,6 +225,12 @@ const FieldParameters = struct {
 
     // Invariants:
     //   if explicit is set, tag is non-nil.
+};
+
+const PublicKeyInfo = struct {
+    raw: asn1.RawContent,
+    algorithm: pkix.AlgorithmIdentifier,
+    publikc_key: asn1.BitString,
 };
 
 const Certificate = struct {
@@ -298,6 +308,7 @@ const Certificate = struct {
         }
         var sig_ai = try pkix.AlgorithmIdentifier.parse(allocator, &sig_ai_seq);
         errdefer sig_ai.deinit(allocator);
+        // TODO: const signature_algorithm = try SignatureAlgorithm.fromAlgorithmIdentifier(&sig_ai);
 
         var issuer_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedIssuer;
         const raw_issuer = issuer_seq.bytes;
