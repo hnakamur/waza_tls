@@ -49,10 +49,10 @@ pub const Tag = enum(u8) {
 };
 
 pub const String = struct {
-    data: []const u8,
+    bytes: []const u8,
 
-    pub fn init(data: []const u8) String {
-        return .{ .data = data };
+    pub fn init(bytes: []const u8) String {
+        return .{ .bytes = bytes };
     }
 
     // skip advances the String by n bytes.
@@ -62,11 +62,11 @@ pub const String = struct {
 
     pub fn readIntOfType(self: *String, comptime T: type) !T {
         const n = @divExact(@typeInfo(T).Int.bits, 8);
-        if (self.data.len < n) {
+        if (self.bytes.len < n) {
             return error.EndOfStream;
         }
-        const v = mem.readIntBig(T, self.data[0..n]);
-        self.data = self.data[n..];
+        const v = mem.readIntBig(T, self.bytes[0..n]);
+        self.bytes = self.bytes[n..];
         return v;
     }
 
@@ -96,26 +96,26 @@ pub const String = struct {
 
     // readBytes reads n bytes and advances over them.
     pub fn readBytes(self: *String, n: usize) ![]const u8 {
-        if (self.data.len < n) {
+        if (self.bytes.len < n) {
             return error.EndOfStream;
         }
-        const v = self.data[0..n];
-        self.data = self.data[n..];
+        const v = self.bytes[0..n];
+        self.bytes = self.bytes[n..];
         return v;
     }
 
     // copyBytes copies out.len bytes into out and advances over them.
     pub fn copyBytes(self: *String, out: []u8) !void {
-        if (self.data.len < out.len) {
+        if (self.bytes.len < out.len) {
             return error.EndOfStream;
         }
-        mem.copy(u8, out, self.data[0..out.len]);
-        self.data = self.data[out.len..];
+        mem.copy(u8, out, self.bytes[0..out.len]);
+        self.bytes = self.bytes[out.len..];
     }
 
     // empty reports whether the string does not contain any bytes.
     pub fn empty(self: *const String) bool {
-        return self.data.len == 0;
+        return self.bytes.len == 0;
     }
 
     // readAsn1 reads the contents of a DER-encoded ASN.1 element (not including
@@ -159,7 +159,7 @@ pub const String = struct {
     // peekAsn1Tag reports whether the next ASN.1 value on the string starts with
     // the given tag.
     pub fn peekAsn1Tag(self: *const String, tag: Tag) bool {
-        return self.data.len > 0 and @intToEnum(Tag, self.data[0]) == tag;
+        return self.bytes.len > 0 and @intToEnum(Tag, self.bytes[0]) == tag;
     }
 
     // skipAsn1 reads and discards an ASN.1 element with the given tag. It
@@ -217,22 +217,22 @@ pub const String = struct {
     }
 
     fn readAsn1BigInt(self: *String, allocator: mem.Allocator) !math.big.int.Managed {
-        var bytes = try self.readAsn1(.integer);
-        var data = bytes.data;
-        try checkAsn1Integer(data);
+        var input = try self.readAsn1(.integer);
+        var bytes = input.bytes;
+        try checkAsn1Integer(bytes);
         const limb_byte_len = @divExact(@typeInfo(usize).Int.bits, 8);
-        if (data[0] & 0x80 == 0x80) {
+        if (bytes[0] & 0x80 == 0x80) {
             // Negative number.
-            const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * data.len);
+            const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * bytes.len);
             var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
             var b = @ptrCast([*]u8, ret.limbs.ptr);
             var i: usize = 0;
-            while (i < data.len) : (i += 1) {
+            while (i < bytes.len) : (i += 1) {
                 // Use bitwise NOT here since encoded bytes are encoded in two's-complement form.
                 // Also note bytes in zig's big integer are little-endian ordered.
-                b[data.len - 1 - i] = ~data[i];
+                b[bytes.len - 1 - i] = ~bytes[i];
             }
-            mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
+            mem.set(u8, b[bytes.len .. limb_byte_len * capacity], 0);
             ret.metadata = capacity;
 
             // ret = -(ret + 1)
@@ -242,18 +242,18 @@ pub const String = struct {
             ret.negate();
             return ret;
         } else {
-            if (data[0] == 0 and data.len > 1) {
-                data = data[1..];
+            if (bytes[0] == 0 and bytes.len > 1) {
+                bytes = bytes[1..];
             }
-            const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * data.len);
+            const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * bytes.len);
             var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
             var b = @ptrCast([*]u8, ret.limbs.ptr);
             var i: usize = 0;
-            while (i < data.len) : (i += 1) {
+            while (i < bytes.len) : (i += 1) {
                 // Note bytes in zig's big integer are little-endian ordered.
-                b[data.len - 1 - i] = data[i];
+                b[bytes.len - 1 - i] = bytes[i];
             }
-            mem.set(u8, b[data.len .. limb_byte_len * capacity], 0);
+            mem.set(u8, b[bytes.len .. limb_byte_len * capacity], 0);
             ret.metadata = capacity;
             return ret;
         }
@@ -261,22 +261,22 @@ pub const String = struct {
 
     fn readAsn1Int64(self: *String) !i64 {
         var bytes = try self.readAsn1(.integer);
-        try checkAsn1Integer(bytes.data);
-        return try asn1Signed(bytes.data);
+        try checkAsn1Integer(bytes.bytes);
+        return try asn1Signed(bytes.bytes);
     }
 
     fn readAsn1Uint64(self: *String) !u64 {
         var bytes = try self.readAsn1(.integer);
-        try checkAsn1Integer(bytes.data);
-        return try asn1Unsigned(bytes.data);
+        try checkAsn1Integer(bytes.bytes);
+        return try asn1Unsigned(bytes.bytes);
     }
 
     fn doReadAsn1(self: *String, out_tag: ?*Tag, skip_header: bool) !String {
-        if (self.data.len < 2) {
+        if (self.bytes.len < 2) {
             return error.EndOfStream;
         }
 
-        const tag = @intToEnum(Tag, self.data[0]);
+        const tag = @intToEnum(Tag, self.bytes[0]);
         if (tag.isHighTag()) {
             // ITU-T X.690 section 8.1.2
             //
@@ -290,7 +290,7 @@ pub const String = struct {
             t.* = tag;
         }
 
-        const len_byte = self.data[1];
+        const len_byte = self.bytes[1];
 
         // ITU-T X.690 section 8.1.3
         //
@@ -306,11 +306,11 @@ pub const String = struct {
             // Long-form length (section 8.1.3.5). Bits 1-7 encode the number of octets
             // used to encode the length.
             const len_len = len_byte & 0x7f;
-            if (len_len == 0 or len_len > 4 or self.data.len < 2 + len_len) {
+            if (len_len == 0 or len_len > 4 or self.bytes.len < 2 + len_len) {
                 return error.InvalidLength;
             }
 
-            var len_bytes = String.init(self.data[2 .. 2 + len_len]);
+            var len_bytes = String.init(self.bytes[2 .. 2 + len_len]);
             const len32 = try len_bytes.readUnsigned(len_len);
 
             // ITU-T X.690 section 10.1 (DER length forms) requires encoding the length
@@ -395,8 +395,40 @@ fn asn1Unsigned(bytes: []const u8) !u64 {
 pub const ObjectIdentifier = struct {
     components: []const u32,
 
+    // parse decodes an ASN.1 OBJECT IDENTIFIER and advances.
+    pub fn parse(allocator: mem.Allocator, s: *String) !ObjectIdentifier {
+        var input = try s.readAsn1(.object_identifier);
+        if (input.empty()) return error.InvalidObjectIdentifier;
+
+        var components = try allocator.alloc(u32, input.bytes.len + 1);
+        errdefer allocator.free(components);
+
+        const v = try readBase128Int(&input);
+        if (v < 80) {
+            components[0] = v / 40;
+            components[1] = v % 40;
+        } else {
+            components[0] = 2;
+            components[1] = v - 80;
+        }
+
+        var i: usize = 2;
+        while (!input.empty()) : (i += 1) {
+            const v2 = try readBase128Int(&input);
+            components[i] = v2;
+        }
+
+        return ObjectIdentifier{ .components = components };
+    }
+
     pub fn deinit(self: *ObjectIdentifier, allocator: mem.Allocator) void {
         allocator.free(self.components);
+    }
+
+    pub fn clone(self: ObjectIdentifier, allocator: mem.Allocator) !ObjectIdentifier {
+        return ObjectIdentifier{
+            .components = try allocator.dupe(u32, self.components),
+        };
     }
 
     pub fn format(
@@ -429,36 +461,10 @@ test "ObjectIdentifier.eql" {
     );
 }
 
-// readAsn1ObjectIdentifier decodes an ASN.1 OBJECT IDENTIFIER and advances.
-pub fn readAsn1ObjectIdentifier(self: *String, allocator: mem.Allocator) !ObjectIdentifier {
-    var bytes = try self.readAsn1(.object_identifier);
-    if (bytes.empty()) return error.InvalidObjectIdentifier;
-
-    var components = try allocator.alloc(u32, bytes.data.len + 1);
-    errdefer allocator.free(components);
-
-    const v = try readBase128Int(&bytes);
-    if (v < 80) {
-        components[0] = v / 40;
-        components[1] = v % 40;
-    } else {
-        components[0] = 2;
-        components[1] = v - 80;
-    }
-
-    var i: usize = 2;
-    while (!bytes.empty()) : (i += 1) {
-        const v2 = try readBase128Int(&bytes);
-        components[i] = v2;
-    }
-
-    return ObjectIdentifier{ .components = components };
-}
-
 pub fn readBase128Int(self: *String) !u32 {
     var ret: u32 = 0;
     var i: usize = 0;
-    while (self.data.len > 0) : (i += 1) {
+    while (self.bytes.len > 0) : (i += 1) {
         if (i == 5) {
             return error.InvalidBase128Int;
         }
@@ -502,23 +508,23 @@ test "readOptionalAsn1" {
             var s = String.init(input);
             if (try s.readOptionalAsn1(tag)) |got| {
                 if (want) |w| {
-                    if (!mem.eql(u8, w.data, got.data)) {
+                    if (!mem.eql(u8, w.bytes, got.bytes)) {
                         std.debug.print(
                             "input={}, got {}, want {}\n",
                             .{
                                 fmtx.fmtSliceHexEscapeLower(input),
-                                fmtx.fmtSliceHexEscapeLower(got.data),
-                                fmtx.fmtSliceHexEscapeLower(w.data),
+                                fmtx.fmtSliceHexEscapeLower(got.bytes),
+                                fmtx.fmtSliceHexEscapeLower(w.bytes),
                             },
                         );
                     }
-                    try testing.expectEqualSlices(u8, w.data, got.data);
+                    try testing.expectEqualSlices(u8, w.bytes, got.bytes);
                 } else {
                     std.debug.print(
                         "input={}, got {}, want null\n",
                         .{
                             fmtx.fmtSliceHexEscapeLower(input),
-                            fmtx.fmtSliceHexEscapeLower(got.data),
+                            fmtx.fmtSliceHexEscapeLower(got.bytes),
                         },
                     );
                 }
@@ -528,7 +534,7 @@ test "readOptionalAsn1" {
                         "input={}, got null, want {}\n",
                         .{
                             fmtx.fmtSliceHexEscapeLower(input),
-                            fmtx.fmtSliceHexEscapeLower(w.data),
+                            fmtx.fmtSliceHexEscapeLower(w.bytes),
                         },
                     );
                 }
@@ -786,30 +792,30 @@ test "asn1.Tag" {
 }
 
 test "String.readBytes" {
-    const data = "zig is great";
-    var s = String.init(data);
+    const bytes = "zig is great";
+    var s = String.init(bytes);
 
     try testing.expectEqualStrings("zig", try s.readBytes(3));
-    try testing.expectEqualStrings(" is great", s.data);
+    try testing.expectEqualStrings(" is great", s.bytes);
 
     try testing.expectEqualStrings(" is", try s.readBytes(3));
-    try testing.expectEqualStrings(" great", s.data);
+    try testing.expectEqualStrings(" great", s.bytes);
 
-    try testing.expectError(error.EndOfStream, s.readBytes(s.data.len + 1));
+    try testing.expectError(error.EndOfStream, s.readBytes(s.bytes.len + 1));
 }
 
 test "String.copyBytes" {
-    const data = "zig is great";
-    var s = String.init(data);
+    const bytes = "zig is great";
+    var s = String.init(bytes);
 
     var out: [5]u8 = undefined;
     try s.copyBytes(&out);
     try testing.expectEqualStrings("zig i", &out);
-    try testing.expectEqualStrings("s great", s.data);
+    try testing.expectEqualStrings("s great", s.bytes);
 
     try s.copyBytes(&out);
     try testing.expectEqualStrings("s gre", &out);
-    try testing.expectEqualStrings("at", s.data);
+    try testing.expectEqualStrings("at", s.bytes);
 
     try testing.expectError(error.EndOfStream, s.copyBytes(&out));
 }
@@ -845,8 +851,8 @@ test "String.skip" {
 }
 
 test "std.mem.readIntBig" {
-    const data = "\xff";
-    const got = mem.readIntBig(i8, data);
+    const bytes = "\xff";
+    const got = mem.readIntBig(i8, bytes);
     try testing.expectEqual(@as(i8, -1), got);
 }
 

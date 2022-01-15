@@ -2,19 +2,19 @@ const std = @import("std");
 const memx = @import("../memx.zig");
 
 pub fn isDelimChar(c: u8) bool {
-    return delimCharBitset.isSet(c);
+    return delim_char_bitset.isSet(c);
 }
 
 pub fn isTokenChar(c: u8) bool {
-    return tokenCharBitset.isSet(c);
+    return token_char_bitset.isSet(c);
 }
 
 pub fn isQdTextChar(c: u8) bool {
-    return qdTextCharBitset.isSet(c);
+    return qd_text_char_bitset.isSet(c);
 }
 
 pub fn isQuotedPairChar(c: u8) bool {
-    return quotedPairCharBitset.isSet(c);
+    return quoted_pair_char_bitset.isSet(c);
 }
 
 pub fn isVisibleChar(c: u8) bool {
@@ -33,14 +33,14 @@ pub fn isWhiteSpaceChar(c: u8) bool {
     return c == ' ' or c == '\t';
 }
 
-const delimCharBitset = makeStaticCharBitSet(_isDelimChar);
-const tokenCharBitset = makeStaticCharBitSet(_isTokenChar);
-const qdTextCharBitset = makeStaticCharBitSet(_isQdTextChar);
-const quotedPairCharBitset = makeStaticCharBitSet(_isQuotedPairChar);
+const delim_char_bitset = makeStaticCharBitSet(_isDelimChar);
+const token_char_bitset = makeStaticCharBitSet(_isTokenChar);
+const qd_text_char_bitset = makeStaticCharBitSet(_isQdTextChar);
+const quoted_pair_char_bitset = makeStaticCharBitSet(_isQuotedPairChar);
 
 const char_bitset_size = 256;
 
-fn makeStaticCharBitSet(predicate: fn (u8) bool) std.StaticBitSet(char_bitset_size) {
+pub fn makeStaticCharBitSet(predicate: fn (u8) bool) std.StaticBitSet(char_bitset_size) {
     @setEvalBranchQuota(10000);
     var bitset = std.StaticBitSet(char_bitset_size).initEmpty();
     var c: u8 = 0;
