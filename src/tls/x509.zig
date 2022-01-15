@@ -7,6 +7,7 @@ const asn1 = @import("asn1.zig");
 const pkix = @import("pkix.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const rsa = @import("rsa.zig");
+const memx = @import("../memx.zig");
 
 pub const PublicKeyAlgorithm = enum(u8) {
     unknown,
@@ -179,6 +180,7 @@ const Certificate = struct {
     raw_subject_public_key_info: []const u8,
     public_key_algorithm: PublicKeyAlgorithm,
     public_key: PublicKey,
+    extensions: []pkix.Extension,
 
     pub fn parse(allocator: mem.Allocator, der: []const u8) !Certificate {
         var input = asn1.String.init(der);
@@ -279,22 +281,53 @@ const Certificate = struct {
         var public_key = try parsePublicKey(allocator, public_key_algorithm, &pk_info);
         errdefer public_key.deinit(allocator);
 
-        return Certificate{
-            .raw = raw,
-            .raw_tbs_certificate = raw_tbs_certificate,
-            .version = version,
-            .serial_number = serial_number,
-            .signature_algorithm = sig_ai,
-            .raw_issuer = raw_issuer,
-            .issuer = issuer,
-            .not_before = not_before,
-            .not_after = not_after,
-            .raw_subject = raw_subject,
-            .subject = subject,
-            .raw_subject_public_key_info = raw_subject_public_key_info,
-            .public_key_algorithm = public_key_algorithm,
-            .public_key = public_key,
+        var cert = blk: {
+            var extensions = std.ArrayListUnmanaged(pkix.Extension){};
+            errdefer extensions.deinit(allocator);
+            if (version > 1) {
+                _ = tbs.skipOptionalAsn1(asn1.Tag.init(1).constructed().contextSpecific()) catch
+                    return error.MalformedIssuerUniqueId;
+                _ = tbs.skipOptionalAsn1(asn1.Tag.init(2).constructed().contextSpecific()) catch
+                    return error.MalformedSubjectUniqueId;
+                if (version == 3) {
+                    if (tbs.readOptionalAsn1(asn1.Tag.init(2).constructed().contextSpecific()) catch
+                        return error.MalformedExtensions) |*extensions_der|
+                    {
+                        while (!extensions_der.empty()) {
+                            var extension_der = extensions_der.readAsn1(.sequence) catch
+                                return error.MalformedExtension;
+                            var ext = try pkix.Extension.parse(&extension_der, allocator);
+                            try extensions.append(allocator, ext);
+                        }
+                    }
+                }
+            }
+            break :blk Certificate{
+                .raw = raw,
+                .raw_tbs_certificate = raw_tbs_certificate,
+                .version = version,
+                .serial_number = serial_number,
+                .signature_algorithm = sig_ai,
+                .raw_issuer = raw_issuer,
+                .issuer = issuer,
+                .not_before = not_before,
+                .not_after = not_after,
+                .raw_subject = raw_subject,
+                .subject = subject,
+                .raw_subject_public_key_info = raw_subject_public_key_info,
+                .public_key_algorithm = public_key_algorithm,
+                .public_key = public_key,
+                .extensions = extensions.toOwnedSlice(allocator),
+            };
         };
+        try cert.processExtensions(allocator);
+        return cert;
+    }
+
+    fn processExtensions(self: *Certificate, allocator: mem.Allocator) !void {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
     }
 
     pub fn deinit(self: *Certificate, allocator: mem.Allocator) void {
@@ -304,6 +337,7 @@ const Certificate = struct {
         self.issuer.deinit(allocator);
         self.subject.deinit(allocator);
         self.public_key.deinit(allocator);
+        memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
     }
 
     pub fn format(
@@ -326,6 +360,7 @@ const Certificate = struct {
         try std.fmt.format(writer, ", subject = {}", .{self.subject});
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
         try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
+        try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         _ = try writer.write(" }");
     }
 };

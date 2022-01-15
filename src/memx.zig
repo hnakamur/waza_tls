@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 
 pub fn containsScalar(comptime T: type, slice: []const T, value: T) bool {
     for (slice) |v| {
@@ -17,6 +18,24 @@ pub fn containsScalarFn(
         if (predicate(context, v)) return true;
     }
     return false;
+}
+
+pub fn deinitArrayListAndElems(
+    comptime T: type,
+    list: *std.ArrayListUnmanaged(T),
+    allocator: mem.Allocator,
+) void {
+    for (list.items) |*elem| elem.deinit(allocator);
+    list.deinit(allocator);
+}
+
+pub fn deinitSliceAndElems(
+    comptime T: type,
+    slice: []T,
+    allocator: mem.Allocator,
+) void {
+    for (slice) |*elem| elem.deinit(allocator);
+    if (slice.len > 0) allocator.free(slice);
 }
 
 const testing = std.testing;

@@ -35,6 +35,10 @@ pub const Tag = enum(u8) {
     bmp_string = 30,
     _,
 
+    pub fn init(tag: u8) Tag {
+        return @intToEnum(Tag, tag);
+    }
+
     pub fn constructed(self: Tag) Tag {
         return @intToEnum(Tag, @enumToInt(self) | class_constructed);
     }
@@ -252,7 +256,7 @@ pub const String = struct {
     // skipOptionalAsn1 advances s over an ASN.1 element with the given tag, or
     // else leaves s unchanged.
     pub fn skipOptionalAsn1(self: *String, tag: Tag) !void {
-        if (peekAsn1Tag(tag)) try self.skipAsn1(tag);
+        if (self.peekAsn1Tag(tag)) try self.skipAsn1(tag);
     }
 
     // readOptionalAsn1 attempts to read the contents of a DER-encoded ASN.1
@@ -279,12 +283,26 @@ pub const String = struct {
             break :blk try i.readAsn1Integer(T, allocator);
         } else switch (T) {
             math.big.int.Const => blk: {
-                break :blk math.big.int.Const {
+                break :blk math.big.int.Const{
                     .limbs = try allocator.dupe(math.big.Limb, default_value.limbs),
                     .positive = default_value.positive,
                 };
             },
             else => default_value,
+        };
+    }
+
+    // ReadASN1Boolean decodes an ASN.1 BOOLEAN and converts it to a boolean
+    // representation and advances.
+    pub fn readAsn1Boolean(self: *String) !bool {
+        var bytes = try self.readAsn1(.boolean);
+        if (bytes.bytes.len != 1) {
+            return error.InvalidAsn1Boolean;
+        }
+        return switch (bytes.bytes[0]) {
+            0 => false,
+            0xff => true,
+            else => error.InvalidAsn1Boolean,
         };
     }
 

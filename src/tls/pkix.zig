@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const asn1 = @import("asn1.zig");
 const x509 = @import("x509.zig");
+const memx = @import("../memx.zig");
 
 // AlgorithmIdentifier represents the ASN.1 structure of the same name. See RFC
 // 5280, section 4.1.1.2.
@@ -40,10 +41,10 @@ pub const RdnSequence = struct {
     pub fn parse(allocator: mem.Allocator, raw: *asn1.String) !RdnSequence {
         var s = raw.readAsn1(.sequence) catch return error.InvalidRdnSequence;
         var names = std.ArrayListUnmanaged(RelativeDistinguishedName){};
-        errdefer deinitArrayListAndElems(RelativeDistinguishedName, &names, allocator);
+        errdefer memx.deinitArrayListAndElems(RelativeDistinguishedName, &names, allocator);
         while (!s.empty()) {
             var attributes = std.ArrayListUnmanaged(AttributeTypeAndValue){};
-            errdefer deinitArrayListAndElems(AttributeTypeAndValue, &attributes, allocator);
+            errdefer memx.deinitArrayListAndElems(AttributeTypeAndValue, &attributes, allocator);
             var set = s.readAsn1(.set) catch return error.X509InvalidRdnSequence;
             while (!set.empty()) {
                 var atav = set.readAsn1(.sequence) catch return error.X509InvalidRdnSequence;
@@ -74,7 +75,7 @@ pub const RdnSequence = struct {
     }
 
     pub fn deinit(self: *RdnSequence, allocator: mem.Allocator) void {
-        deinitSliceAndElems(RelativeDistinguishedName, self.names, allocator);
+        memx.deinitSliceAndElems(RelativeDistinguishedName, self.names, allocator);
     }
 };
 
@@ -82,7 +83,7 @@ const RelativeDistinguishedName = struct {
     attributes: []AttributeTypeAndValue,
 
     pub fn deinit(self: *RelativeDistinguishedName, allocator: mem.Allocator) void {
-        deinitSliceAndElems(AttributeTypeAndValue, self.attributes, allocator);
+        memx.deinitSliceAndElems(AttributeTypeAndValue, self.attributes, allocator);
     }
 };
 
@@ -102,6 +103,35 @@ const AttributeTypeAndValue = struct {
     pub fn deinit(self: *AttributeTypeAndValue, allocator: mem.Allocator) void {
         self.@"type".deinit(allocator);
         allocator.free(self.value);
+    }
+};
+
+// Extension represents the ASN.1 structure of the same name. See RFC
+// 5280, section 4.2.
+pub const Extension = struct {
+    id: asn1.ObjectIdentifier,
+    critical: bool,
+    value: []const u8 = "",
+
+    pub fn parse(der: *asn1.String, allocator: mem.Allocator) !Extension {
+        var id = asn1.ObjectIdentifier.parse(allocator, der) catch
+            return error.MalformedExtensionOidField;
+        errdefer id.deinit(allocator);
+        var critical: bool = false;
+        if (der.peekAsn1Tag(.boolean)) {
+            critical = der.readAsn1Boolean() catch return error.MalformedExtensionCriticalField;
+        }
+        const value = der.readAsn1(.octet_string) catch return error.MalformedExtensionValueField;
+        return Extension{
+            .id = id,
+            .critical = critical,
+            .value = try allocator.dupe(u8, value.bytes),
+        };
+    }
+
+    pub fn deinit(self: *Extension, allocator: mem.Allocator) void {
+        self.id.deinit(allocator);
+        if (self.value.len > 0) allocator.free(self.value);
     }
 };
 
@@ -152,7 +182,7 @@ pub const Name = struct {
         var serial_number: []const u8 = "";
         var common_name: []const u8 = "";
         var names = std.ArrayListUnmanaged(AttributeTypeAndValue){};
-        errdefer deinitArrayListAndElems(AttributeTypeAndValue, &names, allocator);
+        errdefer memx.deinitArrayListAndElems(AttributeTypeAndValue, &names, allocator);
         for (rdns.names) |rdn| {
             if (rdn.attributes.len == 0) {
                 continue;
@@ -201,8 +231,8 @@ pub const Name = struct {
         if (self.province.len > 0) allocator.free(self.province);
         if (self.street_address.len > 0) allocator.free(self.street_address);
         if (self.postal_code.len > 0) allocator.free(self.postal_code);
-        deinitSliceAndElems(AttributeTypeAndValue, self.names, allocator);
-        deinitSliceAndElems(AttributeTypeAndValue, self.extra_names, allocator);
+        memx.deinitSliceAndElems(AttributeTypeAndValue, self.names, allocator);
+        memx.deinitSliceAndElems(AttributeTypeAndValue, self.extra_names, allocator);
     }
 
     pub fn format(
@@ -265,22 +295,4 @@ fn formatStringField(
     _ = fmt;
     _ = options;
     try std.fmt.format(writer, "{s} = \"{s}\"", .{ name, s });
-}
-
-fn deinitArrayListAndElems(
-    comptime T: type,
-    list: *std.ArrayListUnmanaged(T),
-    allocator: mem.Allocator,
-) void {
-    for (list.items) |*elem| elem.deinit(allocator);
-    list.deinit(allocator);
-}
-
-fn deinitSliceAndElems(
-    comptime T: type,
-    slice: []T,
-    allocator: mem.Allocator,
-) void {
-    for (slice) |*elem| elem.deinit(allocator);
-    if (slice.len > 0) allocator.free(slice);
 }
