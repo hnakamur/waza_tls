@@ -115,15 +115,7 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     pub fn processClientHello(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
-        const found_compression = blk: {
-            for (self.client_hello.compression_methods) |method| {
-                if (method == .none) {
-                    break :blk true;
-                }
-            }
-            break :blk false;
-        };
-        if (!found_compression) {
+        if (mem.indexOfScalar(CompressionMethod, self.client_hello.compression_methods, .none)) |_| {} else {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.ClientNotSupportUncompressedMethod;
         }
@@ -144,7 +136,7 @@ pub const ServerHandshakeStateTls12 = struct {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.InitialHandshakeWithRenegotiation;
         }
-        // hello.secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported;
+        hello.secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported;
 
         self.ecdhe_ok = supportedEcdHe(
             &self.conn.config,

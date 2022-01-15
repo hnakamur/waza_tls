@@ -1115,6 +1115,11 @@ fn readString(comptime LenType: type, bv: *BytesView) ![]const u8 {
     return try bv.sliceBytesNoEof(len);
 }
 
+test "readString empty" {
+    var bv = BytesView.init("\x00");
+    try testing.expectEqualStrings("", try readString(u8, &bv));
+}
+
 fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare {
     const list_len = try bv.readIntBig(u16);
     try bv.ensureRestLen(list_len);
@@ -1688,6 +1693,12 @@ test "ServerHelloMsg.unmarshal" {
         defer msg.deinit(allocator);
         try TestCase.run(test_marshaled_server_hello_msg_with_extensions, &msg);
     }
+
+    {
+        var msg = try testCreateServerHelloMsgWithExtensions2(allocator);
+        defer msg.deinit(allocator);
+        try TestCase.run(test_marshaled_server_hello_msg_with_extensions2, &msg);
+    }
 }
 
 fn testCreateServerHelloMsg(allocator: mem.Allocator) !ServerHelloMsg {
@@ -1761,6 +1772,82 @@ const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
     "\x00\x0c" ++ // u16 ext_len
     "\x0b" ++ // u8 len
     "\x72\x65\x6e\x65\x67\x6f\x61\x74\x69\x6f\x6e" ++ // "renegoation"
+    "\x00\x10" ++ // ExtensionType.Alpn
+    "\x00\x0b" ++ // u16 ext_len
+    "\x00\x09" ++ // u16 protocols len
+    "\x08" ++ // u8 protocol len
+    "\x68\x74\x74\x70\x2f\x31\x2e\x31" ++ // "http/1.1"
+    "\x00\x12" ++ // ExtensionType.Sct
+    "\x00\x0e" ++ // u16 ext_len
+    "\x00\x0c" ++ // u16 scts len
+    "\x00\x04" ++ // u16 sct len
+    "\x73\x63\x74\x31" ++ // "sct1"
+    "\x00\x04" ++ // u16 sct len
+    "\x73\x63\x74\x32" ++ // "sct2"
+    "\x00\x2b" ++ // ExtensionType.SupportedVersions
+    "\x00\x02" ++ // u16 ext_len
+    "\x03\x04" ++ // TLS v1.3
+    "\x00\x33" ++ // ExtensionType.KeyShare
+    "\x00\x13" ++ // u16 ext_len
+    "\x00\x1d" ++ // u16 server_share.group = CurveId.x25519
+    "\x00\x0f" ++ // u16 server_share.data.len
+    "\x70\x75\x62\x6c\x69\x63\x20\x6b\x65\x79\x20\x68\x65\x72\x65" ++ // "public key here"
+    "\x00\x29" ++ // ExtensionType.PreSharedKey
+    "\x00\x02" ++ // u16 ext_len
+    "\x43\x21" ++ // u16 selected_identity = 0x4321
+    "\x00\x0b" ++ // ExtensionType.SupportedPoints
+    "\x00\x02" ++ // u16 ext_len
+    "\x01" ++ // u8 len
+    "\x00"; // EcPointFormat.uncompressed
+
+fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHelloMsg {
+    const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(random);
+    const scts = try allocator.dupe(
+        []const u8,
+        &[_][]const u8{ "sct1", "sct2" },
+    );
+    errdefer allocator.free(scts);
+    const supported_points = try allocator.dupe(
+        EcPointFormat,
+        &[_]EcPointFormat{.uncompressed},
+    );
+    errdefer allocator.free(supported_points);
+    return ServerHelloMsg{
+        .vers = .v1_3,
+        .random = random,
+        .session_id = &[_]u8{0} ** 32,
+        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .compression_method = .none,
+        .ocsp_stapling = true,
+        .ticket_supported = true,
+        .secure_renegotiation_supported = true,
+        .secure_renegotiation = "",
+        .alpn_protocol = "http/1.1",
+        .scts = scts,
+        .supported_version = .v1_3,
+        .server_share = .{ .group = .x25519, .data = "public key here" },
+        .selected_identity = 0x4321,
+        .supported_points = supported_points,
+    };
+}
+
+const test_marshaled_server_hello_msg_with_extensions2 = "\x02" ++ // ServerHello
+    "\x00\x00\x9f" ++ // u24 len
+    "\x03\x04" ++ // TLS v1.3
+    "\x00" ** 32 ++ // 32 byte random
+    "\x20" ++ // u8 len 32
+    "\x00" ** 32 ++ // 32 byte session id
+    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
+    "\x00" ++ // CompressionMethod.none
+    "\x00\x57" ++ // u16 extensions_len
+    "\x00\x05" ++ // ExtensionType.StatusRequest
+    "\x00\x00" ++ // u16 ext_len = 0 (empty)
+    "\x00\x23" ++ // ExtensionType.SessionTicket
+    "\x00\x00" ++ // u16 ext_len = 0 (empty)
+    "\xff\x01" ++ // ExtensionType.RenegotiationInfo
+    "\x00\x01" ++ // u16 ext_len
+    "\x00" ++ // u8 len
     "\x00\x10" ++ // ExtensionType.Alpn
     "\x00\x0b" ++ // u16 ext_len
     "\x00\x09" ++ // u16 protocols len
