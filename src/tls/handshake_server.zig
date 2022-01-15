@@ -115,6 +115,19 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     pub fn processClientHello(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
+        const found_compression = blk: {
+            for (self.client_hello.compression_methods) |method| {
+                if (method == .none) {
+                    break :blk true;
+                }
+            }
+            break :blk false;
+        };
+        if (!found_compression) {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.ClientNotSupportUncompressedMethod;
+        }
+
         const random = try generateRandom(allocator);
         // TODO: stop hardcoding field values.
         var hello = ServerHelloMsg{
@@ -126,6 +139,12 @@ pub const ServerHandshakeStateTls12 = struct {
             .ocsp_stapling = false,
             .supported_version = .v1_2,
         };
+
+        if (self.client_hello.secure_renegotiation.len > 0) {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.InitialHandshakeWithRenegotiation;
+        }
+        // hello.secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported;
 
         self.ecdhe_ok = supportedEcdHe(
             &self.conn.config,

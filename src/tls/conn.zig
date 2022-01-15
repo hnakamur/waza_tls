@@ -236,7 +236,7 @@ pub const Conn = struct {
         }
     }
 
-    fn sendAlert(self: *Conn, desc: AlertDescription) !void {
+    pub fn sendAlert(self: *Conn, desc: AlertDescription) !void {
         const level = desc.level();
         std.log.debug("Conn.sendAlert, level={}, desc={}", .{ level, desc });
         const data = [_]u8{ @enumToInt(level), @enumToInt(desc) };
