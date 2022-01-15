@@ -393,15 +393,36 @@ fn asn1Unsigned(bytes: []const u8) !u64 {
 }
 
 pub const ObjectIdentifier = struct {
-    const country = initConst(&.{ 2, 5, 4, 6 });
-    const organization = initConst(&.{ 2, 5, 4, 10 });
-    const organizational_unit = initConst(&.{ 2, 5, 4, 11 });
-    const common_name = initConst(&.{ 2, 5, 4, 3 });
-    const serial_number = initConst(&.{ 2, 5, 4, 5 });
-    const locality = initConst(&.{ 2, 5, 4, 7 });
-    const province = initConst(&.{ 2, 5, 4, 8 });
-    const street_address = initConst(&.{ 2, 5, 4, 9 });
-    const postal_code = initConst(&.{ 2, 5, 4, 17 });
+    pub const country = initConst(&.{ 2, 5, 4, 6 });
+    pub const organization = initConst(&.{ 2, 5, 4, 10 });
+    pub const organizational_unit = initConst(&.{ 2, 5, 4, 11 });
+    pub const common_name = initConst(&.{ 2, 5, 4, 3 });
+    pub const serial_number = initConst(&.{ 2, 5, 4, 5 });
+    pub const locality = initConst(&.{ 2, 5, 4, 7 });
+    pub const province = initConst(&.{ 2, 5, 4, 8 });
+    pub const street_address = initConst(&.{ 2, 5, 4, 9 });
+    pub const postal_code = initConst(&.{ 2, 5, 4, 17 });
+
+    // RFC 3279, 2.3 Public Key Algorithms
+    //
+    // pkcs-1 OBJECT IDENTIFIER ::== { iso(1) member-body(2) us(840)
+    //    rsadsi(113549) pkcs(1) 1 }
+    //
+    // rsaEncryption OBJECT IDENTIFIER ::== { pkcs1-1 1 }
+    //
+    // id-dsa OBJECT IDENTIFIER ::== { iso(1) member-body(2) us(840)
+    //    x9-57(10040) x9cm(4) 1 }
+    //
+    // RFC 5480, 2.1.1 Unrestricted Algorithm Identifier and Parameters
+    //
+    // id-ecPublicKey OBJECT IDENTIFIER ::= {
+    //       iso(1) member-body(2) us(840) ansi-X9-62(10045) keyType(2) 1 }
+    pub const public_key_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 1 });
+    pub const public_key_dsa = initConst(&.{ 1, 2, 840, 10040, 4, 1 });
+    pub const public_key_ecdsa = initConst(&.{ 1, 2, 840, 10045, 2, 1 });
+    pub const public_key_ed25519 = signature_ed25519;
+
+    pub const signature_ed25519 = initConst(&.{ 1, 3, 101, 112 });
 
     components: []const u32,
 
