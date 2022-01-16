@@ -466,7 +466,8 @@ pub const String = struct {
 // tagging with tag strings on the fields of a structure.
 
 // FieldParameters is the parameters for parsing ASN.1 value for a structure field.
-const FieldParameters = struct {
+pub const FieldParameters = struct {
+    name: []const u8, // field name
     optional: bool = false, // true iff the field is OPTIONAL
     explicit: bool = false, // true iff an EXPLICIT tag is in use.
     application: bool = false, // true iff an APPLICATION tag is in use.
@@ -477,6 +478,38 @@ const FieldParameters = struct {
     time_type: ?Tag = null, // the time tag to use when marshaling.
     set: bool = false, // true iff this should be encoded as a SET
     omit_empty: bool = false, // true iff this should be omitted if empty when marshaling.
+
+    pub fn getSlice(comptime Struct: type) []const FieldParameters {
+        const struct_info = @typeInfo(Struct).Struct;
+        inline for (struct_info.decls) |decl| {
+            switch (decl.data) {
+                .Var => |v| {
+                    switch (@typeInfo(v)) {
+                        .Array => |a| {
+                            if (a.child == FieldParameters) {
+                                return &@field(Struct, decl.name);
+                            }
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+        }
+        return &[_]FieldParameters{};
+    }
+
+    pub fn forField(
+        comptime params: []const FieldParameters,
+        comptime name: []const u8,
+    ) ?*const FieldParameters {
+        for (params) |*param| {
+            if (mem.eql(u8, param.name, name)) {
+                return param;
+            }
+        }
+        return null;
+    }
 
     fn defaultValue(self: *const FieldParameters, comptime T: type) ?T {
         if (!self.optional) {

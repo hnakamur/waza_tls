@@ -109,6 +109,10 @@ const AttributeTypeAndValue = struct {
 // Extension represents the ASN.1 structure of the same name. See RFC
 // 5280, section 4.2.
 pub const Extension = struct {
+    pub const field_parameters = [_]asn1.FieldParameters{
+        .{ .name = "critical", .optional = true },
+    };
+
     id: asn1.ObjectIdentifier,
     critical: bool,
     value: []const u8 = "",
@@ -134,6 +138,53 @@ pub const Extension = struct {
         if (self.value.len > 0) allocator.free(self.value);
     }
 };
+
+const testing = std.testing;
+
+test "FieldParameters.getSlice" {
+    testing.log_level = .debug;
+    var parameter_id: ?*const asn1.FieldParameters = undefined;
+    const param_critical = comptime blk: {
+        const params = asn1.FieldParameters.getSlice(Extension);
+        const param_critical = asn1.FieldParameters.forField(params, "critical");
+        const param_id = asn1.FieldParameters.forField(params, "id");
+        parameter_id = param_id;
+        break :blk param_critical;
+    };
+    std.log.debug("parameter_id={any}", .{parameter_id});
+    std.log.debug("param_critical={any}", .{param_critical});
+}
+
+test "TypeInfo" {
+    testing.log_level = .debug;
+    const ext = Extension{ .id = undefined, .critical = undefined };
+    // const Type = @TypeOf(ext);
+    // inline for (std.meta.fields(Extension)) |field| {
+    //     std.log.debug("field.name={s}", .{field.name});
+    // }
+    inline for (std.meta.declarations(Extension)) |decl| {
+        // std.log.debug("decl.name={s}, decl={}", .{decl.name, decl});
+        switch (decl.data) {
+            .Var => |v| {
+                const info = @typeInfo(v);
+                std.log.debug("info={}", .{info});
+            },
+            else => {},
+        }
+    }
+    // const info = @typeInfo(Extension);
+    // switch (info) {
+    //     .Struct => |st| {
+    //         for (st.fields) |field| {
+    //             std.log.debug("field name={s}", .{field.name});
+    //         }
+    //     },
+    //     else => unreachable,
+    // }
+    // // std.debug.print("{}\n", .{@typeInfo(@TypeOf(ext))});
+    // std.debug.print("{}\n", .{@typeInfo(Extension)});
+    _ = ext;
+}
 
 // Name represents an X.509 distinguished name. This only includes the common
 // elements of a DN. Note that Name is only an approximation of the X.509
