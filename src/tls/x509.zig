@@ -143,7 +143,7 @@ const FieldParameters = struct {
     application: bool, // true iff an APPLICATION tag is in use.
     private: bool, // true iff a PRIVATE tag is in use.
     default_value: ?i64 = null, // a default value for INTEGER typed fields (maybe nil).
-    tag: ?asn1.Tag = null, // the EXPLICIT or IMPLICIT tag (maybe nil).
+    tag: ?asn1.TagAndClass = null, // the EXPLICIT or IMPLICIT tag (maybe nil).
     string_type: usize, // the string tag to use when marshaling.
     time_type: usize, // the time tag to use when marshaling.
     set: bool, // true iff this should be encoded as a SET
@@ -203,7 +203,7 @@ const Certificate = struct {
 
         var version = tbs.readOptionalAsn1Integer(
             i64,
-            @intToEnum(asn1.Tag, 0).constructed().contextSpecific(),
+            @intToEnum(asn1.TagAndClass, 0).constructed().contextSpecific(),
             allocator,
             0,
         ) catch return error.MalformedVersion;
@@ -285,12 +285,12 @@ const Certificate = struct {
             var extensions = std.ArrayListUnmanaged(pkix.Extension){};
             errdefer extensions.deinit(allocator);
             if (version > 1) {
-                _ = tbs.skipOptionalAsn1(asn1.Tag.init(1).constructed().contextSpecific()) catch
+                _ = tbs.skipOptionalAsn1(asn1.TagAndClass.init(1).constructed().contextSpecific()) catch
                     return error.MalformedIssuerUniqueId;
-                _ = tbs.skipOptionalAsn1(asn1.Tag.init(2).constructed().contextSpecific()) catch
+                _ = tbs.skipOptionalAsn1(asn1.TagAndClass.init(2).constructed().contextSpecific()) catch
                     return error.MalformedSubjectUniqueId;
                 if (version == 3) {
-                    if (tbs.readOptionalAsn1(asn1.Tag.init(2).constructed().contextSpecific()) catch
+                    if (tbs.readOptionalAsn1(asn1.TagAndClass.init(2).constructed().contextSpecific()) catch
                         return error.MalformedExtensions) |*extensions_der|
                     {
                         while (!extensions_der.empty()) {
@@ -494,7 +494,7 @@ fn writeUtcTime(dt: *const datetime.datetime.Datetime, writer: anytype) !void {
     });
 }
 
-pub fn parseAsn1String(allocator: mem.Allocator, tag: asn1.Tag, value: []const u8) ![]const u8 {
+pub fn parseAsn1String(allocator: mem.Allocator, tag: asn1.TagAndClass, value: []const u8) ![]const u8 {
     switch (tag) {
         .t61_string => return try allocator.dupe(u8, value),
         .printable_string => {

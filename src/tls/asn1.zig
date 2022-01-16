@@ -4,13 +4,13 @@ const mem = std.mem;
 const x509 = @import("x509.zig");
 const pkix = @import("pkix.zig");
 
-// Tag represents an ASN.1 identifier octet, consisting of a tag number
+// TagAndClass represents an ASN.1 identifier octet, consisting of a tag number
 // (indicating a type) and class (such as context-specific or constructed).
 //
 // Methods in the cryptobyte package only support the low-tag-number form, i.e.
 // a single identifier octet with bits 7-8 encoding the class and bits 1-6
 // encoding the tag number.
-pub const Tag = enum(u8) {
+pub const TagAndClass = enum(u8) {
     const class_constructed = 0x20;
     const class_context_specific = 0x80;
 
@@ -35,22 +35,42 @@ pub const Tag = enum(u8) {
     bmp_string = 30,
     _,
 
-    pub fn init(tag: u8) Tag {
-        return @intToEnum(Tag, tag);
+    pub fn init(tag: u8) TagAndClass {
+        return @intToEnum(TagAndClass, tag);
     }
 
-    pub fn constructed(self: Tag) Tag {
-        return @intToEnum(Tag, @enumToInt(self) | class_constructed);
+    pub fn constructed(self: TagAndClass) TagAndClass {
+        return @intToEnum(TagAndClass, @enumToInt(self) | class_constructed);
     }
 
-    pub fn contextSpecific(self: Tag) Tag {
-        return @intToEnum(Tag, @enumToInt(self) | class_context_specific);
+    pub fn contextSpecific(self: TagAndClass) TagAndClass {
+        return @intToEnum(TagAndClass, @enumToInt(self) | class_context_specific);
     }
 
-    pub fn isHighTag(self: Tag) bool {
+    pub fn isHighTag(self: TagAndClass) bool {
         return @enumToInt(self) & 0x1f == 0x1f;
     }
 };
+
+pub const Class = enum(u2) {
+    universal = 0,
+    application = 1,
+    context_specific = 2,
+    private = 3,
+};
+
+// pub const TagAndLength = struct {
+//     class: Class,
+//     tag: Tag,
+//     length: usize,
+//     is_compound: bool,
+
+//     // parse parses an ASN.1 tag and length pair from the given offset
+//     // into a byte slice. It returns the new offset. SET and
+//     // SET OF (tag 17) are mapped to SEQUENCE and SEQUENCE OF (tag 16) since we
+//     // don't distinguish between ordered and unordered objects in this code.
+//     fn parse(input: []const u8, init_offset: usize, out: *TagAndLength) !usize {}
+// };
 
 pub const RawContent = struct {
     bytes: []const u8,
@@ -208,8 +228,8 @@ pub const String = struct {
     // given tag.
     //
     // Tags greater than 30 are not supported (i.e. low-tag-number format only).
-    pub fn readAsn1(self: *String, tag: Tag) !String {
-        var t: Tag = undefined;
+    pub fn readAsn1(self: *String, tag: TagAndClass) !String {
+        var t: TagAndClass = undefined;
         const out = try self.readAnyAsn1(&t);
         return if (t == tag) out else error.TagMismatch;
     }
@@ -219,8 +239,8 @@ pub const String = struct {
     // given tag.
     //
     // Tags greater than 30 are not supported (i.e. low-tag-number format only).
-    pub fn readAsn1Element(self: *String, tag: Tag) !String {
-        var t: Tag = undefined;
+    pub fn readAsn1Element(self: *String, tag: TagAndClass) !String {
+        var t: TagAndClass = undefined;
         const out = try self.readAnyAsn1Element(&t);
         return if (t == tag) out else error.TagMismatch;
     }
@@ -229,7 +249,7 @@ pub const String = struct {
     // tag and length bytes), sets out_tag to its tag, and advances.
     //
     // Tags greater than 30 are not supported (i.e. low-tag-number format only).
-    pub fn readAnyAsn1(self: *String, out_tag: ?*Tag) !String {
+    pub fn readAnyAsn1(self: *String, out_tag: ?*TagAndClass) !String {
         return self.doReadAsn1(out_tag, true);
     }
 
@@ -237,31 +257,31 @@ pub const String = struct {
     // (including tag and length bytes), sets out_tag to is tag, and advances.
     //
     // Tags greater than 30 are not supported (i.e. low-tag-number format only).
-    pub fn readAnyAsn1Element(self: *String, out_tag: ?*Tag) !String {
+    pub fn readAnyAsn1Element(self: *String, out_tag: ?*TagAndClass) !String {
         return self.doReadAsn1(out_tag, false);
     }
 
     // peekAsn1Tag reports whether the next ASN.1 value on the string starts with
     // the given tag.
-    pub fn peekAsn1Tag(self: *const String, tag: Tag) bool {
-        return self.bytes.len > 0 and @intToEnum(Tag, self.bytes[0]) == tag;
+    pub fn peekAsn1Tag(self: *const String, tag: TagAndClass) bool {
+        return self.bytes.len > 0 and @intToEnum(TagAndClass, self.bytes[0]) == tag;
     }
 
     // skipAsn1 reads and discards an ASN.1 element with the given tag. It
     // reports whether the operation was successful.
-    pub fn skipAsn1(self: *String, tag: Tag) !void {
+    pub fn skipAsn1(self: *String, tag: TagAndClass) !void {
         _ = try self.readAsn1(tag);
     }
 
     // skipOptionalAsn1 advances s over an ASN.1 element with the given tag, or
     // else leaves s unchanged.
-    pub fn skipOptionalAsn1(self: *String, tag: Tag) !void {
+    pub fn skipOptionalAsn1(self: *String, tag: TagAndClass) !void {
         if (self.peekAsn1Tag(tag)) try self.skipAsn1(tag);
     }
 
     // readOptionalAsn1 attempts to read the contents of a DER-encoded ASN.1
     // element (not including tag and length bytes) tagged with the given tag.
-    pub fn readOptionalAsn1(self: *String, tag: Tag) !?String {
+    pub fn readOptionalAsn1(self: *String, tag: TagAndClass) !?String {
         return if (self.peekAsn1Tag(tag)) try self.readAsn1(tag) else null;
     }
 
@@ -275,7 +295,7 @@ pub const String = struct {
     pub fn readOptionalAsn1Integer(
         self: *String,
         comptime T: type,
-        tag: Tag,
+        tag: TagAndClass,
         allocator: mem.Allocator,
         default_value: T,
     ) !T {
@@ -296,7 +316,7 @@ pub const String = struct {
     // representation and advances.
     pub fn readAsn1Boolean(self: *String) !bool {
         var bytes = try self.readAsn1(.boolean);
-        return try parseBool(bytes);
+        return try parseBool(bytes.bytes);
     }
 
     // readAsn1Integer decodes an ASN.1 INTEGER and advances.
@@ -368,12 +388,12 @@ pub const String = struct {
         return try asn1Unsigned(bytes.bytes);
     }
 
-    fn doReadAsn1(self: *String, out_tag: ?*Tag, skip_header: bool) !String {
+    fn doReadAsn1(self: *String, out_tag: ?*TagAndClass, skip_header: bool) !String {
         if (self.bytes.len < 2) {
             return error.EndOfStream;
         }
 
-        const tag = @intToEnum(Tag, self.bytes[0]);
+        const tag = @intToEnum(TagAndClass, self.bytes[0]);
         if (tag.isHighTag()) {
             // ITU-T X.690 section 8.1.2
             //
@@ -477,9 +497,9 @@ pub const FieldParameters = struct {
     application: bool = false, // true iff an APPLICATION tag is in use.
     private: bool = false, // true iff a PRIVATE tag is in use.
     default_value: ?i64 = null, // a default value for INTEGER typed fields.
-    tag: ?Tag = null, // the EXPLICIT or IMPLICIT tag
-    string_type: ?Tag = null, // the string tag to use when marshaling.
-    time_type: ?Tag = null, // the time tag to use when marshaling.
+    tag: ?TagAndClass = null, // the EXPLICIT or IMPLICIT tag
+    string_type: ?TagAndClass = null, // the string tag to use when marshaling.
+    time_type: ?TagAndClass = null, // the time tag to use when marshaling.
     set: bool = false, // true iff this should be encoded as a SET
     omit_empty: bool = false, // true iff this should be omitted if empty when marshaling.
 
@@ -544,29 +564,47 @@ pub const FieldParameters = struct {
         }
     }
 
-    pub fn parseField(params: *const FieldParameters, input: *String, out: anytype) !void {
+    pub fn parseField(self: *const FieldParameters, input: *String, out: anytype) !void {
+        if (input.empty()) {
+            self.setDefaultValue(out) catch return error.SyntaxErrorSequenceTruncated;
+        }
         const out_info = @typeInfo(@TypeOf(out));
         std.log.debug("out_info={}", .{out_info});
         out.* = true;
         _ = input;
-        _ = params;
     }
 };
 
 test "FieldParameters.setDefaultValue" {
     testing.log_level = .debug;
 
-    const MyStruct = struct {
-        pub const field_parameters = [_]FieldParameters{
-            .{ .name = "v", .optional = true, .default_value = 3 },
+    {
+        const MyStruct = struct {
+            pub const field_parameters = [_]FieldParameters{
+                .{ .name = "v", .optional = true, .default_value = 3 },
+            };
+
+            v: i32 = undefined,
         };
 
-        v: i32 = undefined,
-    };
+        var s = MyStruct{};
+        try MyStruct.field_parameters[0].setDefaultValue(&s.v);
+        try testing.expectEqual(@as(i32, 3), s.v);
+    }
 
-    var s = MyStruct{};
-    try MyStruct.field_parameters[0].setDefaultValue(&s.v);
-    try testing.expectEqual(@as(i32, 3), s.v);
+    {
+        const MyStruct = struct {
+            pub const field_parameters = [_]FieldParameters{
+                .{ .name = "v", .optional = true },
+            };
+
+            v: i32 = undefined,
+        };
+
+        var s = MyStruct{ .v = 2 };
+        try MyStruct.field_parameters[0].setDefaultValue(&s.v);
+        try testing.expectEqual(@as(i32, 2), s.v);
+    }
 }
 
 fn parseField(comptime T: type, input: *String, params: *const FieldParameters) !T {
@@ -755,15 +793,15 @@ pub fn readBase128Int(self: *String) !u32 {
 }
 
 // null_bytes contains bytes representing the DER-encoded ASN.1 NULL type.
-pub const null_bytes = &[_]u8{ @enumToInt(Tag.@"null"), 0 };
+pub const null_bytes = &[_]u8{ @enumToInt(TagAndClass.@"null"), 0 };
 
 // A RawValue represents an undecoded ASN.1 object.
 pub const RawValue = struct {
-    // null is a RawValue with its Tag set to the ASN.1 NULL type tag (5).
+    // null is a RawValue with its TagAndClass set to the ASN.1 NULL type tag (5).
     pub const @"null" = RawValue{ .tag = .@"null" };
 
-    class: Tag = @intToEnum(Tag, 0),
-    tag: Tag,
+    class: TagAndClass = @intToEnum(TagAndClass, 0),
+    tag: TagAndClass,
     is_compound: bool = false,
     bytes: ?[]const u8 = null,
     full_bytes: []const u8, // includes the tag and length
@@ -780,7 +818,7 @@ const fmtx = @import("../fmtx.zig");
 test "readOptionalAsn1" {
     testing.log_level = .debug;
     const f = struct {
-        fn f(want: ?String, input: []const u8, tag: Tag) !void {
+        fn f(want: ?String, input: []const u8, tag: TagAndClass) !void {
             var s = String.init(input);
             if (try s.readOptionalAsn1(tag)) |got| {
                 if (want) |w| {
@@ -859,7 +897,7 @@ fn debugFormatBigIntManaged(
 test "readOptionalAsn1Integer" {
     testing.log_level = .debug;
     const f = struct {
-        fn f(comptime T: type, want_str: []const u8, input: []const u8, tag: Tag, default_value: T) !void {
+        fn f(comptime T: type, want_str: []const u8, input: []const u8, tag: TagAndClass, default_value: T) !void {
             const allocator = testing.allocator;
             var s = String.init(input);
             var got = try s.readOptionalAsn1Integer(T, tag, allocator, default_value);
@@ -883,7 +921,7 @@ test "readOptionalAsn1Integer" {
         }
     }.f;
 
-    try f(u64, "2", "\xa0\x03\x02\x01\x02", @intToEnum(Tag, 0).constructed().contextSpecific(), 0);
+    try f(u64, "2", "\xa0\x03\x02\x01\x02", @intToEnum(TagAndClass, 0).constructed().contextSpecific(), 0);
     {
         const allocator = testing.allocator;
         var default_value = (try math.big.int.Managed.initSet(allocator, 0)).toConst();
@@ -897,7 +935,7 @@ test "readOptionalAsn1Integer" {
             math.big.int.Const,
             "2",
             "\xa0\x03\x02\x01\x02",
-            @intToEnum(Tag, 0).constructed().contextSpecific(),
+            @intToEnum(TagAndClass, 0).constructed().contextSpecific(),
             default_value,
         );
     }
@@ -914,7 +952,7 @@ test "readOptionalAsn1Integer" {
             math.big.int.Const,
             "0",
             "\x02\x01\x00",
-            @intToEnum(Tag, 0).constructed().contextSpecific(),
+            @intToEnum(TagAndClass, 0).constructed().contextSpecific(),
             default_value,
         );
     }
@@ -1067,9 +1105,9 @@ test "asn1Unsigned" {
     try testing.expectError(error.TooLargeInteger, asn1Unsigned("\x00" ** 10));
 }
 
-test "asn1.Tag" {
-    try testing.expectEqual(@intToEnum(Tag, 0x2c), Tag.utf8_string.constructed());
-    try testing.expectEqual(@intToEnum(Tag, 0x8c), Tag.utf8_string.contextSpecific());
+test "asn1.TagAndClass" {
+    try testing.expectEqual(@intToEnum(TagAndClass, 0x2c), TagAndClass.utf8_string.constructed());
+    try testing.expectEqual(@intToEnum(TagAndClass, 0x8c), TagAndClass.utf8_string.contextSpecific());
 }
 
 test "String.readBytes" {
