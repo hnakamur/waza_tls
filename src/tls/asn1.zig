@@ -543,16 +543,6 @@ pub const FieldParameters = struct {
             @panic("out must be a pointer to single mutable signed integer");
         }
     }
-
-    pub fn parseField(self: *const FieldParameters, input: *String, out: anytype) !void {
-        if (input.empty()) {
-            self.setDefaultValue(out) catch return error.SyntaxErrorSequenceTruncated;
-        }
-        const out_info = @typeInfo(@TypeOf(out));
-        std.log.debug("out_info={}", .{out_info});
-        out.* = true;
-        _ = input;
-    }
 };
 
 test "FieldParameters.setDefaultValue" {
@@ -585,13 +575,6 @@ test "FieldParameters.setDefaultValue" {
         try MyStruct.field_parameters[0].setDefaultValue(&s.v);
         try testing.expectEqual(@as(i32, 2), s.v);
     }
-}
-
-fn parseField(comptime T: type, input: *String, params: *const FieldParameters) !T {
-    _ = T;
-    _ = input;
-    _ = params;
-    @panic("not implemented yet");
 }
 
 fn checkAsn1Integer(bytes: []const u8) !void {
@@ -832,20 +815,6 @@ pub const Tag = enum(u32) {
     _,
 };
 
-pub const Der = struct {
-    bytes: []const u8,
-
-    pub fn empty(self: *const Der) bool {
-        return self.bytes.len == 0;
-    }
-
-    pub fn readByte(self: *Der) u8 {
-        const b = self.bytes[0];
-        self.bytes = self.bytes[1..];
-        return b;
-    }
-};
-
 pub const TagAndLength = struct {
     class: Class,
     pc: PrimitiveOrConstructive,
@@ -968,6 +937,111 @@ fn parseBase128Int(input: []const u8, init_offset: usize, out: *u32) !usize {
     return error.Asn1SyntaxError;
 }
 
+// invalidLength reports whether offset + length > slice_length, or if the
+// addition would overflow.
+fn invalidLength(offset: usize, length: usize, slice_length: usize) bool {
+    const end_offest = offset +% length;
+    return end_offest < offset or end_offest > slice_length;
+}
+
+// parseField is the main parsing function. Given a byte slice and an offset
+// into the array, it will try to parse a suitable ASN.1 value out and store it
+// in the given Value.
+pub fn parseField(
+    self: *const FieldParameters,
+    input: []const u8,
+    init_offset: usize,
+    out: anytype,
+) !usize {
+    var offset = init_offset;
+    // If we have run out of data, it may be that there are optional elements at the end.
+    if (offset == input.len) {
+        self.setDefaultValue(out) catch {
+            std.log.warn("sequence truncated", .{});
+            return error.Asn1SyntaxError;
+        };
+    }
+
+    // Deal with the ANY type.
+    var t: TagAndLength = undefined;
+    offset = try TagAndLength.parse(input, offset, &t);
+    if (invalidLength(offset, t.length, input.len)) {
+        std.log.warn("data truncated", .{});
+        return error.Asn1SyntaxError;
+    }
+    if (t.pc == .primitive and t.class == .universal) {
+        const inner_input = input[offset .. offset + t.length];
+        switch (t.tag) {
+            .printable_string => out.* = try parsePrintableString(inner_input),
+            else => {
+                // If we don't know how to handle the type, we just leave Value unmodified.
+            },
+        }
+        return offset + t.length;
+    }
+    // TODO: implement
+    return offset;
+}
+
+test "parseField" {
+    const T1 = struct {
+        pub const field_parameters = [_]FieldParameters{
+            .{ .name = "id" },
+        };
+        id: []const u8 = undefined,
+    };
+    var t1: T1 = undefined;
+    const input = &[_]u8{0x13, 0x04, 't', 'e', 's', 't'};
+    const new_offset = try parseField(&T1.field_parameters[0], input, 0, &t1.id);
+    try testing.expectEqual(input.len, new_offset);
+    try testing.expectEqualStrings("test", t1.id);
+}
+
+// PrintableString
+
+// parsePrintableString parses an ASN.1 PrintableString from the given byte
+// array and returns it.
+fn parsePrintableString(input: []const u8) ![]const u8 {
+    for (input) |b| {
+        if (!isPrintable(b, .allow_asterisk, .allow_ampersand)) {
+            std.log.warn("PrintableString contains invalid character", .{});
+            return error.Asn1SyntaxError;
+        }
+    }
+    return input;
+}
+
+const AsteriskFlag = enum(u1) {
+    reject_asterisk = 0,
+    allow_asterisk = 1,
+};
+
+const AmpersandFlag = enum(u1) {
+    reject_ampersand = 0,
+    allow_ampersand = 1,
+};
+
+fn isPrintable(b: u8, comptime asterisk: AsteriskFlag, comptime ampersand: AmpersandFlag) bool {
+    return 'a' <= b and b <= 'z' or
+        'A' <= b and b <= 'Z' or
+        '0' <= b and b <= '9' or
+        '\'' <= b and b <= ')' or
+        '+' <= b and b <= '/' or
+        b == ' ' or
+        b == ':' or
+        b == '=' or
+        b == '?' or
+        // This is technically not allowed in a PrintableString.
+        // However, x509 certificates with wildcard strings don't
+        // always use the correct string type so we permit it.
+        (asterisk == .allow_asterisk and b == '*') or
+        // This is not technically allowed either. However, not
+        // only is it relatively common, but there are also a
+        // handful of CA certificates that contain it. At least
+        // one of which will not expire until 2027.
+        (ampersand == .allow_ampersand and b == '&');
+}
+
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
 
@@ -1040,7 +1114,7 @@ test "TagAndLength.parse" {
         .pc = .primitive,
         .length = 256,
     });
-    try f("\x00\x83\x01\x00",error.Asn1SyntaxError);
+    try f("\x00\x83\x01\x00", error.Asn1SyntaxError);
     try f("\x01\x85", error.Asn1SyntaxError);
     try f("\x30\x80", error.Asn1SyntaxError);
     // Superfluous zeros in the length should be an error.
