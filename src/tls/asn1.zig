@@ -296,14 +296,7 @@ pub const String = struct {
     // representation and advances.
     pub fn readAsn1Boolean(self: *String) !bool {
         var bytes = try self.readAsn1(.boolean);
-        if (bytes.bytes.len != 1) {
-            return error.InvalidAsn1Boolean;
-        }
-        return switch (bytes.bytes[0]) {
-            0 => false,
-            0xff => true,
-            else => error.InvalidAsn1Boolean,
-        };
+        return try parseBool(bytes);
     }
 
     // readAsn1Integer decodes an ASN.1 INTEGER and advances.
@@ -447,6 +440,17 @@ pub const String = struct {
     }
 };
 
+fn parseBool(bytes: []const u8) !bool {
+    if (bytes.len != 1) {
+        return error.InvalidAsn1Boolean;
+    }
+    return switch (bytes[0]) {
+        0 => false,
+        0xff => true,
+        else => error.InvalidAsn1Boolean,
+    };
+}
+
 // ASN.1 has IMPLICIT and EXPLICIT tags, which can be translated as "instead
 // of" and "in addition to". When not specified, every primitive type has a
 // default tag in the UNIVERSAL class.
@@ -511,14 +515,59 @@ pub const FieldParameters = struct {
         return null;
     }
 
-    fn defaultValue(self: *const FieldParameters, comptime T: type) ?T {
+    // setDefaultValue is used to install a default value into out.
+    // It is successful if the field was optional, even if a default value
+    // wasn't provided or it failed to install it into the Value.
+    fn setDefaultValue(self: *const FieldParameters, out: anytype) !void {
         if (!self.optional) {
-            return null;
+            return error.NotOptionalField;
         }
-        _ = T;
-        @panic("not implemented yet");
+        if (self.default_value) |v| {
+            const OutType = @TypeOf(out);
+            switch (@typeInfo(OutType)) {
+                .Pointer => |ptr| {
+                    if (!ptr.is_const and ptr.size == .One) {
+                        switch (@typeInfo(ptr.child)) {
+                            .Int => |i| {
+                                if (i.signedness == .signed) {
+                                    out.* = @intCast(ptr.child, v);
+                                    return;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+            @panic("out must be a pointer to single mutable signed integer");
+        }
+    }
+
+    pub fn parseField(params: *const FieldParameters, input: *String, out: anytype) !void {
+        const out_info = @typeInfo(@TypeOf(out));
+        std.log.debug("out_info={}", .{out_info});
+        out.* = true;
+        _ = input;
+        _ = params;
     }
 };
+
+test "FieldParameters.setDefaultValue" {
+    testing.log_level = .debug;
+
+    const MyStruct = struct {
+        pub const field_parameters = [_]FieldParameters{
+            .{ .name = "v", .optional = true, .default_value = 3 },
+        };
+
+        v: i32 = undefined,
+    };
+
+    var s = MyStruct{};
+    try MyStruct.field_parameters[0].setDefaultValue(&s.v);
+    try testing.expectEqual(@as(i32, 3), s.v);
+}
 
 fn parseField(comptime T: type, input: *String, params: *const FieldParameters) !T {
     _ = T;

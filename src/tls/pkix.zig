@@ -110,11 +110,13 @@ const AttributeTypeAndValue = struct {
 // 5280, section 4.2.
 pub const Extension = struct {
     pub const field_parameters = [_]asn1.FieldParameters{
+        .{ .name = "id" },
         .{ .name = "critical", .optional = true },
+        .{ .name = "value" },
     };
 
-    id: asn1.ObjectIdentifier,
-    critical: bool,
+    id: asn1.ObjectIdentifier = undefined,
+    critical: bool = undefined,
     value: []const u8 = "",
 
     pub fn parse(der: *asn1.String, allocator: mem.Allocator) !Extension {
@@ -140,6 +142,14 @@ pub const Extension = struct {
 };
 
 const testing = std.testing;
+
+test "Extension unmarshal" {
+    testing.log_level = .debug;
+    var ext = Extension{};
+    var input = asn1.String.init("");
+    try Extension.field_parameters[1].parseField(&input, &ext.critical);
+    try testing.expect(ext.critical);
+}
 
 test "FieldParameters.getSlice" {
     testing.log_level = .debug;
