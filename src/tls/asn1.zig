@@ -991,6 +991,76 @@ fn invalidLength(offset: usize, length: usize, slice_length: usize) bool {
     return end_offest < offset or end_offest > slice_length;
 }
 
+pub const StringFieldParser = struct {
+    pub fn parseField(
+        self: *const FieldParameters,
+        allocator: mem.Allocator,
+        input: []const u8,
+        init_offset: usize,
+    ) ![]const u8 {
+        _ = self;
+        var offset = init_offset;
+        // Deal with the ANY type.
+        var t: TagAndLength = undefined;
+        offset = try TagAndLength.parse(input, offset, &t);
+        if (invalidLength(offset, t.length, input.len)) {
+            std.log.warn("data truncated", .{});
+            return error.Asn1SyntaxError;
+        }
+        if (t.pc == .primitive and t.class == .universal) {
+            const inner_input = input[offset .. offset + t.length];
+            switch (t.tag) {
+                .printable_string => {
+                    const result = try parsePrintableString(inner_input);
+                    return if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                },
+                else => {
+                    // If we don't know how to handle the type, we just leave Value unmodified.
+                },
+            }
+        }
+        @panic("not implemented yet");
+    }
+};
+
+pub const Int64FieldParser = struct {
+    pub fn parseField(
+        self: *const FieldParameters,
+        allocator: mem.Allocator,
+        input: []const u8,
+        init_offset: usize,
+    ) !i64 {
+        _ = self;
+        _ = allocator;
+        var offset = init_offset;
+        // Deal with the ANY type.
+        var t: TagAndLength = undefined;
+        offset = try TagAndLength.parse(input, offset, &t);
+        if (invalidLength(offset, t.length, input.len)) {
+            std.log.warn("data truncated", .{});
+            return error.Asn1SyntaxError;
+        }
+        if (t.pc == .primitive and t.class == .universal) {
+            const inner_input = input[offset .. offset + t.length];
+            switch (t.tag) {
+                .integer => return try parseInt64(inner_input),
+                else => {
+                    // If we don't know how to handle the type, we just leave Value unmodified.
+                },
+            }
+        }
+        @panic("not implemented yet");
+    }
+};
+
+pub fn FieldParser(comptime OutType: type) type {
+    return switch (OutType) {
+        []const u8 => StringFieldParser,
+        i64 => Int64FieldParser,
+        else => @panic("unsupported output type"),
+    };
+}
+
 // parseField is the main parsing function. Given a byte slice and an offset
 // into the array, it will try to parse a suitable ASN.1 value out and store it
 // in the given Value.
@@ -1025,12 +1095,12 @@ pub fn parseField(
                 const result = try parsePrintableString(inner_input);
                 return if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
             },
-            .integer => return try parseInt64(inner_input),
+            // .integer => return try parseInt64(inner_input),
             else => {
                 // If we don't know how to handle the type, we just leave Value unmodified.
             },
         }
-        return offset + t.length;
+        // return offset + t.length;
     }
     // TODO: implement
     @panic("not implemented yet");
@@ -1057,7 +1127,7 @@ test "parseField PrintableString" {
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            t1.id = try parseField(field_param, allocator, input, 0, []const u8);
+            t1.id = try FieldParser([]const u8).parseField(field_param, allocator, input, 0);
             // try testing.expectEqual(input.len, new_offset);
             try testing.expectEqualStrings(want, t1.id);
         }
@@ -1078,11 +1148,10 @@ test "parseField int64" {
         fn f(input: []const u8, want: i64) !void {
             const allocator = testing.allocator;
             var t1: T1 = undefined;
-            defer t1.deinit(allocator);
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            t1.id = try parseField(field_param, allocator, input, 0, i64);
+            t1.id = try FieldParser(i64).parseField(field_param, allocator, input, 0);
             // try testing.expectEqual(input.len, new_offset);
             try testing.expectEqual(want, t1.id);
         }
