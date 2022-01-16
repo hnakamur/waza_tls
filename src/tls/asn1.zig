@@ -949,6 +949,7 @@ fn invalidLength(offset: usize, length: usize, slice_length: usize) bool {
 // in the given Value.
 pub fn parseField(
     self: *const FieldParameters,
+    allocator: mem.Allocator,
     input: []const u8,
     init_offset: usize,
     out: anytype,
@@ -972,7 +973,10 @@ pub fn parseField(
     if (t.pc == .primitive and t.class == .universal) {
         const inner_input = input[offset .. offset + t.length];
         switch (t.tag) {
-            .printable_string => out.* = try parsePrintableString(inner_input),
+            .printable_string => {
+                const result = try parsePrintableString(inner_input);
+                out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+            },
             else => {
                 // If we don't know how to handle the type, we just leave Value unmodified.
             },
@@ -984,17 +988,32 @@ pub fn parseField(
 }
 
 test "parseField" {
-    const T1 = struct {
-        pub const field_parameters = [_]FieldParameters{
-            .{ .name = "id" },
+    const f = struct {
+        const T1 = struct {
+            pub const field_parameters = [_]FieldParameters{
+                .{ .name = "id" },
+            };
+            id: []const u8 = undefined,
+
+            pub fn deinit(self: *T1, allocator: mem.Allocator) void {
+                if (self.id.len > 0) allocator.free(self.id);
+            }
         };
-        id: []const u8 = undefined,
-    };
-    var t1: T1 = undefined;
-    const input = &[_]u8{0x13, 0x04, 't', 'e', 's', 't'};
-    const new_offset = try parseField(&T1.field_parameters[0], input, 0, &t1.id);
-    try testing.expectEqual(input.len, new_offset);
-    try testing.expectEqualStrings("test", t1.id);
+
+        fn f(input: []const u8, want: []const u8) !void {
+            const allocator = testing.allocator;
+            var t1: T1 = undefined;
+            defer t1.deinit(allocator);
+            const field_param = comptime blk: {
+                break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
+            };
+            const new_offset = try parseField(field_param, allocator, input, 0, &t1.id);
+            try testing.expectEqual(input.len, new_offset);
+            try testing.expectEqualStrings(want, t1.id);
+        }
+    }.f;
+    try f(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
+    try f(&[_]u8{ 0x13, 0x00 }, "");
 }
 
 // PrintableString
