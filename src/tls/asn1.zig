@@ -447,6 +447,53 @@ pub const String = struct {
     }
 };
 
+// ASN.1 has IMPLICIT and EXPLICIT tags, which can be translated as "instead
+// of" and "in addition to". When not specified, every primitive type has a
+// default tag in the UNIVERSAL class.
+//
+// For example: a BIT STRING is tagged [UNIVERSAL 3] by default (although ASN.1
+// doesn't actually have a UNIVERSAL keyword). However, by saying [IMPLICIT
+// CONTEXT-SPECIFIC 42], that means that the tag is replaced by another.
+//
+// On the other hand, if it said [EXPLICIT CONTEXT-SPECIFIC 10], then an
+// /additional/ tag would wrap the default tag. This explicit tag will have the
+// compound flag set.
+//
+// (This is used in order to remove ambiguity with optional elements.)
+//
+// You can layer EXPLICIT and IMPLICIT tags to an arbitrary depth, however we
+// don't support that here. We support a single layer of EXPLICIT or IMPLICIT
+// tagging with tag strings on the fields of a structure.
+
+// FieldParameters is the parameters for parsing ASN.1 value for a structure field.
+const FieldParameters = struct {
+    optional: bool = false, // true iff the field is OPTIONAL
+    explicit: bool = false, // true iff an EXPLICIT tag is in use.
+    application: bool = false, // true iff an APPLICATION tag is in use.
+    private: bool = false, // true iff a PRIVATE tag is in use.
+    default_value: ?i64 = null, // a default value for INTEGER typed fields.
+    tag: ?Tag = null, // the EXPLICIT or IMPLICIT tag
+    string_type: ?Tag = null, // the string tag to use when marshaling.
+    time_type: ?Tag = null, // the time tag to use when marshaling.
+    set: bool = false, // true iff this should be encoded as a SET
+    omit_empty: bool = false, // true iff this should be omitted if empty when marshaling.
+
+    fn defaultValue(self: *const FieldParameters, comptime T: type) ?T {
+        if (!self.optional) {
+            return null;
+        }
+        _ = T;
+        @panic("not implemented yet");
+    }
+};
+
+fn parseField(comptime T: type, input: *String, params: *const FieldParameters) !T {
+    _ = T;
+    _ = input;
+    _ = params;
+    @panic("not implemented yet");
+}
+
 fn checkAsn1Integer(bytes: []const u8) !void {
     switch (bytes.len) {
         0 => {

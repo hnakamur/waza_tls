@@ -402,6 +402,37 @@ fn parsePublicKey(
     }
 }
 
+const PrivateKey = struct{};
+
+fn parsePrivateKey(allocator: mem.Allocator, der: *asn1.String) !PrivateKey {
+    _ = allocator;
+    _ = der;
+    @panic("not implemented yet");
+}
+
+// parsePkcs8PrivateKey parses an unencrypted private key in PKCS #8, ASN.1 DER form.
+//
+// It returns a *rsa.PrivateKey, a *ecdsa.PrivateKey, or a ed25519.PrivateKey.
+// More types might be supported in the future.
+//
+// This kind of key is commonly encoded in PEM blocks of type "PRIVATE KEY".
+pub fn parsePkcs8PrivateKey(allocator: mem.Allocator, der: []const u8) !PrivateKey {
+    _ = allocator;
+    _ = der;
+    @panic("not implemented yet");
+}
+
+const Pkcs8 = struct {
+    version: i64,
+    algo: pkix.AlgorithmIdentifier,
+    private_key: []const u8,
+
+    pub fn deinit(self: *Pkcs8, allocator: mem.Allocator) void {
+        self.algo.deinit(allocator);
+        if (self.private_key.len > 0) allocator.free(self.private_key);
+    }
+};
+
 fn parseName(allocator: mem.Allocator, raw: *asn1.String) !pkix.RdnSequence {
     return try pkix.RdnSequence.parse(allocator, raw);
 }
