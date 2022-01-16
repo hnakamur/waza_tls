@@ -997,7 +997,8 @@ pub const StringFieldParser = struct {
         allocator: mem.Allocator,
         input: []const u8,
         init_offset: usize,
-    ) ![]const u8 {
+        out: *[]const u8,
+    ) !usize {
         _ = self;
         var offset = init_offset;
         // Deal with the ANY type.
@@ -1012,12 +1013,13 @@ pub const StringFieldParser = struct {
             switch (t.tag) {
                 .printable_string => {
                     const result = try parsePrintableString(inner_input);
-                    return if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                    out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
                 },
                 else => {
                     // If we don't know how to handle the type, we just leave Value unmodified.
                 },
             }
+            return offset + t.length;
         }
         @panic("not implemented yet");
     }
@@ -1029,7 +1031,8 @@ pub const Int64FieldParser = struct {
         allocator: mem.Allocator,
         input: []const u8,
         init_offset: usize,
-    ) !i64 {
+        out: *i64,
+    ) !usize {
         _ = self;
         _ = allocator;
         var offset = init_offset;
@@ -1043,11 +1046,12 @@ pub const Int64FieldParser = struct {
         if (t.pc == .primitive and t.class == .universal) {
             const inner_input = input[offset .. offset + t.length];
             switch (t.tag) {
-                .integer => return try parseInt64(inner_input),
+                .integer => out.* = try parseInt64(inner_input),
                 else => {
                     // If we don't know how to handle the type, we just leave Value unmodified.
                 },
             }
+            return offset + t.length;
         }
         @panic("not implemented yet");
     }
@@ -1127,8 +1131,14 @@ test "parseField PrintableString" {
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            t1.id = try FieldParser([]const u8).parseField(field_param, allocator, input, 0);
-            // try testing.expectEqual(input.len, new_offset);
+            const new_offset = try FieldParser([]const u8).parseField(
+                field_param,
+                allocator,
+                input,
+                0,
+                &t1.id,
+            );
+            try testing.expectEqual(input.len, new_offset);
             try testing.expectEqualStrings(want, t1.id);
         }
     }.f;
@@ -1151,8 +1161,14 @@ test "parseField int64" {
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            t1.id = try FieldParser(i64).parseField(field_param, allocator, input, 0);
-            // try testing.expectEqual(input.len, new_offset);
+            const new_offset = try FieldParser(i64).parseField(
+                field_param,
+                allocator,
+                input,
+                0,
+                &t1.id,
+            );
+            try testing.expectEqual(input.len, new_offset);
             try testing.expectEqual(want, t1.id);
         }
     }.f;
