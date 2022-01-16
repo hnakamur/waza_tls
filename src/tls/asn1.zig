@@ -440,15 +440,62 @@ pub const String = struct {
     }
 };
 
-fn parseBool(bytes: []const u8) !bool {
-    if (bytes.len != 1) {
-        return error.InvalidAsn1Boolean;
+// BOOLEAN
+
+fn parseBool(input: []const u8) !bool {
+    if (input.len != 1) {
+        return error.Asn1SyntaxError;
     }
-    return switch (bytes[0]) {
+
+    // DER demands that "If the encoding represents the boolean value TRUE,
+    // its single contents octet shall have all eight bits set to one."
+    // Thus only 0 and 255 are valid encoded values.
+    return switch (input[0]) {
         0 => false,
         0xff => true,
-        else => error.InvalidAsn1Boolean,
+        else => error.Asn1SyntaxError,
     };
+}
+
+// INTEGER
+
+// checkInteger returns void if the given bytes are a valid DER-encoded
+// INTEGER and an error otherwise.
+fn checkInteger(input: []const u8) !void {
+    if (input.len == 0) {
+        return error.Asn1StructuralError;
+    }
+    if (input.len == 1) {
+        return;
+    }
+    if ((input[0] == 0 and input[1] & 0x80 == 0) or
+        (input[0] == 0xff and input[1] & 0x80 == 0x80))
+    {
+        return error.Asn1StructuralError;
+    }
+}
+
+// parseInt64 treats the given bytes as a big-endian, signed integer and
+// returns the result.
+fn parseInt64(input: []const u8) !i64 {
+    try checkInteger(input);
+
+    if (input.len > 8) {
+        // We'll overflow an int64 in this case.
+        return error.Asn1StructuralError;
+    }
+    var ret: i64 = 0;
+    var bytes_read: usize = 0;
+    while (bytes_read < input.len) : (bytes_read += 1) {
+        ret <<= 8;
+        ret |= input[bytes_read];
+    }
+
+    // Shift up and down in order to sign extend the result.
+    const n = @intCast(u6, 64 - input.len * 8);
+    _ = @shlWithOverflow(i64, ret, n, &ret);
+    ret = @shrExact(ret, n);
+    return ret;
 }
 
 // ASN.1 has IMPLICIT and EXPLICIT tags, which can be translated as "instead
@@ -952,16 +999,17 @@ pub fn parseField(
     allocator: mem.Allocator,
     input: []const u8,
     init_offset: usize,
-    out: anytype,
-) !usize {
+    comptime T: type,
+) !T {
+    _ = self;
     var offset = init_offset;
     // If we have run out of data, it may be that there are optional elements at the end.
-    if (offset == input.len) {
-        self.setDefaultValue(out) catch {
-            std.log.warn("sequence truncated", .{});
-            return error.Asn1SyntaxError;
-        };
-    }
+    // if (offset == input.len) {
+    //     self.setDefaultValue(out) catch {
+    //         std.log.warn("sequence truncated", .{});
+    //         return error.Asn1SyntaxError;
+    //     };
+    // }
 
     // Deal with the ANY type.
     var t: TagAndLength = undefined;
@@ -975,8 +1023,9 @@ pub fn parseField(
         switch (t.tag) {
             .printable_string => {
                 const result = try parsePrintableString(inner_input);
-                out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                return if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
             },
+            .integer => return try parseInt64(inner_input),
             else => {
                 // If we don't know how to handle the type, we just leave Value unmodified.
             },
@@ -984,10 +1033,11 @@ pub fn parseField(
         return offset + t.length;
     }
     // TODO: implement
-    return offset;
+    @panic("not implemented yet");
+    // return offset;
 }
 
-test "parseField" {
+test "parseField PrintableString" {
     const f = struct {
         const T1 = struct {
             pub const field_parameters = [_]FieldParameters{
@@ -1007,13 +1057,37 @@ test "parseField" {
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            const new_offset = try parseField(field_param, allocator, input, 0, &t1.id);
-            try testing.expectEqual(input.len, new_offset);
+            t1.id = try parseField(field_param, allocator, input, 0, []const u8);
+            // try testing.expectEqual(input.len, new_offset);
             try testing.expectEqualStrings(want, t1.id);
         }
     }.f;
     try f(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
     try f(&[_]u8{ 0x13, 0x00 }, "");
+}
+
+test "parseField int64" {
+    const f = struct {
+        const T1 = struct {
+            pub const field_parameters = [_]FieldParameters{
+                .{ .name = "id" },
+            };
+            id: i64 = undefined,
+        };
+
+        fn f(input: []const u8, want: i64) !void {
+            const allocator = testing.allocator;
+            var t1: T1 = undefined;
+            defer t1.deinit(allocator);
+            const field_param = comptime blk: {
+                break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
+            };
+            t1.id = try parseField(field_param, allocator, input, 0, i64);
+            // try testing.expectEqual(input.len, new_offset);
+            try testing.expectEqual(want, t1.id);
+        }
+    }.f;
+    try f(&[_]u8{ 0x02, 0x01, 0x10 }, 16);
 }
 
 // PrintableString
