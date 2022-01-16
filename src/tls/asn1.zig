@@ -52,26 +52,6 @@ pub const TagAndClass = enum(u8) {
     }
 };
 
-pub const Class = enum(u2) {
-    universal = 0,
-    application = 1,
-    context_specific = 2,
-    private = 3,
-};
-
-// pub const TagAndLength = struct {
-//     class: Class,
-//     tag: Tag,
-//     length: usize,
-//     is_compound: bool,
-
-//     // parse parses an ASN.1 tag and length pair from the given offset
-//     // into a byte slice. It returns the new offset. SET and
-//     // SET OF (tag 17) are mapped to SEQUENCE and SEQUENCE OF (tag 16) since we
-//     // don't distinguish between ordered and unordered objects in this code.
-//     fn parse(input: []const u8, init_offset: usize, out: *TagAndLength) !usize {}
-// };
-
 pub const RawContent = struct {
     bytes: []const u8,
 
@@ -812,8 +792,282 @@ pub const RawValue = struct {
     }
 };
 
+//
+// parse functions which take []const u8 as input stead of *asn1.String.
+//
+
+// ASN.1 class types represent the namespace of the tag.
+pub const Class = enum(u2) {
+    universal = 0,
+    application = 1,
+    context_specific = 2,
+    private = 3,
+};
+
+pub const PrimitiveOrConstructive = enum(u1) {
+    primitive = 0,
+    constructive = 1,
+};
+
+// ASN.1 tags represent the type of the following object.
+pub const Tag = enum(u32) {
+    boolean = 1,
+    integer = 2,
+    bit_string = 3,
+    octet_string = 4,
+    @"null" = 5,
+    oid = 6,
+    @"enum" = 10,
+    utf8_string = 12,
+    sequence = 16,
+    set = 17,
+    numeric_string = 18,
+    printable_string = 19,
+    t61_string = 20,
+    ia5_string = 22,
+    utc_time = 23,
+    generalized_time = 24,
+    general_string = 27,
+    bmp_string = 30,
+    _,
+};
+
+pub const Der = struct {
+    bytes: []const u8,
+
+    pub fn empty(self: *const Der) bool {
+        return self.bytes.len == 0;
+    }
+
+    pub fn readByte(self: *Der) u8 {
+        const b = self.bytes[0];
+        self.bytes = self.bytes[1..];
+        return b;
+    }
+};
+
+pub const TagAndLength = struct {
+    class: Class,
+    pc: PrimitiveOrConstructive,
+    tag: Tag,
+    length: usize,
+
+    // parse parses an ASN.1 tag and length pair from the given offset
+    // into a byte slice. It returns the new offset. SET and
+    // SET OF (tag 17) are mapped to SEQUENCE and SEQUENCE OF (tag 16) since we
+    // don't distinguish between ordered and unordered objects in this code.
+    fn parse(input: []const u8, init_offset: usize, out: *TagAndLength) !usize {
+        var offset = init_offset;
+        if (offset >= input.len) {
+            // TagAndLength.parse should not be called without at least a single
+            // byte to read. Thus this check is for robustness:
+            @panic("no byte to read");
+        }
+        var b = input[offset];
+        offset += 1;
+        out.class = @intToEnum(Class, @intCast(u2, b >> 6));
+        out.pc = if (b & 0x20 == 0x20) .constructive else .primitive;
+        out.tag = @intToEnum(Tag, b & 0x1f);
+
+        // If the bottom five bits are set, then the tag number is actually base 128
+        // encoded afterwards
+        if (@enumToInt(out.tag) == 0x1f) {
+            var tag: u32 = undefined;
+            offset = try parseBase128Int(input, offset, &tag);
+            out.tag = @intToEnum(Tag, tag);
+
+            // Tags should be encoded in minimal form.
+            if (tag < 0x1f) {
+                std.log.warn("non-minimal tag", .{});
+                return error.Asn1SyntaxError;
+            }
+        }
+        if (offset >= input.len) {
+            std.log.warn("truncated tag or length", .{});
+            return error.Asn1SyntaxError;
+        }
+        b = input[offset];
+        offset += 1;
+        if (b & 0x80 == 0) {
+            // The length is encoded in the bottom 7 bits.
+            out.length = b & 0x7f;
+        } else {
+            // Bottom 7 bits give the number of length bytes to follow.
+            const num_bytes = b & 0x7f;
+            if (num_bytes == 0) {
+                std.log.warn("indefinite length found (not DER)", .{});
+                return error.Asn1SyntaxError;
+            }
+            out.length = 0;
+            var i: usize = 0;
+            while (i < num_bytes) : (i += 1) {
+                if (offset >= input.len) {
+                    std.log.warn("truncated tag or length", .{});
+                    return error.Asn1SyntaxError;
+                }
+                b = input[offset];
+                offset += 1;
+                if (out.length >= 1 << 23) {
+                    // We can't shift out.length up without
+                    // overflowing.
+                    std.log.warn("length too large", .{});
+                    return error.Asn1StructuralError;
+                }
+                out.length <<= 8;
+                out.length |= b;
+                if (out.length == 0) {
+                    // DER requires that lengths be minimal.
+                    std.log.warn("superfluous leading zeros in length", .{});
+                    return error.Asn1StructuralError;
+                }
+            }
+            // Short lengths must be encoded in short form.
+            if (out.length < 0x80) {
+                std.log.warn("non-minimal length", .{});
+                return error.Asn1StructuralError;
+            }
+        }
+        return offset;
+    }
+};
+
+// parseBase128Int parses a base-128 encoded int from the given offset in the
+// given byte slice and sets the value to out. It returns the new offset.
+fn parseBase128Int(input: []const u8, init_offset: usize, out: *u32) !usize {
+    var offset = init_offset;
+    var ret64: u64 = 0;
+    var shifted: usize = 0;
+    while (offset < input.len) : (shifted += 1) {
+        // 5 * 7 bits per byte == 35 bits of data
+        // Thus the representation is either non-minimal or too large for an int32
+        if (shifted == 5) {
+            std.log.warn("base 128 integer too large", .{});
+            return error.Asn1StructuralError;
+        }
+        ret64 <<= 7;
+        const b = input[offset];
+        // integers should be minimally encoded, so the leading octet should
+        // never be 0x80
+        if (shifted == 0 and b == 0x80) {
+            std.log.warn("integer is not minimally encoded", .{});
+            return error.Asn1SyntaxError;
+        }
+        ret64 |= b & 0x7f;
+        offset += 1;
+        if (b & 0x80 == 0) {
+            // Ensure that the returned value fits in an int on all platforms
+            if (ret64 > std.math.maxInt(i32)) {
+                std.log.warn("base 128 integer too large", .{});
+                return error.Asn1StructuralError;
+            }
+            out.* = @intCast(u32, ret64);
+            return offset;
+        }
+    }
+    std.log.warn("truncated base 128 integer", .{});
+    return error.Asn1SyntaxError;
+}
+
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
+
+test "TagAndLength.parse" {
+    testing.log_level = .debug;
+    const f = struct {
+        fn f(input: []const u8, want: anyerror!TagAndLength) !void {
+            var got: TagAndLength = undefined;
+            if (want) |val_want| {
+                try testing.expectEqual(input.len, try TagAndLength.parse(input, 0, &got));
+                // std.log.debug("got={}", .{got});
+                try testing.expectEqual(val_want, got);
+            } else |err_want| {
+                try testing.expectError(err_want, TagAndLength.parse(input, 0, &got));
+            }
+        }
+    }.f;
+
+    try f("\x80\x01", TagAndLength{
+        .class = .context_specific,
+        .tag = @intToEnum(Tag, 0),
+        .pc = .primitive,
+        .length = 1,
+    });
+    try f("\xa0\x01", TagAndLength{
+        .class = .context_specific,
+        .tag = @intToEnum(Tag, 0),
+        .pc = .constructive,
+        .length = 1,
+    });
+    try f("\x02\x00", TagAndLength{
+        .class = .universal,
+        .tag = .integer,
+        .pc = .primitive,
+        .length = 0,
+    });
+    try f("\xfe\x00", TagAndLength{
+        .class = .private,
+        .tag = .bmp_string,
+        .pc = .constructive,
+        .length = 0,
+    });
+    try f("\x1f\x1f\x00", TagAndLength{
+        .class = .universal,
+        .tag = @intToEnum(Tag, 31),
+        .pc = .primitive,
+        .length = 0,
+    });
+    try f("\x1f\x81\x00\x00", TagAndLength{
+        .class = .universal,
+        .tag = @intToEnum(Tag, 128),
+        .pc = .primitive,
+        .length = 0,
+    });
+    try f("\x1f\x81\x80\x01\x00", TagAndLength{
+        .class = .universal,
+        .tag = @intToEnum(Tag, 0x4001),
+        .pc = .primitive,
+        .length = 0,
+    });
+    try f("\x00\x81\x80", TagAndLength{
+        .class = .universal,
+        .tag = @intToEnum(Tag, 0),
+        .pc = .primitive,
+        .length = 128,
+    });
+    try f("\x00\x82\x01\x00", TagAndLength{
+        .class = .universal,
+        .tag = @intToEnum(Tag, 0),
+        .pc = .primitive,
+        .length = 256,
+    });
+    try f("\x00\x83\x01\x00",error.Asn1SyntaxError);
+    try f("\x01\x85", error.Asn1SyntaxError);
+    try f("\x30\x80", error.Asn1SyntaxError);
+    // Superfluous zeros in the length should be an error.
+    try f("\xa0\x82\x00\xff", error.Asn1StructuralError);
+    // Lengths up to the maximum size of an int should work.
+    try f("\xa0\x84\x7f\xff\xff\xff", TagAndLength{
+        .class = .context_specific,
+        .tag = @intToEnum(Tag, 0),
+        .pc = .constructive,
+        .length = 0x7fffffff,
+    });
+    // Lengths that would overflow an int should be rejected.
+    try f("\xa0\x84\x80\x00\x00\x00", error.Asn1StructuralError);
+    // Long length form may not be used for lengths that fit in short form.
+    try f("\xa0\x81\x7f", error.Asn1StructuralError);
+    // Tag numbers which would overflow int32 are rejected. (The value below is 2^31.)
+    try f("\x1f\x88\x80\x80\x80\x00\x00", error.Asn1StructuralError);
+    // Tag numbers that fit in an int32 are valid. (The value below is 2^31 - 1.)
+    try f("\x1f\x87\xff\xff\xff\x7f\x00", TagAndLength{
+        .class = .universal,
+        .tag = @intToEnum(Tag, std.math.maxInt(i32)),
+        .pc = .primitive,
+        .length = 0,
+    });
+    // Long tag number form may not be used for tags that fit in short form.
+    try f("\x1f\x1e\x00", error.Asn1SyntaxError);
+}
 
 test "readOptionalAsn1" {
     testing.log_level = .debug;
