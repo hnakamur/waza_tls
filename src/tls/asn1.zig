@@ -947,6 +947,40 @@ pub const TagAndLength = struct {
     }
 };
 
+// parse decodes an ASN.1 OBJECT IDENTIFIER and advances.
+pub fn parseObjectIdentifier(input: []const u8, allocator: mem.Allocator) !ObjectIdentifier {
+    if (input.len == 0) return error.Asn1SyntaxError;
+
+    // In the worst case, we get two elements from the first byte (which is
+    // encoded differently) and then every varint is a single byte long.
+    var components = try std.ArrayListUnmanaged(u32).initCapacity(
+        allocator,
+        input.len + 1,
+    );
+    errdefer components.deinit(allocator);
+
+    // The first varint is 40*value1 + value2:
+    // According to this packing, value1 can take the values 0, 1 and 2 only.
+    // When value1 = 0 or value1 = 1, then value2 is <= 39. When value1 = 2,
+    // then there are no restrictions on value2.
+    var v: u32 = undefined;
+    var offset = try parseBase128Int(input, 0, &v);
+    if (v < 80) {
+        try components.append(allocator, v / 40);
+        try components.append(allocator, v % 40);
+    } else {
+        try components.append(allocator, 2);
+        try components.append(allocator, v - 80);
+    }
+
+    while (offset < input.len) {
+        offset = try parseBase128Int(input, offset, &v);
+        try components.append(allocator, v);
+    }
+
+    return ObjectIdentifier{ .components = components.toOwnedSlice(allocator) };
+}
+
 // parseBase128Int parses a base-128 encoded int from the given offset in the
 // given byte slice and sets the value to out. It returns the new offset.
 fn parseBase128Int(input: []const u8, init_offset: usize, out: *u32) !usize {
@@ -991,80 +1025,6 @@ fn invalidLength(offset: usize, length: usize, slice_length: usize) bool {
     return end_offest < offset or end_offest > slice_length;
 }
 
-pub const StringFieldParser = struct {
-    pub fn parseField(
-        self: *const FieldParameters,
-        allocator: mem.Allocator,
-        input: []const u8,
-        init_offset: usize,
-        out: *[]const u8,
-    ) !usize {
-        _ = self;
-        var offset = init_offset;
-        // Deal with the ANY type.
-        var t: TagAndLength = undefined;
-        offset = try TagAndLength.parse(input, offset, &t);
-        if (invalidLength(offset, t.length, input.len)) {
-            std.log.warn("data truncated", .{});
-            return error.Asn1SyntaxError;
-        }
-        if (t.pc == .primitive and t.class == .universal) {
-            const inner_input = input[offset .. offset + t.length];
-            switch (t.tag) {
-                .printable_string => {
-                    const result = try parsePrintableString(inner_input);
-                    out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
-                },
-                else => {
-                    // If we don't know how to handle the type, we just leave Value unmodified.
-                },
-            }
-            return offset + t.length;
-        }
-        @panic("not implemented yet");
-    }
-};
-
-pub const Int64FieldParser = struct {
-    pub fn parseField(
-        self: *const FieldParameters,
-        allocator: mem.Allocator,
-        input: []const u8,
-        init_offset: usize,
-        out: *i64,
-    ) !usize {
-        _ = self;
-        _ = allocator;
-        var offset = init_offset;
-        // Deal with the ANY type.
-        var t: TagAndLength = undefined;
-        offset = try TagAndLength.parse(input, offset, &t);
-        if (invalidLength(offset, t.length, input.len)) {
-            std.log.warn("data truncated", .{});
-            return error.Asn1SyntaxError;
-        }
-        if (t.pc == .primitive and t.class == .universal) {
-            const inner_input = input[offset .. offset + t.length];
-            switch (t.tag) {
-                .integer => out.* = try parseInt64(inner_input),
-                else => {
-                    // If we don't know how to handle the type, we just leave Value unmodified.
-                },
-            }
-            return offset + t.length;
-        }
-        @panic("not implemented yet");
-    }
-};
-
-pub fn FieldParser(comptime OutType: type) type {
-    return switch (OutType) {
-        []const u8 => StringFieldParser,
-        i64 => Int64FieldParser,
-        else => @panic("unsupported output type"),
-    };
-}
-
 // parseField is the main parsing function. Given a byte slice and an offset
 // into the array, it will try to parse a suitable ASN.1 value out and store it
 // in the given Value.
@@ -1075,6 +1035,11 @@ pub fn parseField(
     init_offset: usize,
     out: anytype,
 ) !usize {
+    const OutPtrChildType = switch (@typeInfo(@TypeOf(out))) {
+        .Pointer => |ptr| ptr.child,
+        else => @panic("out must be pointer"),
+    };
+
     var offset = init_offset;
     // If we have run out of data, it may be that there are optional elements at the end.
     if (offset == input.len) {
@@ -1083,48 +1048,61 @@ pub fn parseField(
             return error.Asn1SyntaxError;
         };
     }
-    std.log.debug("outtype={}", .{@TypeOf(out)});
     // Deal with the ANY type.
     var t: TagAndLength = undefined;
     offset = try TagAndLength.parse(input, offset, &t);
-    std.log.debug("t={}", .{t});
+    std.log.debug("offset={}, t={}", .{ offset, t });
     if (invalidLength(offset, t.length, input.len)) {
         std.log.warn("data truncated", .{});
         return error.Asn1SyntaxError;
     }
-    if (t.pc == .primitive and t.class == .universal) {
-        const inner_input = input[offset .. offset + t.length];
-        switch (t.tag) {
+
+    const inner_input = input[offset .. offset + t.length];
+    std.log.debug("inner_input={}", .{fmtx.fmtSliceHexEscapeLower(inner_input)});
+    switch (OutPtrChildType) {
+        []const u8, ?[]const u8 => switch (t.tag) {
             .printable_string => {
                 const result = try parsePrintableString(inner_input);
-                std.log.debug("printable_string result={s}", .{result});
-                if (@TypeOf(out) == *[]const u8) {
-                    out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
-                    std.log.debug("set out to string, out={s}", .{out.*});
-                }
-                // switch (@TypeOf(out)) {
-                //     *[]const u8 => {
-                //         out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
-                //         std.log.debug("set out to string, out={s}", .{out.*});
-                //     },
-                //     else => {},
-                // }
+                out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                return offset + t.length;
             },
-            .integer => {
-                if (@TypeOf(out) == *i64) {
-                    out.* = try parseInt64(inner_input);
-                }
-                // switch (@TypeOf(out)) {
-                //     *i64 => out.* = try parseInt64(inner_input),
-                //     else => {},
-                // }
+            else => {},
+        },
+        ObjectIdentifier, ?ObjectIdentifier => {
+            out.* = try parseObjectIdentifier(inner_input, allocator);
+            return offset + t.length;
+        },
+        else => switch (@typeInfo(OutPtrChildType)) {
+            .Int => {
+                out.* = @intCast(OutPtrChildType, try parseInt64(inner_input));
+                return offset + t.length;
             },
-            else => {
-                // If we don't know how to handle the type, we just leave Value unmodified.
-            },
-        }
-        return offset + t.length;
+            else => {},
+        },
     }
+
+    // if (t.class == .universal) {
+    //     const inner_input = input[offset .. offset + t.length];
+    //     switch (t.tag) {
+    //         .printable_string => {
+    //             const result = try parsePrintableString(inner_input);
+    //             if (OutPtrChildType == []const u8) {
+    //                 out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+    //             } else @panic("out pointer child type mismatch");
+    //         },
+    //         .integer => switch (@typeInfo(OutPtrChildType)) {
+    //             .Int => out.* = @intCast(OutPtrChildType, try parseInt64(inner_input)),
+    //             else => @panic("out pointer child type mismatch"),
+    //         },
+    //         .oid => if (OutPtrChildType == ObjectIdentifier) {
+    //             out.* = try parseObjectIdentifier(inner_input, allocator);
+    //         } else @panic("out pointer child type mismatch"),
+    //         else => {
+    //             // If we don't know how to handle the type, we just leave Value unmodified.
+    //         },
+    //     }
+    //     return offset + t.length;
+    // }
     // TODO: implement
     @panic("not implemented yet");
     // return offset;
@@ -1135,21 +1113,11 @@ test "out two types" {
     try struct {
         fn f(out: anytype) void {
             const OutType = @TypeOf(out);
-            std.log.debug("outtype={}", .{@typeInfo(OutType)});
             switch (@typeInfo(OutType)) {
                 .Pointer => |ptr| {
                     if (!ptr.is_const and ptr.size == .One) {
-                        std.log.debug("childtype={}", .{@typeInfo(ptr.child)});
-                        // switch (ptr.child) {
-                        //     i64 => out.* = 3,
-                        //     []const u8 => out.* = "hello",
-                        //     else => {},
-                        // }
                         switch (@typeInfo(ptr.child)) {
                             .Int => out.* = @intCast(ptr.child, 3),
-                            // .Pointer => if (ptr.child == []const u8) {
-                            //     out.* = "hello";
-                            // },
                             .Pointer => |p| {
                                 if (p.size == .Slice and p.is_const and p.child == u8) {
                                     out.* = "hello";
@@ -1183,70 +1151,71 @@ test "out two types" {
     }.runTest();
 }
 
-test "parseField PrintableString" {
+test "parseField all" {
     testing.log_level = .debug;
-    const f = struct {
-        const T1 = struct {
-            pub const field_parameters = [_]FieldParameters{
-                .{ .name = "id" },
-            };
-            id: []const u8 = undefined,
 
-            pub fn deinit(self: *T1, allocator: mem.Allocator) void {
-                if (self.id.len > 0) allocator.free(self.id);
-            }
+    const T1 = struct {
+        const Self = @This();
+
+        pub const field_parameters = [_]FieldParameters{
+            .{ .name = "a" },
+            .{ .name = "b" },
+            .{ .name = "c" },
         };
 
-        fn f(input: []const u8, want: []const u8) !void {
+        a: []const u8 = &[_]u8{},
+        c: ?ObjectIdentifier = null,
+        b: u32 = undefined,
+
+        pub fn deinit(self: *Self, allocator: mem.Allocator) void {
+            if (self.a.len > 0) allocator.free(self.a);
+            if (self.c) |*c| c.deinit(allocator);
+        }
+    };
+
+    const Test = struct {
+        const params_list = FieldParameters.getSlice(T1);
+
+        fn a(input: []const u8, want: []const u8) !void {
             const allocator = testing.allocator;
             var t1: T1 = undefined;
             defer t1.deinit(allocator);
-            const field_param = comptime blk: {
-                break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
-            };
-            const new_offset = try parseField(
-                field_param,
-                allocator,
-                input,
-                0,
-                &t1.id,
-            );
+            const field_param = FieldParameters.forField(params_list, "a").?;
+            const new_offset = try parseField(field_param, allocator, input, 0, &t1.a);
             try testing.expectEqual(input.len, new_offset);
-            try testing.expectEqualStrings(want, t1.id);
+            try testing.expectEqualStrings(want, t1.a);
         }
-    }.f;
-    try f(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
-    try f(&[_]u8{ 0x13, 0x00 }, "");
-}
 
-test "parseField int64" {
-    testing.log_level = .debug;
-    const f = struct {
-        const T1 = struct {
-            pub const field_parameters = [_]FieldParameters{
-                .{ .name = "id" },
-            };
-            id: i64 = undefined,
-        };
-
-        fn f(input: []const u8, want: i64) !void {
+        fn b(input: []const u8, want: u32) !void {
             const allocator = testing.allocator;
             var t1: T1 = undefined;
-            const field_param = comptime blk: {
-                break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
-            };
-            const new_offset = try parseField(
-                field_param,
-                allocator,
-                input,
-                0,
-                &t1.id,
-            );
+            const field_param = FieldParameters.forField(params_list, "b").?;
+            const new_offset = try parseField(field_param, allocator, input, 0, &t1.b);
             try testing.expectEqual(input.len, new_offset);
-            try testing.expectEqual(want, t1.id);
+            try testing.expectEqual(want, t1.b);
         }
-    }.f;
-    try f(&[_]u8{ 0x02, 0x01, 0x10 }, 16);
+
+        fn c(input: []const u8, want: ObjectIdentifier) !void {
+            const allocator = testing.allocator;
+            var t1: T1 = undefined;
+            const field_param = FieldParameters.forField(params_list, "c").?;
+            const new_offset = try parseField(field_param, allocator, input, 0, &t1.c);
+            try testing.expectEqual(input.len, new_offset);
+            if (!want.eql(t1.c.?)) {
+                std.log.warn("oid mismatch, want={}, got={}", .{want, t1.c.?});
+            }
+            try testing.expect(want.eql(t1.c.?));
+        }
+    };
+
+    // try Test.a(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
+    // try Test.a(&[_]u8{ 0x13, 0x00 }, "");
+
+    // try Test.b(&[_]u8{ 0x02, 0x01, 0x10 }, 16);
+
+    try Test.c(&[_]u8{
+        0x30, 0x08, 0x06, 0x06, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+    }, ObjectIdentifier.initConst(&.{ 1, 2, 840, 113549 }));
 }
 
 // PrintableString
