@@ -1073,9 +1073,8 @@ pub fn parseField(
     allocator: mem.Allocator,
     input: []const u8,
     init_offset: usize,
-    comptime T: type,
-) !T {
-    _ = self;
+    out: anytype,
+) !usize {
     var offset = init_offset;
     // If we have run out of data, it may be that there are optional elements at the end.
     // if (offset == input.len) {
@@ -1084,10 +1083,11 @@ pub fn parseField(
     //         return error.Asn1SyntaxError;
     //     };
     // }
-
+    std.log.debug("outtype={}", .{@TypeOf(out)});
     // Deal with the ANY type.
     var t: TagAndLength = undefined;
     offset = try TagAndLength.parse(input, offset, &t);
+    std.log.debug("t={}", .{t});
     if (invalidLength(offset, t.length, input.len)) {
         std.log.warn("data truncated", .{});
         return error.Asn1SyntaxError;
@@ -1097,15 +1097,35 @@ pub fn parseField(
         switch (t.tag) {
             .printable_string => {
                 const result = try parsePrintableString(inner_input);
-                return if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                std.log.debug("printable_string result={s}", .{result});
+                if (@TypeOf(out) == *[]const u8) {
+                    out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                    std.log.debug("set out to string, out={s}", .{out.*});
+                }
+                // switch (@TypeOf(out)) {
+                //     *[]const u8 => {
+                //         out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
+                //         std.log.debug("set out to string, out={s}", .{out.*});
+                //     },
+                //     else => {},
+                // }
             },
-            // .integer => return try parseInt64(inner_input),
+            .integer => {
+                if (@TypeOf(out) == *i64) {
+                    out.* = try parseInt64(inner_input);
+                }
+                // switch (@TypeOf(out)) {
+                //     *i64 => out.* = try parseInt64(inner_input),
+                //     else => {},
+                // }
+            },
             else => {
                 // If we don't know how to handle the type, we just leave Value unmodified.
             },
         }
-        // return offset + t.length;
+        return offset + t.length;
     }
+    _ = self;
     // TODO: implement
     @panic("not implemented yet");
     // return offset;
@@ -1145,6 +1165,7 @@ test "out two types" {
 }
 
 test "parseField PrintableString" {
+    testing.log_level = .debug;
     const f = struct {
         const T1 = struct {
             pub const field_parameters = [_]FieldParameters{
@@ -1164,7 +1185,7 @@ test "parseField PrintableString" {
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            const new_offset = try FieldParser([]const u8).parseField(
+            const new_offset = try parseField(
                 field_param,
                 allocator,
                 input,
@@ -1180,6 +1201,7 @@ test "parseField PrintableString" {
 }
 
 test "parseField int64" {
+    testing.log_level = .debug;
     const f = struct {
         const T1 = struct {
             pub const field_parameters = [_]FieldParameters{
@@ -1194,7 +1216,7 @@ test "parseField int64" {
             const field_param = comptime blk: {
                 break :blk FieldParameters.forField(FieldParameters.getSlice(T1), "id").?;
             };
-            const new_offset = try FieldParser(i64).parseField(
+            const new_offset = try parseField(
                 field_param,
                 allocator,
                 input,
