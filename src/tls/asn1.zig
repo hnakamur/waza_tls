@@ -1077,12 +1077,12 @@ pub fn parseField(
 ) !usize {
     var offset = init_offset;
     // If we have run out of data, it may be that there are optional elements at the end.
-    // if (offset == input.len) {
-    //     self.setDefaultValue(out) catch {
-    //         std.log.warn("sequence truncated", .{});
-    //         return error.Asn1SyntaxError;
-    //     };
-    // }
+    if (offset == input.len) {
+        self.setDefaultValue(out) catch {
+            std.log.warn("sequence truncated", .{});
+            return error.Asn1SyntaxError;
+        };
+    }
     std.log.debug("outtype={}", .{@TypeOf(out)});
     // Deal with the ANY type.
     var t: TagAndLength = undefined;
@@ -1125,7 +1125,6 @@ pub fn parseField(
         }
         return offset + t.length;
     }
-    _ = self;
     // TODO: implement
     @panic("not implemented yet");
     // return offset;
@@ -1141,9 +1140,21 @@ test "out two types" {
                 .Pointer => |ptr| {
                     if (!ptr.is_const and ptr.size == .One) {
                         std.log.debug("childtype={}", .{@typeInfo(ptr.child)});
-                        switch (ptr.child) {
-                            i64 => out.* = 3,
-                            []const u8 => out.* = "hello",
+                        // switch (ptr.child) {
+                        //     i64 => out.* = 3,
+                        //     []const u8 => out.* = "hello",
+                        //     else => {},
+                        // }
+                        switch (@typeInfo(ptr.child)) {
+                            .Int => out.* = @intCast(ptr.child, 3),
+                            // .Pointer => if (ptr.child == []const u8) {
+                            //     out.* = "hello";
+                            // },
+                            .Pointer => |p| {
+                                if (p.size == .Slice and p.is_const and p.child == u8) {
+                                    out.* = "hello";
+                                }
+                            },
                             else => {},
                         }
                     }
@@ -1156,6 +1167,14 @@ test "out two types" {
             var i: i64 = undefined;
             f(&i);
             try testing.expectEqual(@as(i64, 3), i);
+
+            var j: i33 = undefined;
+            f(&j);
+            try testing.expectEqual(@as(i33, 3), j);
+
+            var k: usize = undefined;
+            f(&k);
+            try testing.expectEqual(@as(usize, 3), k);
 
             var a: []const u8 = undefined;
             f(&a);
