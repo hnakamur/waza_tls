@@ -1111,6 +1111,39 @@ pub fn parseField(
     // return offset;
 }
 
+test "out two types" {
+    testing.log_level = .debug;
+    try struct {
+        fn f(out: anytype) void {
+            const OutType = @TypeOf(out);
+            std.log.debug("outtype={}", .{@typeInfo(OutType)});
+            switch (@typeInfo(OutType)) {
+                .Pointer => |ptr| {
+                    if (!ptr.is_const and ptr.size == .One) {
+                        std.log.debug("childtype={}", .{@typeInfo(ptr.child)});
+                        switch (ptr.child) {
+                            i64 => out.* = 3,
+                            []const u8 => out.* = "hello",
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        fn runTest() !void {
+            var i: i64 = undefined;
+            f(&i);
+            try testing.expectEqual(@as(i64, 3), i);
+
+            var a: []const u8 = undefined;
+            f(&a);
+            try testing.expectEqualStrings("hello", a);
+        }
+    }.runTest();
+}
+
 test "parseField PrintableString" {
     const f = struct {
         const T1 = struct {
