@@ -333,8 +333,7 @@ pub const String = struct {
             ret.metadata = capacity;
 
             // ret = -(ret + 1)
-            var one_limbs_buf: [1]usize = undefined;
-            const one = math.big.int.Mutable.init(&one_limbs_buf, 1).toConst();
+            const one = math.big.int.Const{ .limbs = &[_]math.big.Limb{1}, .positive = true };
             try ret.add(ret.toConst(), one);
             ret.negate();
             return ret.toConst();

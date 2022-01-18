@@ -2,6 +2,7 @@ const std = @import("std");
 const math = std.math;
 const mem = std.mem;
 const asn1 = @import("asn1.zig");
+const memx = @import("../memx.zig");
 
 const big_zero = math.big.int.Const{ .limbs = &[_]math.big.Limb{0}, .positive = true };
 const big_one = math.big.int.Const{ .limbs = &[_]math.big.Limb{1}, .positive = true };
@@ -25,16 +26,75 @@ const Pkcs1PrivateKey = struct {
     q: math.big.int.Const,
 
     // We ignore these values, if present, because rsa will calculate them.
-    dp: math.big.int.Const = null,
-    dq: math.big.int.Const = null,
-    qinv: math.big.int.Const = null,
+    dp: ?math.big.int.Const = null,
+    dq: ?math.big.int.Const = null,
+    qinv: ?math.big.int.Const = null,
 
-    additional_params: []Pkcs1AdditionalRSAPrime = &[_]Pkcs1AdditionalRSAPrime{},
+    additional_primes: []Pkcs1AdditionalRsaPrime = &[_]Pkcs1AdditionalRsaPrime{},
 
-    pub fn parse(der: []const u8, allocator: mem.Allocator) !Pkcs1PrivateKey {
-        _ = der;
-        _ = allocator;
-        @panic("not implemented yet");
+    pub fn parse(input: *asn1.String, allocator: mem.Allocator) !Pkcs1PrivateKey {
+        var s = try input.readAsn1(.sequence);
+        var key = blk: {
+            const version = try s.readAsn1Uint64();
+
+            var n = try s.readAsn1BigInt(allocator);
+            errdefer allocator.free(n.limbs);
+
+            const e = try s.readAsn1Uint64();
+
+            var o = try s.readAsn1BigInt(allocator);
+            errdefer allocator.free(o.limbs);
+
+            var p = try s.readAsn1BigInt(allocator);
+            errdefer allocator.free(p.limbs);
+
+            var q = try s.readAsn1BigInt(allocator);
+            errdefer allocator.free(q.limbs);
+
+            break :blk Pkcs1PrivateKey{
+                .version = version,
+                .n = n,
+                .e = e,
+                .o = o,
+                .p = p,
+                .q = q,
+            };
+        };
+        errdefer key.deinit(allocator);
+
+        if (!s.empty()) {
+            key.dp = try s.readAsn1BigInt(allocator);
+        }
+        if (!s.empty()) {
+            key.dq = try s.readAsn1BigInt(allocator);
+        }
+        if (!s.empty()) {
+            key.qinv = try s.readAsn1BigInt(allocator);
+        }
+        if (!s.empty()) {
+            var primes = std.ArrayListUnmanaged(Pkcs1AdditionalRsaPrime){};
+            errdefer memx.deinitArrayListAndElems(Pkcs1AdditionalRsaPrime, &primes, allocator);
+            s = try s.readAsn1(.sequence);
+            while (!s.empty()) {
+                var prime = try Pkcs1AdditionalRsaPrime.parse(&s, allocator);
+                try primes.append(allocator, prime);
+            }
+            if (primes.items.len > 0) {
+                key.additional_primes = primes.toOwnedSlice(allocator);
+            }
+        }
+        return key;
+    }
+
+    pub fn deinit(self: *Pkcs1PrivateKey, allocator: mem.Allocator) void {
+        allocator.free(self.n.limbs);
+        allocator.free(self.o.limbs);
+        allocator.free(self.p.limbs);
+        allocator.free(self.q.limbs);
+        if (self.dp) |*dp| allocator.free(dp.limbs);
+        if (self.dq) |*dq| allocator.free(dq.limbs);
+        if (self.qinv) |*qinv| allocator.free(qinv.limbs);
+        memx.deinitSliceAndElems(Pkcs1AdditionalRsaPrime, self.additional_primes, allocator);
     }
 };
 
@@ -61,103 +121,38 @@ const Pkcs1PrivateKey = struct {
 // Exp:+2408799165996376110875580332626720047862055690407009019066840661772219553650179160072518429915815541557306809877033891770767911169283040903092596861988058066908273838883520187870508930296159459048685429473
 // Coeff:+9086327348159149802015028376751226996956460209872933808887772794568433598890548990501765910551677911795528435031705196489959771331687971870930175425726308212774333319781846835752275453535191486556845509082}]}
 
-const Pkcs1AdditionalRSAPrime = struct {
+const Pkcs1AdditionalRsaPrime = struct {
     prime: math.big.int.Const,
 
     // We ignore these values because rsa will calculate them.
     exp: math.big.int.Const,
     coeff: math.big.int.Const,
 
-    pub fn parse(der: []const u8, allocator: mem.Allocator) !Pkcs1AdditionalRSAPrime {
-        var s = asn1.String.init(der);
-        s = try s.readAsn1(.sequence);
+    pub fn parse(input: *asn1.String, allocator: mem.Allocator) !Pkcs1AdditionalRsaPrime {
+        var s = try input.readAsn1(.sequence);
 
         var prime = try s.readAsn1BigInt(allocator);
         errdefer allocator.free(prime.limbs);
-        std.log.debug("prime={}", .{prime});
 
         var exp = try s.readAsn1BigInt(allocator);
         errdefer allocator.free(exp.limbs);
-        std.log.debug("exp={}", .{exp});
 
         var coeff = try s.readAsn1BigInt(allocator);
         errdefer allocator.free(coeff.limbs);
-        std.log.debug("coeff={}", .{coeff});
 
-        return Pkcs1AdditionalRSAPrime{
+        return Pkcs1AdditionalRsaPrime{
             .prime = prime,
             .exp = exp,
             .coeff = coeff,
         };
     }
 
-    pub fn deinit(self: *Pkcs1AdditionalRSAPrime, allocator: mem.Allocator) void {
+    pub fn deinit(self: *Pkcs1AdditionalRsaPrime, allocator: mem.Allocator) void {
         allocator.free(self.prime.limbs);
         allocator.free(self.exp.limbs);
         allocator.free(self.coeff.limbs);
     }
 };
-
-fn parsePkcs1PrivateKey(der: []const u8, allocator: mem.Allocator) !Pkcs1PrivateKey {
-    var s = asn1.String.init(der);
-    s = try s.readAsn1(.sequence);
-    // std.log.debug("s={}", .{fmtx.fmtSliceHexEscapeLower(s.bytes)});
-    const version = try s.readAsn1Uint64();
-    std.log.debug("version={}", .{version});
-
-    var n = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(n.limbs);
-    std.log.debug("n={}", .{n});
-
-    const e = try s.readAsn1Uint64();
-    std.log.debug("e={}", .{e});
-
-    var d = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(d.limbs);
-    std.log.debug("d={}", .{d});
-
-    var p = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(p.limbs);
-    std.log.debug("p={}", .{p});
-
-    var q = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(q.limbs);
-    std.log.debug("q={}", .{q});
-
-    var dp = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(dp.limbs);
-    std.log.debug("dp={}", .{dp});
-
-    var dq = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(dq.limbs);
-    std.log.debug("dq={}", .{dq});
-
-    var qinv = try s.readAsn1BigInt(allocator);
-    errdefer allocator.free(qinv.limbs);
-    std.log.debug("qinv={}", .{qinv});
-
-    if (!s.empty()) {
-        s = try s.readAsn1(.sequence);
-
-        while (!s.empty()) {
-            var t = try s.readAsn1(.sequence);
-
-            var prime = try t.readAsn1BigInt(allocator);
-            errdefer allocator.free(prime.limbs);
-            std.log.debug("prime={}", .{prime});
-
-            var exp = try t.readAsn1BigInt(allocator);
-            errdefer allocator.free(exp.limbs);
-            std.log.debug("exp={}", .{exp});
-
-            var coeff = try t.readAsn1BigInt(allocator);
-            errdefer allocator.free(coeff.limbs);
-            std.log.debug("coeff={}", .{coeff});
-        }
-    }
-
-    @panic("not implemented yet");
-}
 
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
@@ -176,7 +171,9 @@ const priv_rsa_3_der = @embedFile("../../tests/priv-rsa-3.der");
 test "parsePkcs1PrivateKey" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
-    var key = try parsePkcs1PrivateKey(priv_rsa_3_der, allocator);
+    var s = asn1.String.init(priv_rsa_3_der);
+    var key = try Pkcs1PrivateKey.parse(&s, allocator);
+    defer key.deinit(allocator);
     std.log.debug("key={}", .{key});
 }
 
