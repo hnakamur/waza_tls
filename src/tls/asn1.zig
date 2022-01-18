@@ -362,7 +362,7 @@ pub const String = struct {
         return try asn1Signed(bytes.bytes);
     }
 
-    fn readAsn1Uint64(self: *String) !u64 {
+    pub fn readAsn1Uint64(self: *String) !u64 {
         var bytes = try self.readAsn1(.integer);
         try checkAsn1Integer(bytes.bytes);
         return try asn1Unsigned(bytes.bytes);
