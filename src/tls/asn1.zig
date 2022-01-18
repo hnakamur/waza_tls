@@ -947,6 +947,47 @@ pub const TagAndLength = struct {
     }
 };
 
+pub fn parseBigInt(allocator: mem.Allocator, der: []const u8) !math.big.int.Const {
+    try checkAsn1Integer(der);
+    const limb_byte_len = @divExact(@typeInfo(usize).Int.bits, 8);
+    if (der[0] & 0x80 == 0x80) {
+        // Negative number.
+        const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * der.len);
+        var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
+        var b = @ptrCast([*]u8, ret.limbs.ptr);
+        var i: usize = 0;
+        while (i < der.len) : (i += 1) {
+            // Use bitwise NOT here since encoded bytes are encoded in two's-complement form.
+            // Also note bytes in zig's big integer are little-endian ordered.
+            b[der.len - 1 - i] = ~der[i];
+        }
+        mem.set(u8, b[der.len .. limb_byte_len * capacity], 0);
+        ret.metadata = capacity;
+
+        // ret = -(ret + 1)
+        const one = math.big.int.Const{ .limbs = &[_]math.big.Limb{1}, .positive = true };
+        try ret.add(ret.toConst(), one);
+        ret.negate();
+        return ret.toConst();
+    } else {
+        var bytes = der;
+        if (bytes[0] == 0 and bytes.len > 1) {
+            bytes = bytes[1..];
+        }
+        const capacity = math.big.int.calcTwosCompLimbCount(limb_byte_len * bytes.len);
+        var ret = try math.big.int.Managed.initCapacity(allocator, capacity);
+        var b = @ptrCast([*]u8, ret.limbs.ptr);
+        var i: usize = 0;
+        while (i < bytes.len) : (i += 1) {
+            // Note bytes in zig's big integer are little-endian ordered.
+            b[bytes.len - 1 - i] = bytes[i];
+        }
+        mem.set(u8, b[bytes.len .. limb_byte_len * capacity], 0);
+        ret.metadata = capacity;
+        return ret.toConst();
+    }
+}
+
 // parse decodes an ASN.1 OBJECT IDENTIFIER and advances.
 pub fn parseObjectIdentifier(input: []const u8, allocator: mem.Allocator) !ObjectIdentifier {
     if (input.len == 0) return error.Asn1SyntaxError;
@@ -1202,7 +1243,7 @@ test "parseField all" {
             const new_offset = try parseField(field_param, allocator, input, 0, &t1.c);
             try testing.expectEqual(input.len, new_offset);
             if (!want.eql(t1.c.?)) {
-                std.log.warn("oid mismatch, want={}, got={}", .{want, t1.c.?});
+                std.log.warn("oid mismatch, want={}, got={}", .{ want, t1.c.? });
             }
             try testing.expect(want.eql(t1.c.?));
         }
@@ -1567,6 +1608,51 @@ test "readAsn1BigInt" {
                 try testing.expect(want.eq(got));
             } else |err| {
                 try testing.expectError(err, s.readAsn1Int64());
+            }
+        }
+    }.f;
+
+    try f("0", "\x02\x01\x00");
+    try f("1", "\x02\x01\x01");
+    try f("127", "\x02\x01\x7f");
+    try f("128", "\x02\x02\x00\x80");
+    try f("255", "\x02\x02\x00\xff");
+    try f("256", "\x02\x02\x01\x00");
+    try f("72057594037927935", "\x02\x08\x00" ++ "\xff" ** 7);
+    try f("18446744073709551615", "\x02\x09\x00" ++ "\xff" ** 8);
+    try f("-1", "\x02\x01\xff");
+    try f("-2", "\x02\x01\xfe");
+    try f("-128", "\x02\x01\x80");
+    try f("-129", "\x02\x02\xff\x7f");
+    try f("-130", "\x02\x02\xff\x7e");
+}
+
+test "parseBigInt" {
+    testing.log_level = .debug;
+    const f = struct {
+        fn f(want_str: anyerror![]const u8, input: []const u8) !void {
+            const allocator = testing.allocator;
+            var t: TagAndLength = undefined;
+            var offset = try TagAndLength.parse(input, 0, &t);
+            const inner_der = input[offset .. offset + t.length];
+            if (want_str) |str| {
+                var got = try parseBigInt(allocator, inner_der);
+                defer allocator.free(got.limbs);
+                var want = blk: {
+                    var m = try math.big.int.Managed.init(allocator);
+                    errdefer m.deinit();
+                    try m.setString(10, str);
+                    break :blk m.toConst();
+                };
+                defer allocator.free(want.limbs);
+                if (!want.eq(got)) {
+                    std.debug.print("input={}, want_str={s}, want={}, got={}\n", .{
+                        fmtx.fmtSliceHexEscapeLower(input), str, want, got,
+                    });
+                }
+                try testing.expect(want.eq(got));
+            } else |err| {
+                try testing.expectError(err, parseBigInt(allocator, inner_der));
             }
         }
     }.f;

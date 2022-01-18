@@ -25,11 +25,17 @@ const Pkcs1PrivateKey = struct {
     q: math.big.int.Const,
 
     // We ignore these values, if present, because rsa will calculate them.
-    dp: ?math.big.int.Const = null,
-    dq: ?math.big.int.Const = null,
-    qinv: ?math.big.int.Const = null,
+    dp: math.big.int.Const = null,
+    dq: math.big.int.Const = null,
+    qinv: math.big.int.Const = null,
 
     additional_params: []Pkcs1AdditionalRSAPrime = &[_]Pkcs1AdditionalRSAPrime{},
+
+    pub fn parse(der: []const u8, allocator: mem.Allocator) !Pkcs1PrivateKey {
+        _ = der;
+        _ = allocator;
+        @panic("not implemented yet");
+    }
 };
 
 //priv={Version:0 N:+22295364975752508575061097572215548363601639861957558178792407355786478259555016313127021656834637097852747804876062503601273677042568544224214532129708505393452433481004948944475537647247610436458197647653560741071242798074354384526507150934229843916418098918144553487537839134902970548767340742818459173873350059765758153486592679828943321134392209951585654350727556760487018710623952783472748790514694865698914010172519781708672267169515849530543530211474777493550778014290012317103620433280961020867689081854987830217773597715131823149554233324377585009042096026387318557027460960407243607723661849550265407122309
@@ -61,6 +67,35 @@ const Pkcs1AdditionalRSAPrime = struct {
     // We ignore these values because rsa will calculate them.
     exp: math.big.int.Const,
     coeff: math.big.int.Const,
+
+    pub fn parse(der: []const u8, allocator: mem.Allocator) !Pkcs1AdditionalRSAPrime {
+        var s = asn1.String.init(der);
+        s = try s.readAsn1(.sequence);
+
+        var prime = try s.readAsn1BigInt(allocator);
+        errdefer allocator.free(prime.limbs);
+        std.log.debug("prime={}", .{prime});
+
+        var exp = try s.readAsn1BigInt(allocator);
+        errdefer allocator.free(exp.limbs);
+        std.log.debug("exp={}", .{exp});
+
+        var coeff = try s.readAsn1BigInt(allocator);
+        errdefer allocator.free(coeff.limbs);
+        std.log.debug("coeff={}", .{coeff});
+
+        return Pkcs1AdditionalRSAPrime{
+            .prime = prime,
+            .exp = exp,
+            .coeff = coeff,
+        };
+    }
+
+    pub fn deinit(self: *Pkcs1AdditionalRSAPrime, allocator: mem.Allocator) void {
+        allocator.free(self.prime.limbs);
+        allocator.free(self.exp.limbs);
+        allocator.free(self.coeff.limbs);
+    }
 };
 
 fn parsePkcs1PrivateKey(der: []const u8, allocator: mem.Allocator) !Pkcs1PrivateKey {
