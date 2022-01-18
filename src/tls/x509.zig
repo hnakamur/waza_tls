@@ -49,7 +49,7 @@ pub const SignatureAlgorithm = enum(u8) {
     unknown,
     md2_with_rsa, // Unsupported.
     md5_with_rsa, // Only supported for signing, not verification.
-    sha1WithRSA, // Only supported for signing, not verification.
+    sha1_with_rsa, // Only supported for signing, not verification.
     sha256_with_rsa,
     sha384_with_rsa,
     sha512_with_rsa,
@@ -113,6 +113,10 @@ test "fromAlgorithmIdentifier" {
     // try testing.expectEqual(oid_signature_ed25519, ObjectIdentifier{ .components = &[_]u32{ 1, 3, 101, 112 } });
 }
 
+
+pub const oid_signature_sha1_with_rsa = asn1.ObjectIdentifier{
+    .components = &[_]u32{ 1, 2, 840, 113549, 1, 1, 5 },
+};
 pub const oid_signature_rsa_pss = asn1.ObjectIdentifier{
     .components = &[_]u32{ 1, 2, 840, 113549, 1, 1, 10 },
 };
@@ -133,6 +137,12 @@ const signature_algorithm_details = [_]SignatureAlgorithmDetail{
         .name = "Ed25519",
         .oid = oid_signature_ed25519,
         .pub_key_algo = .ed25519,
+    },
+    .{
+        .algo = .sha1_with_rsa,
+        .name = "SHA1-RSA",
+        .oid = oid_signature_sha1_with_rsa,
+        .pub_key_algo = .rsa,
     },
 };
 
@@ -170,7 +180,7 @@ const Certificate = struct {
     raw_tbs_certificate: []const u8,
     version: i64,
     serial_number: math.big.int.Const,
-    signature_algorithm: pkix.AlgorithmIdentifier,
+    signature_algorithm: SignatureAlgorithm,
     raw_issuer: []const u8,
     issuer: pkix.Name,
     not_before: datetime.datetime.Datetime,
@@ -241,8 +251,8 @@ const Certificate = struct {
             return error.SignatureAlgorithmIdentifierMismatch;
         }
         var sig_ai = try pkix.AlgorithmIdentifier.parse(allocator, &sig_ai_seq);
-        errdefer sig_ai.deinit(allocator);
-        // TODO: const signature_algorithm = try SignatureAlgorithm.fromAlgorithmIdentifier(&sig_ai);
+        defer sig_ai.deinit(allocator);
+        const signature_algorithm = try SignatureAlgorithm.fromAlgorithmIdentifier(&sig_ai);
 
         var issuer_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedIssuer;
         const raw_issuer = issuer_seq.bytes;
@@ -307,7 +317,7 @@ const Certificate = struct {
                 .raw_tbs_certificate = raw_tbs_certificate,
                 .version = version,
                 .serial_number = serial_number,
-                .signature_algorithm = sig_ai,
+                .signature_algorithm = signature_algorithm,
                 .raw_issuer = raw_issuer,
                 .issuer = issuer,
                 .not_before = not_before,
@@ -333,7 +343,6 @@ const Certificate = struct {
     pub fn deinit(self: *Certificate, allocator: mem.Allocator) void {
         allocator.free(self.raw);
         allocator.free(self.serial_number.limbs);
-        self.signature_algorithm.deinit(allocator);
         self.issuer.deinit(allocator);
         self.subject.deinit(allocator);
         self.public_key.deinit(allocator);
