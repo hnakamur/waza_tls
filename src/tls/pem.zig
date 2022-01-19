@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const fmtx = @import("../fmtx.zig");
 
 // A Block represents a PEM encoded structure.
 //
@@ -88,17 +89,17 @@ pub const Block = struct {
                 }
             } else {
                 if (isLabelWordSeparatorChar(b)) {
-                    if (offset.* == label_start_pos) {
-                        break;
-                    }
                     seen_sep = true;
                     sep = b;
                     if (b == boundary_char and
-                        offset.* + 1 < input.len and input[offset.*] == boundary_char)
+                        offset.* + 1 < input.len and input[offset.* + 1] == boundary_char)
                     {
                         const label_end_pos = offset.*;
                         try readExpectedString(input, offset, boundary_suffix);
                         return input[label_start_pos..label_end_pos];
+                    }
+                    if (offset.* == label_start_pos) {
+                        break;
                     }
                 } else if (!isLabelChar(b)) {
                     break;
@@ -233,7 +234,7 @@ pub const Block = struct {
 
 const testing = std.testing;
 
-test "Block.decode" {
+test "Block.decode certificate" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
     const priv_rsa_pem = @embedFile("../../tests/priv-rsa.pem");
@@ -244,4 +245,54 @@ test "Block.decode" {
     try testing.expectEqual(priv_rsa_pem.len, offset);
     try testing.expectEqualStrings("RSA PRIVATE KEY", block.label);
     try testing.expectEqualSlices(u8, priv_rsa_der, block.bytes);
+}
+
+test "Block.decode success with whitespaces" {
+    testing.log_level = .debug;
+    const f = struct {
+        fn f(want_label: []const u8, want_decoded: []const u8, input: []const u8) !void {
+            const allocator = testing.allocator;
+            var offset: usize = 0;
+            var block = try Block.decode(allocator, input, &offset);
+            defer block.deinit(allocator);
+            try testing.expectEqual(input.len, offset);
+            try testing.expectEqualStrings(want_label, block.label);
+            try testing.expectEqualSlices(u8, want_decoded, block.bytes);
+        }
+    }.f;
+
+    try f("", "", "-----BEGIN -----\n" ++
+        "-----END -----");
+    try f("", "", "-----BEGIN -----\r\n" ++
+        "-----END -----");
+    try f("", "", "-----BEGIN -----\r" ++
+        "-----END -----");
+    try f("", "", "-----BEGIN ----- \t\r" ++
+        "-----END -----\t \n");
+    try f("", "f", "-----BEGIN -----\n" ++
+        "Zg==\n" ++
+        "-----END -----");
+    try f("", "f", "-----BEGIN -----\n" ++
+        "Zg= \t\n" ++
+        "= \t\n" ++
+        "-----END -----");
+    try f("", "fo", "-----BEGIN -----\n" ++
+        "Zm8= \t\n" ++
+        "-----END -----");
+    try f("FOO", "fo", "-----BEGIN FOO-----\n" ++
+        "Zm8\r" ++
+        "= \t\n" ++
+        "-----END FOO-----");
+    try f("FOO", "foo", "-----BEGIN FOO-----\n" ++
+        "Zm9v\r" ++
+        "-----END FOO-----");
+    try f("FOO-BAR", "foo", "-----BEGIN FOO-BAR-----\n" ++
+        "Zm9\r" ++
+        "v\n" ++
+        "-----END FOO-BAR-----");
+    try f("FOO-BAR BAZ", "foo", "-----BEGIN FOO-BAR BAZ-----\n" ++
+        " \t\n\r " ++
+        "Zm9\r" ++
+        "v\n" ++
+        "-----END FOO-BAR BAZ-----");
 }

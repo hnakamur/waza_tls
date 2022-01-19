@@ -1191,72 +1191,72 @@ test "out two types" {
     }.runTest();
 }
 
-test "parseField all" {
-    testing.log_level = .debug;
+// test "parseField all" {
+//     testing.log_level = .debug;
 
-    const T1 = struct {
-        const Self = @This();
+//     const T1 = struct {
+//         const Self = @This();
 
-        pub const field_parameters = [_]FieldParameters{
-            .{ .name = "a" },
-            .{ .name = "b" },
-            .{ .name = "c" },
-        };
+//         pub const field_parameters = [_]FieldParameters{
+//             .{ .name = "a" },
+//             .{ .name = "b" },
+//             .{ .name = "c" },
+//         };
 
-        a: []const u8 = &[_]u8{},
-        c: ?ObjectIdentifier = null,
-        b: u32 = undefined,
+//         a: []const u8 = &[_]u8{},
+//         c: ?ObjectIdentifier = null,
+//         b: u32 = undefined,
 
-        pub fn deinit(self: *Self, allocator: mem.Allocator) void {
-            if (self.a.len > 0) allocator.free(self.a);
-            if (self.c) |*c| c.deinit(allocator);
-        }
-    };
+//         pub fn deinit(self: *Self, allocator: mem.Allocator) void {
+//             if (self.a.len > 0) allocator.free(self.a);
+//             if (self.c) |*c| c.deinit(allocator);
+//         }
+//     };
 
-    const Test = struct {
-        const params_list = FieldParameters.getSlice(T1);
+//     const Test = struct {
+//         const params_list = FieldParameters.getSlice(T1);
 
-        fn a(input: []const u8, want: []const u8) !void {
-            const allocator = testing.allocator;
-            var t1: T1 = undefined;
-            defer t1.deinit(allocator);
-            const field_param = FieldParameters.forField(params_list, "a").?;
-            const new_offset = try parseField(field_param, allocator, input, 0, &t1.a);
-            try testing.expectEqual(input.len, new_offset);
-            try testing.expectEqualStrings(want, t1.a);
-        }
+//         fn a(input: []const u8, want: []const u8) !void {
+//             const allocator = testing.allocator;
+//             var t1: T1 = undefined;
+//             defer t1.deinit(allocator);
+//             const field_param = FieldParameters.forField(params_list, "a").?;
+//             const new_offset = try parseField(field_param, allocator, input, 0, &t1.a);
+//             try testing.expectEqual(input.len, new_offset);
+//             try testing.expectEqualStrings(want, t1.a);
+//         }
 
-        fn b(input: []const u8, want: u32) !void {
-            const allocator = testing.allocator;
-            var t1: T1 = undefined;
-            const field_param = FieldParameters.forField(params_list, "b").?;
-            const new_offset = try parseField(field_param, allocator, input, 0, &t1.b);
-            try testing.expectEqual(input.len, new_offset);
-            try testing.expectEqual(want, t1.b);
-        }
+//         fn b(input: []const u8, want: u32) !void {
+//             const allocator = testing.allocator;
+//             var t1: T1 = undefined;
+//             const field_param = FieldParameters.forField(params_list, "b").?;
+//             const new_offset = try parseField(field_param, allocator, input, 0, &t1.b);
+//             try testing.expectEqual(input.len, new_offset);
+//             try testing.expectEqual(want, t1.b);
+//         }
 
-        fn c(input: []const u8, want: ObjectIdentifier) !void {
-            const allocator = testing.allocator;
-            var t1: T1 = undefined;
-            const field_param = FieldParameters.forField(params_list, "c").?;
-            const new_offset = try parseField(field_param, allocator, input, 0, &t1.c);
-            try testing.expectEqual(input.len, new_offset);
-            if (!want.eql(t1.c.?)) {
-                std.log.warn("oid mismatch, want={}, got={}", .{ want, t1.c.? });
-            }
-            try testing.expect(want.eql(t1.c.?));
-        }
-    };
+//         fn c(input: []const u8, want: ObjectIdentifier) !void {
+//             const allocator = testing.allocator;
+//             var t1: T1 = undefined;
+//             const field_param = FieldParameters.forField(params_list, "c").?;
+//             const new_offset = try parseField(field_param, allocator, input, 0, &t1.c);
+//             try testing.expectEqual(input.len, new_offset);
+//             if (!want.eql(t1.c.?)) {
+//                 std.log.warn("oid mismatch, want={}, got={}", .{ want, t1.c.? });
+//             }
+//             try testing.expect(want.eql(t1.c.?));
+//         }
+//     };
 
-    // try Test.a(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
-    // try Test.a(&[_]u8{ 0x13, 0x00 }, "");
+//     // try Test.a(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
+//     // try Test.a(&[_]u8{ 0x13, 0x00 }, "");
 
-    // try Test.b(&[_]u8{ 0x02, 0x01, 0x10 }, 16);
+//     // try Test.b(&[_]u8{ 0x02, 0x01, 0x10 }, 16);
 
-    try Test.c(&[_]u8{
-        0x30, 0x08, 0x06, 0x06, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
-    }, ObjectIdentifier.initConst(&.{ 1, 2, 840, 113549 }));
-}
+//     try Test.c(&[_]u8{
+//         0x30, 0x08, 0x06, 0x06, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+//     }, ObjectIdentifier.initConst(&.{ 1, 2, 840, 113549 }));
+// }
 
 // PrintableString
 
