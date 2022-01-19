@@ -17,7 +17,7 @@ pub const Block = struct {
     const wsp_chars = &[_]u8{ '\t', ' ' };
     const eol_wsp_chars = &[_]u8{ '\t', ' ', '\r', '\n' };
     const base64_pad_char = '=';
-    const label_line_first_char = '-';
+    const boundary_char = '-';
 
     // The label, taken from the preamble (i.e. "RSA PRIVATE KEY").
     label: []const u8,
@@ -37,7 +37,7 @@ pub const Block = struct {
         var seen_pad: bool = false;
         while (offset.* < input.len) {
             const b = input[offset.*];
-            if (b == label_line_first_char) {
+            if (b == boundary_char) {
                 try readEndBoundaryLine(input, offset, label);
                 const Decoder = std.base64.standard.Decoder;
                 const decoded_len = try Decoder.calcSizeForSlice(encoded_buf.items);
@@ -81,12 +81,7 @@ pub const Block = struct {
         while (offset.* < input.len) : (offset.* += 1) {
             const b = input[offset.*];
             if (seen_sep) {
-                if (sep == '-' and b == '-') {
-                    offset.* -= 1;
-                    const label_end_pos = offset.*;
-                    try readExpectedString(input, offset, boundary_suffix);
-                    return input[label_start_pos..label_end_pos];
-                } else if (isLabelChar(b)) {
+                if (isLabelChar(b)) {
                     seen_sep = false;
                 } else {
                     break;
@@ -98,6 +93,13 @@ pub const Block = struct {
                     }
                     seen_sep = true;
                     sep = b;
+                    if (b == boundary_char and
+                        offset.* + 1 < input.len and input[offset.*] == boundary_char)
+                    {
+                        const label_end_pos = offset.*;
+                        try readExpectedString(input, offset, boundary_suffix);
+                        return input[label_start_pos..label_end_pos];
+                    }
                 } else if (!isLabelChar(b)) {
                     break;
                 }
@@ -119,10 +121,6 @@ pub const Block = struct {
     }
 
     fn readEndBoundaryLine(input: []const u8, offset: *usize, label: []const u8) !void {
-        std.log.debug(
-            "readEndBoundaryLine start label={s}, offset={}, rest={s}",
-            .{ label, offset.*, input[offset.*..] },
-        );
         try readExpectedString(input, offset, end_boundary_prefix);
         try readExpectedString(input, offset, label);
         try readExpectedString(input, offset, boundary_suffix);
@@ -186,10 +184,6 @@ pub const Block = struct {
         while (offset.* < input.len) : (offset.* += 1) {
             const b = input[offset.*];
             if (readEol(input, offset)) {
-                std.log.debug(
-                    "readBase64Line readEol done, offset={}, rest={s}",
-                    .{ offset.*, input[offset.*..] },
-                );
                 return;
             }
             if (seen_wsp) {
@@ -201,10 +195,6 @@ pub const Block = struct {
                     try encoded_buf.append(allocator, b);
                 } else if (b == base64_pad_char) {
                     seen_pad.* = true;
-                    std.log.debug(
-                        "readBase64Line calling readPadLine, offset={}, rest={s}",
-                        .{ offset.*, input[offset.*..] },
-                    );
                     try readPadLine(allocator, encoded_buf, input, offset);
                     return;
                 }
@@ -223,10 +213,6 @@ pub const Block = struct {
         while (offset.* < input.len) : (offset.* += 1) {
             const b = input[offset.*];
             if (readEol(input, offset)) {
-                std.log.debug(
-                    "readPadLine readEol done, offset={}, rest={s}",
-                    .{ offset.*, input[offset.*..] },
-                );
                 return;
             }
             if (seen_wsp) {
