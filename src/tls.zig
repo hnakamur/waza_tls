@@ -29,6 +29,7 @@ const socket = @import("tls/socket.zig");
 const alert = @import("tls/alert.zig");
 const pkix = @import("tls/pkix.zig");
 const rsa = @import("tls/rsa.zig");
+const pem = @import("tls/pem.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
