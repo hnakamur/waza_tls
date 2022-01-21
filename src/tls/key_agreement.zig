@@ -14,6 +14,9 @@ const ClientKeyExchangeMsg = @import("handshake_msg.zig").ClientKeyExchangeMsg;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const BytesView = @import("../BytesView.zig");
 const x509 = @import("x509.zig");
+const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
+const Hash = @import("hash.zig").Hash;
+const SignOpts = @import("crypto.zig").SignOpts;
 
 pub const KeyAgreement = union(enum) {
     rsa: RsaKeyAgreement,
@@ -142,13 +145,18 @@ pub const EcdheKeyAgreement = struct {
         server_ecdhe_params[3] = @intCast(u8, ecdhe_public.len);
         mem.copy(u8, server_ecdhe_params[4..], ecdhe_public);
 
-        const sig_scheme = SignatureScheme.Ed25519; // FIX: stop hardcoding;
+        const sig_alg = try selectSignatureScheme(
+            allocator,
+            self.version,
+            cert_chain,
+            client_hello.supported_signature_algorithms,
+        );
         var sig_type: SignatureType = undefined;
         var sig_hash_type: HashType = undefined;
         const v1_2_or_later = @enumToInt(self.version) >= @enumToInt(ProtocolVersion.v1_2);
         if (v1_2_or_later) {
-            sig_type = try SignatureType.fromSinatureScheme(sig_scheme);
-            sig_hash_type = try HashType.fromSinatureScheme(sig_scheme);
+            sig_type = try SignatureType.fromSinatureScheme(sig_alg);
+            sig_hash_type = try HashType.fromSinatureScheme(sig_alg);
         } else {
             // TODO: implement
         }
@@ -167,9 +175,9 @@ pub const EcdheKeyAgreement = struct {
         defer allocator.free(signed);
 
         const private_key = cert_chain.private_key.?;
-        const private_key_bytes = private_key.ed25519.raw[0..crypto.sign.Ed25519.secret_length];
-        const key_pair = crypto.sign.Ed25519.KeyPair.fromSecretKey(private_key_bytes.*);
-        const sig = try crypto.sign.Ed25519.sign(signed, key_pair, null);
+        var sign_opts = SignOpts{ .hash_type = sig_hash_type };
+        var sig = private_key.sign(allocator, signed, sign_opts);
+        defer allocator.free(sig);
 
         const sig_and_hash_len: usize = if (v1_2_or_later) 2 else 0;
         var key = try allocator.alloc(u8, server_ecdhe_params.len + sig_and_hash_len + 2 + sig.len);
@@ -177,13 +185,13 @@ pub const EcdheKeyAgreement = struct {
 
         var k = key[server_ecdhe_params.len..];
         if (v1_2_or_later) {
-            k[0] = @intCast(u8, @enumToInt(sig_scheme) >> 8);
-            k[1] = @truncate(u8, @enumToInt(sig_scheme));
+            k[0] = @intCast(u8, @enumToInt(sig_alg) >> 8);
+            k[1] = @truncate(u8, @enumToInt(sig_alg));
             k = k[2..];
         }
         k[0] = @intCast(u8, sig.len >> 8);
         k[1] = @truncate(u8, sig.len);
-        mem.copy(u8, k[2..], &sig);
+        mem.copy(u8, k[2..], sig);
         return ServerKeyExchangeMsg{ .key = key };
     }
 
@@ -285,7 +293,7 @@ fn hashForServerKeyExchange(
     version: ProtocolVersion,
     slices: []const []const u8,
 ) ![]const u8 {
-    if (sig_type == .Ed25519) {
+    if (sig_type == .ed25519) {
         var signed_len: usize = 0;
         for (slices) |s| {
             signed_len += s.len;
@@ -297,6 +305,52 @@ fn hashForServerKeyExchange(
             pos += s.len;
         }
         return signed;
+    }
+    if (@enumToInt(version) >= @enumToInt(ProtocolVersion.v1_2)) {
+        var h = Hash.init(sig_hash_type);
+        for (slices) |s| {
+            h.update(s);
+        }
+        return try h.allocFinal(allocator);
+        // switch (sig_hash_type) {
+        //     .sha1 => {
+        //         var h = std.crypto.hash.Sha1.init(.{});
+        //         for (slices) |s| {
+        //             h.update(s);
+        //         }
+        //         var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
+        //         h.final(&digest);
+        //         return try allocator.dupe(u8, &digest);
+        //     },
+        //     .sha256 => {
+        //         var h = std.crypto.hash.sha2.Sha256.init(.{});
+        //         for (slices) |s| {
+        //             h.update(s);
+        //         }
+        //         var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+        //         h.final(&digest);
+        //         return try allocator.dupe(u8, &digest);
+        //     },
+        //     .sha384 => {
+        //         var h = std.crypto.hash.sha2.Sha384.init(.{});
+        //         for (slices) |s| {
+        //             h.update(s);
+        //         }
+        //         var digest: [std.crypto.hash.sha2.Sha384.digest_length]u8 = undefined;
+        //         h.final(&digest);
+        //         return try allocator.dupe(u8, &digest);
+        //     },
+        //     .sha512 => {
+        //         var h = std.crypto.hash.sha2.Sha512.init(.{});
+        //         for (slices) |s| {
+        //             h.update(s);
+        //         }
+        //         var digest: [std.crypto.hash.sha2.Sha512.digest_length]u8 = undefined;
+        //         h.final(&digest);
+        //         return try allocator.dupe(u8, &digest);
+        //     },
+        //     else => unreachable,
+        // }
     }
     _ = sig_hash_type;
     _ = version;

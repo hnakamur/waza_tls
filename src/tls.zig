@@ -32,6 +32,7 @@ const pkcs1 = @import("tls/pkcs1.zig");
 const crypto = @import("tls/crypto.zig");
 const rsa = @import("tls/rsa.zig");
 const pem = @import("tls/pem.zig");
+const common = @import("tls/common.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

@@ -1,49 +1,80 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const mem = std.mem;
+const HashType = @import("auth.zig").HashType;
 
-pub const Hash = union(enum) {
-    Sha256: Sha256Hash,
-    Sha384: Sha384Hash,
+pub const Hash = union(HashType) {
+    sha256: Sha256Hash,
+    sha384: Sha384Hash,
+    sha512: Sha512Hash,
+    sha1: Sha1Hash,
+    direct_signing: void,
+
+    pub fn init(hash_type: HashType) Hash {
+        return switch (hash_type) {
+            .sha256 => .{ .sha256 = Sha256Hash.init(.{}) },
+            .sha384 => .{ .sha384 = Sha384Hash.init(.{}) },
+            .sha512 => .{ .sha512 = Sha512Hash.init(.{}) },
+            .sha1 => .{ .sha1 = Sha1Hash.init(.{}) },
+            else => @panic("Unsupported HashType"),
+        };
+    }
 
     pub fn update(self: *Hash, b: []const u8) void {
         switch (self.*) {
-            .Sha256 => |*s| s.update(b),
-            .Sha384 => |*s| s.update(b),
+            .sha256 => |*s| s.update(b),
+            .sha384 => |*s| s.update(b),
+            .sha512 => |*s| s.update(b),
+            .sha1 => |*s| s.update(b),
+            else => @panic("Unsupported HashType"),
         }
     }
 
     pub fn writeFinal(self: *Hash, writer: anytype) !usize {
         return switch (self.*) {
-            .Sha256 => |*s| try s.writeFinal(writer),
-            .Sha384 => |*s| try s.writeFinal(writer),
+            .sha256 => |*s| try s.writeFinal(writer),
+            .sha384 => |*s| try s.writeFinal(writer),
+            .sha512 => |*s| try s.writeFinal(writer),
+            .sha1 => |*s| try s.writeFinal(writer),
+            else => @panic("Unsupported HashType"),
         };
     }
 
     pub fn finalToSlice(self: *Hash, out: []u8) usize {
         return switch (self.*) {
-            .Sha256 => |*s| s.finalToSlice(out),
-            .Sha384 => |*s| s.finalToSlice(out),
+            .sha256 => |*s| s.finalToSlice(out),
+            .sha384 => |*s| s.finalToSlice(out),
+            .sha512 => |*s| s.finalToSlice(out),
+            .sha1 => |*s| s.finalToSlice(out),
+            else => @panic("Unsupported HashType"),
         };
     }
 
     pub fn digestLength(self: *const Hash) usize {
         return switch (self.*) {
-            .Sha256 => |s| s.digestLength(),
-            .Sha384 => |s| s.digestLength(),
+            .sha256 => |s| s.digestLength(),
+            .sha384 => |s| s.digestLength(),
+            .sha512 => |s| s.digestLength(),
+            .sha1 => |s| s.digestLength(),
+            else => @panic("Unsupported HashType"),
         };
     }
 
     pub fn allocFinal(self: *Hash, allocator: mem.Allocator) ![]const u8 {
         return switch (self.*) {
-            .Sha256 => |*s| try s.allocFinal(allocator),
-            .Sha384 => |*s| try s.allocFinal(allocator),
+            .sha256 => |*s| try s.allocFinal(allocator),
+            .sha384 => |*s| try s.allocFinal(allocator),
+            .sha512 => |*s| try s.allocFinal(allocator),
+            .sha1 => |*s| try s.allocFinal(allocator),
+            else => @panic("Unsupported HashType"),
         };
     }
 };
 
 pub const Sha256Hash = HashAdapter(std.crypto.hash.sha2.Sha256);
 pub const Sha384Hash = HashAdapter(std.crypto.hash.sha2.Sha384);
+pub const Sha512Hash = HashAdapter(std.crypto.hash.sha2.Sha512);
+pub const Sha1Hash = HashAdapter(std.crypto.hash.Sha1);
 
 fn HashAdapter(comptime HashImpl: type) type {
     return struct {

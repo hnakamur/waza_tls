@@ -987,10 +987,26 @@ const CertificateStatusType = enum(u8) {
 // RFC 8446, Section 4.2.3.
 pub const SignatureScheme = enum(u16) {
     // RSASSA-PKCS1-v1_5 algorithms.
-    Pkcs1WithSha256 = 0x0401,
+    pkcs1_with_sha256 = 0x0401,
+    pkcs1_with_sha384 = 0x0501,
+    pkcs1_with_sha512 = 0x0601,
+
+    // RSASSA-PSS algorithms with public key OID rsaEncryption.
+    pss_with_sha256 = 0x0804,
+    pss_with_sha384 = 0x0805,
+    pss_with_sha512 = 0x0806,
+
+    // ECDSA algorithms. Only constrained to a specific curve in TLS 1.3.
+    ecdsa_with_p256_and_sha256 = 0x0403,
+    ecdsa_with_p384_and_sha384 = 0x0503,
+    ecdsa_with_p521_and_sha512 = 0x0603,
 
     // EdDSA algorithms.
-    Ed25519 = 0x0807,
+    ed25519 = 0x0807,
+
+    // Legacy signature and hash algorithms for TLS 1.2.
+    pkcs1_with_sha1 = 0x0201,
+    ecdsa_with_sha1 = 0x0203,
 };
 
 pub const CurveId = enum(u16) {

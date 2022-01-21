@@ -19,6 +19,7 @@ const generateRandom = @import("handshake_msg.zig").generateRandom;
 const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
+const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
 const finished_verify_length = @import("prf.zig").finished_verify_length;
 const RecordType = @import("record.zig").RecordType;
@@ -33,6 +34,7 @@ const AlertLevel = @import("alert.zig").AlertLevel;
 const AlertDescription = @import("alert.zig").AlertDescription;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const x509 = @import("x509.zig");
+const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -130,6 +132,10 @@ pub const Conn = struct {
 
         pub fn supportsCurve(self: *const Config, curve: CurveId) bool {
             return memx.containsScalar(CurveId, self.curve_preferences, curve);
+        }
+
+        pub fn getCertificate(self: *const Config) *CertificateChain {
+            return &self.certificates[0];
         }
     };
 
@@ -363,6 +369,11 @@ pub const Conn = struct {
             );
             errdefer allocator.free(supported_points);
 
+            var sig_algs = if (@enumToInt(cli_hello_ver) > @enumToInt(ProtocolVersion.v1_2))
+                try allocator.dupe(SignatureScheme, supported_signature_algorithms)
+            else
+                null;
+
             break :blk ClientHelloMsg{
                 .vers = cli_hello_ver,
                 .random = random[0..random_length],
@@ -371,6 +382,7 @@ pub const Conn = struct {
                 .compression_methods = compression_methods,
                 .supported_curves = supported_curves,
                 .supported_points = supported_points,
+                .supported_signature_algorithms = sig_algs,
             };
         };
 

@@ -127,6 +127,9 @@ test "socket ClientServer" {
 
 test "Conn ClientServer" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
+
     // testing.log_level = .debug;
 
     try struct {
@@ -160,12 +163,20 @@ test "Conn ClientServer" {
         fn runTest() !void {
             const allocator = testing.allocator;
 
+            const cert_pem = @embedFile("../../tests/rsa2048.crt.pem");
+            const key_pem = @embedFile("../../tests/rsa2048.key.pem");
+
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var certificates = try allocator.alloc(CertificateChain, 1);
+            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
             var server = try Server.init(
                 allocator,
                 listen_addr,
                 .{},
-                .{ .max_version = .v1_2 },
+                .{
+                    .certificates = certificates,
+                    .max_version = .v1_2,
+                },
             );
             defer server.deinit();
 

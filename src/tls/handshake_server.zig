@@ -74,7 +74,7 @@ pub const ServerHandshakeStateTls12 = struct {
     session_state: ?SessionState = null,
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
-    cert_chain: ?CertificateChain = null,
+    cert_chain: ?*CertificateChain = null,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls12 {
         return .{ .conn = conn, .client_hello = client_hello };
@@ -84,7 +84,6 @@ pub const ServerHandshakeStateTls12 = struct {
         self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
-        if (self.cert_chain) |*cc| cc.deinit(allocator);
         if (self.master_secret) |s| allocator.free(s);
     }
 
@@ -170,14 +169,15 @@ pub const ServerHandshakeStateTls12 = struct {
 
         self.hello = hello;
 
-        const certificate_chain = try allocator.dupe(
-            []const u8,
-            &[_][]const u8{try allocator.dupe(u8, testEd25519Certificate)},
-        );
-        self.cert_chain = CertificateChain{
-            .certificate_chain = certificate_chain,
-            .private_key = .{ .ed25519 = .{ .raw = testEd25519PrivateKey } },
-        };
+        self.cert_chain = self.conn.config.getCertificate();
+        // const certificate_chain = try allocator.dupe(
+        //     []const u8,
+        //     &[_][]const u8{try allocator.dupe(u8, testEd25519Certificate)},
+        // );
+        // self.cert_chain = CertificateChain{
+        //     .certificate_chain = certificate_chain,
+        //     .private_key = .{ .ed25519 = .{ .raw = testEd25519PrivateKey } },
+        // };
     }
 
     // checkForResumption reports whether we should perform resumption on this connection.
@@ -270,7 +270,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         var skx = try key_agreement.generateServerKeyExchange(
             allocator,
-            &self.cert_chain.?,
+            self.cert_chain.?,
             &self.client_hello,
             &self.hello.?,
         );
@@ -303,7 +303,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         const pre_master_secret = try key_agreement.processClientKeyExchange(
             allocator,
-            &self.cert_chain.?,
+            self.cert_chain.?,
             &ckx_msg,
             self.conn.version.?,
         );

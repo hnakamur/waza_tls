@@ -3,6 +3,7 @@ const mem = std.mem;
 const asn1 = @import("asn1.zig");
 const rsa = @import("rsa.zig");
 const parsePkcs1PrivateKey = @import("pkcs1.zig").parsePkcs1PrivateKey;
+const HashType = @import("auth.zig").HashType;
 
 pub const PublicKeyAlgorithm = enum(u8) {
     unknown,
@@ -40,6 +41,10 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
     }
 };
 
+pub const SignOpts = struct {
+    hash_type: HashType,
+};
+
 pub const PrivateKey = union(PublicKeyAlgorithm) {
     unknown: void,
     rsa: rsa.PrivateKey,
@@ -61,8 +66,41 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
             else => {},
         }
     }
+
+    pub fn public(self: *const PrivateKey) PublicKey {
+        return switch (self.*) {
+            .rsa => |*k| PublicKey{ .rsa = k.public_key },
+            else => @panic("not implemented yet"),
+        };
+    }
+
+    pub fn sign(
+        self: *const PrivateKey,
+        allocator: mem.Allocator,
+        digest: []const u8,
+        opts: SignOpts,
+    ) ![]const u8 {
+        return switch (self.*) {
+            .rsa => |*k| try k.sign(allocator, digest, opts),
+            .ed25519 => |*k| try k.sign(allocator, digest, opts),
+            else => @panic("not implemented yet"),
+        };
+    }
 };
 
 const Ed25519PrivateKey = struct {
     raw: []const u8,
+
+    pub fn sign(
+        self: *const Ed25519PrivateKey,
+        allocator: mem.Allocator,
+        digest: []const u8,
+        opts: SignOpts,
+    ) ![]const u8 {
+        _ = opts;
+        const private_key_bytes = self.raw[0..std.crypto.sign.Ed25519.secret_length];
+        const key_pair = std.crypto.sign.Ed25519.KeyPair.fromSecretKey(private_key_bytes.*);
+        const sig = try std.crypto.sign.Ed25519.sign(digest, key_pair, null);
+        return try allocator.dupe(u8, &sig);
+    }
 };

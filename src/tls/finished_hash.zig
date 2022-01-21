@@ -44,8 +44,8 @@ pub const FinishedHash = struct {
             .v1_2 => {
                 if (cipher_suite.flags.sha384) {
                     return .{
-                        .client = .{ .Sha384 = Sha384Hash.init(.{}) },
-                        .server = .{ .Sha384 = Sha384Hash.init(.{}) },
+                        .client = .{ .sha384 = Sha384Hash.init(.{}) },
+                        .server = .{ .sha384 = Sha384Hash.init(.{}) },
                         .version = version,
                         .buffer = fifo.LinearFifo(u8, .Dynamic).init(allocator),
                         .prf = Prf12(std.crypto.hash.sha2.Sha384).prf12,
@@ -53,8 +53,8 @@ pub const FinishedHash = struct {
                     };
                 } else {
                     return .{
-                        .client = .{ .Sha256 = Sha256Hash.init(.{}) },
-                        .server = .{ .Sha256 = Sha256Hash.init(.{}) },
+                        .client = .{ .sha256 = Sha256Hash.init(.{}) },
+                        .server = .{ .sha256 = Sha256Hash.init(.{}) },
                         .version = version,
                         .buffer = fifo.LinearFifo(u8, .Dynamic).init(allocator),
                         .prf = Prf12(std.crypto.hash.sha2.Sha256).prf12,

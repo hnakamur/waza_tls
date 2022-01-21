@@ -41,7 +41,7 @@ pub const CertificateChain = struct {
 // x509KeyPair parses a public/private key pair from a pair of
 // PEM encoded data. On successful return, Certificate.Leaf will be nil because
 // the parsed form of the certificate is not retained.
-fn x509KeyPair(
+pub fn x509KeyPair(
     allocator: mem.Allocator,
     cert_pem_block: []const u8,
     key_pem_block: []const u8,
