@@ -175,7 +175,7 @@ const PublicKeyInfo = struct {
     }
 };
 
-const Certificate = struct {
+pub const Certificate = struct {
     raw: []const u8,
     raw_tbs_certificate: []const u8,
     version: i64,

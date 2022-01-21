@@ -136,11 +136,6 @@ pub const ClientHandshakeStateTls12 = struct {
 
         try self.finished_hash.?.write(try cert_msg.marshal(allocator));
 
-        var cert_chain = CertificateChain{
-            .certificate_chain = try allocator.dupe([]const u8, cert_msg.certificates),
-        };
-        defer cert_chain.deinit(allocator);
-
         hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
             .CertificateStatus => |cs| {
@@ -150,6 +145,13 @@ pub const ClientHandshakeStateTls12 = struct {
             else => {},
         }
 
+        if (self.conn.handshakes == 0) {
+            // If this is the first handshake on a connection, process and
+            // (optionally) verify the server's certificates.
+            try self.conn.verifyServerCertificate(cert_msg.certificates);
+        } else {
+            // TODO: implement
+        }
         var key_agreement = self.suite.?.ka(self.conn.version.?);
         defer key_agreement.deinit(allocator);
 
@@ -162,7 +164,7 @@ pub const ClientHandshakeStateTls12 = struct {
                         allocator,
                         &self.hello,
                         &self.server_hello,
-                        &cert_chain,
+                        &self.conn.peer_certificates[0],
                         skx_msg,
                     );
                 }
@@ -187,7 +189,7 @@ pub const ClientHandshakeStateTls12 = struct {
         try key_agreement.generateClientKeyExchange(
             allocator,
             &self.hello,
-            &cert_chain,
+            &self.conn.peer_certificates[0],
             &pre_master_secret,
             &ckx_msg,
         );

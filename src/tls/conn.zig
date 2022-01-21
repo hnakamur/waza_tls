@@ -31,6 +31,7 @@ const fmtx = @import("../fmtx.zig");
 const AlertError = @import("alert.zig").AlertError;
 const AlertLevel = @import("alert.zig").AlertLevel;
 const AlertDescription = @import("alert.zig").AlertDescription;
+const x509 = @import("x509.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -116,6 +117,10 @@ pub const Conn = struct {
 
     const FifoType = fifo.LinearFifo(u8, .{ .Static = max_plain_text });
     config: Config,
+    // handshakes counts the number of handshakes performed on the
+    // connection so far. If renegotiation is disabled then this is either
+    // zero or one.
+    handshakes: usize = 0,
     role: Role,
     allocator: mem.Allocator,
     stream: net.Stream,
@@ -143,6 +148,8 @@ pub const Conn = struct {
     client_finished: [finished_verify_length]u8 = undefined,
     server_finished: [finished_verify_length]u8 = undefined,
 
+    peer_certificates: []x509.Certificate = &[_]x509.Certificate{},
+
     pub fn init(
         allocator: mem.Allocator,
         role: Role,
@@ -167,6 +174,7 @@ pub const Conn = struct {
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
         if (self.handshake_state) |*hs| hs.deinit(allocator);
         if (self.client_protocol.len > 0) allocator.free(self.client_protocol);
+        memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
     }
 
     pub fn write(self: *Conn, bytes: []const u8) !usize {
@@ -688,6 +696,24 @@ pub const Conn = struct {
             return self.in.setError(error.TooManyIgnoredRecords);
         }
         try self.readRecordOrChangeCipherSpec(self.allocator, expect_change_cipher_spec);
+    }
+
+    // verifyServerCertificate parses and verifies the provided chain, setting
+    // c.verifiedChains and c.peerCertificates or sending the appropriate alert.
+    pub fn verifyServerCertificate(self: *Conn, certificates: []const []const u8) !void {
+        var certs = try self.allocator.alloc(x509.Certificate, certificates.len);
+        errdefer self.allocator.free(certs);
+        for (certificates) |cert_der, i| {
+            var cert = x509.Certificate.parse(self.allocator, cert_der) catch {
+                self.sendAlert(.bad_certificate) catch {};
+                return error.BadServerSerfificate;
+            };
+            certs[i] = cert;
+        }
+
+        // TODO: implement verify
+
+        self.peer_certificates = certs;
     }
 };
 

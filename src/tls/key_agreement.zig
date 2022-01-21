@@ -13,6 +13,7 @@ const ServerKeyExchangeMsg = @import("handshake_msg.zig").ServerKeyExchangeMsg;
 const ClientKeyExchangeMsg = @import("handshake_msg.zig").ClientKeyExchangeMsg;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const BytesView = @import("../BytesView.zig");
+const x509 = @import("x509.zig");
 
 pub const KeyAgreement = union(enum) {
     rsa: RsaKeyAgreement,
@@ -48,7 +49,7 @@ pub const KeyAgreement = union(enum) {
         allocator: mem.Allocator,
         client_hello: *const ClientHelloMsg,
         server_hello: *const ServerHelloMsg,
-        cert_chain: *const CertificateChain,
+        cert: *const x509.Certificate,
         skx: *const ServerKeyExchangeMsg,
     ) !void {
         switch (self.*) {
@@ -57,7 +58,7 @@ pub const KeyAgreement = union(enum) {
                 allocator,
                 client_hello,
                 server_hello,
-                cert_chain,
+                cert,
                 skx,
             ),
         }
@@ -67,7 +68,7 @@ pub const KeyAgreement = union(enum) {
         self: *KeyAgreement,
         allocator: mem.Allocator,
         client_hello: *const ClientHelloMsg,
-        cert_chain: *const CertificateChain,
+        cert: *const x509.Certificate,
         out_pre_master_secret: *[]const u8,
         out_ckx: *ClientKeyExchangeMsg,
     ) !void {
@@ -76,7 +77,7 @@ pub const KeyAgreement = union(enum) {
             .ecdhe => |*ka| return try ka.generateClientKeyExchange(
                 allocator,
                 client_hello,
-                cert_chain,
+                cert,
                 out_pre_master_secret,
                 out_ckx,
             ),
@@ -191,7 +192,7 @@ pub const EcdheKeyAgreement = struct {
         allocator: mem.Allocator,
         client_hello: *const ClientHelloMsg,
         server_hello: *const ServerHelloMsg,
-        cert_chain: *const CertificateChain,
+        cert: *const x509.Certificate,
         skx: *const ServerKeyExchangeMsg,
     ) !void {
         if (skx.key.len < 4) {
@@ -227,7 +228,7 @@ pub const EcdheKeyAgreement = struct {
         self.ckx = ClientKeyExchangeMsg{ .ciphertext = ciphertext };
 
         // TODO: implement
-        _ = cert_chain;
+        _ = cert;
         _ = client_hello;
         _ = server_hello;
     }
@@ -238,19 +239,23 @@ pub const EcdheKeyAgreement = struct {
         self: *EcdheKeyAgreement,
         allocator: mem.Allocator,
         client_hello: *const ClientHelloMsg,
-        cert_chain: *const CertificateChain,
+        cert: *const x509.Certificate,
         out_pre_master_secret: *[]const u8,
         out_ckx: *ClientKeyExchangeMsg,
     ) !void {
         _ = allocator;
         _ = client_hello;
-        _ = cert_chain;
+        _ = cert;
 
-        out_pre_master_secret.* = self.pre_master_secret.?;
-        self.pre_master_secret = null;
+        if (self.ckx) |ckx| {
+            out_pre_master_secret.* = self.pre_master_secret.?;
+            self.pre_master_secret = null;
 
-        out_ckx.* = self.ckx.?;
-        self.ckx = null;
+            out_ckx.* = ckx;
+            self.ckx = null;
+        } else {
+            return error.MissingServerKeyExchange;
+        }
     }
 
     pub fn processClientKeyExchange(
