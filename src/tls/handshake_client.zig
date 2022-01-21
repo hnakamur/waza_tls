@@ -18,7 +18,6 @@ const master_secret_length = @import("prf.zig").master_secret_length;
 const master_secret_label = @import("prf.zig").master_secret_label;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const ConnectionKeys = @import("prf.zig").ConnectionKeys;
-const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const fmtx = @import("../fmtx.zig");

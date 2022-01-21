@@ -31,6 +31,7 @@ const fmtx = @import("../fmtx.zig");
 const AlertError = @import("alert.zig").AlertError;
 const AlertLevel = @import("alert.zig").AlertLevel;
 const AlertDescription = @import("alert.zig").AlertDescription;
+const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const x509 = @import("x509.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
@@ -62,11 +63,28 @@ const default_curve_preferences = [_]CurveId{
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     pub const Config = struct {
+        // Certificates contains one or more certificate chains to present to the
+        // other side of the connection. The first certificate compatible with the
+        // peer's requirements is selected automatically.
+        //
+        // Server configurations must set one of Certificates, GetCertificate or
+        // GetConfigForClient. Clients doing client-authentication may set either
+        // Certificates or GetClientCertificate.
+        //
+        // Note: if there are multiple Certificates, and they don't have the
+        // optional field Leaf set, certificate selection will incur a significant
+        // per-handshake performance cost.
+        certificates: []CertificateChain = &[_]CertificateChain{},
+
         min_version: ProtocolVersion = .v1_2,
         max_version: ProtocolVersion = .v1_3,
         cipher_suites: []const CipherSuiteId = &default_cipher_suites,
         curve_preferences: []const CurveId = &default_curve_preferences,
         next_protos: []const []const u8 = &[_][]u8{},
+
+        pub fn deinit(self: *Config, allocator: mem.Allocator) void {
+            memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
+        }
 
         pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
             const sup_vers = self.supportedVersions();
@@ -170,6 +188,7 @@ pub const Conn = struct {
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
+        self.config.deinit(allocator);
         self.send_buf.deinit(allocator);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
         if (self.handshake_state) |*hs| hs.deinit(allocator);

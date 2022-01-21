@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
+const x509 = @import("x509.zig");
 
 pub const CertificateChain = struct {
     certificate_chain: []const []const u8,
@@ -21,15 +22,11 @@ pub const CertificateChain = struct {
     // Leaf is the parsed form of the leaf certificate, which may be initialized
     // using x509.ParseCertificate to reduce per-handshake processing. If nil,
     // the leaf certificate will be parsed as needed.
-    leaf: ?*Certificate = null,
+    leaf: ?*x509.Certificate = null,
 
     pub fn deinit(self: *CertificateChain, allocator: mem.Allocator) void {
         allocator.free(self.certificate_chain);
     }
-};
-
-pub const Certificate = struct {
-    raw: []const u8, // Complete ASN.1 DER content (certificate, signature algorithm and signature).
 };
 
 pub const PrivateKey = struct {
