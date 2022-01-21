@@ -176,7 +176,7 @@ pub const ServerHandshakeStateTls12 = struct {
         );
         self.cert_chain = CertificateChain{
             .certificate_chain = certificate_chain,
-            .private_key = .{ .raw = testEd25519PrivateKey },
+            .private_key = .{ .ed25519 = .{ .raw = testEd25519PrivateKey } },
         };
     }
 

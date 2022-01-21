@@ -167,7 +167,7 @@ pub const EcdheKeyAgreement = struct {
         defer allocator.free(signed);
 
         const private_key = cert_chain.private_key.?;
-        const private_key_bytes = private_key.raw[0..crypto.sign.Ed25519.secret_length];
+        const private_key_bytes = private_key.ed25519.raw[0..crypto.sign.Ed25519.secret_length];
         const key_pair = crypto.sign.Ed25519.KeyPair.fromSecretKey(private_key_bytes.*);
         const sig = try crypto.sign.Ed25519.sign(signed, key_pair, null);
 

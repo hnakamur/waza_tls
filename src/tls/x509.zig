@@ -5,45 +5,9 @@ const datetime = @import("datetime");
 const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
 const pkix = @import("pkix.zig");
+const crypto = @import("crypto.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
-const rsa = @import("rsa.zig");
 const memx = @import("../memx.zig");
-
-pub const PublicKeyAlgorithm = enum(u8) {
-    unknown,
-    rsa,
-    dsa, // Unsupported.
-    ecdsa,
-    ed25519,
-
-    pub fn fromOid(oid: asn1.ObjectIdentifier) PublicKeyAlgorithm {
-        return if (oid.eql(asn1.ObjectIdentifier.public_key_ed25519))
-            PublicKeyAlgorithm.ed25519
-        else if (oid.eql(asn1.ObjectIdentifier.public_key_ecdsa))
-            PublicKeyAlgorithm.ecdsa
-        else if (oid.eql(asn1.ObjectIdentifier.public_key_rsa))
-            PublicKeyAlgorithm.rsa
-        else if (oid.eql(asn1.ObjectIdentifier.public_key_dsa))
-            PublicKeyAlgorithm.dsa
-        else
-            PublicKeyAlgorithm.unknown;
-    }
-};
-
-pub const PublicKey = union(PublicKeyAlgorithm) {
-    unknown: void,
-    rsa: rsa.PublicKey,
-    dsa: void,
-    ecdsa: void,
-    ed25519: void,
-
-    pub fn deinit(self: *PublicKey, allocator: mem.Allocator) void {
-        switch (self.*) {
-            .rsa => |*pk| pk.deinit(allocator),
-            else => {},
-        }
-    }
-};
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -126,7 +90,7 @@ pub const SignatureAlgorithmDetail = struct {
     algo: SignatureAlgorithm,
     name: []const u8,
     oid: asn1.ObjectIdentifier,
-    pub_key_algo: PublicKeyAlgorithm,
+    pub_key_algo: crypto.PublicKeyAlgorithm,
     // hash: Hash,
 };
 
@@ -188,8 +152,8 @@ pub const Certificate = struct {
     raw_subject: []const u8,
     subject: pkix.Name,
     raw_subject_public_key_info: []const u8,
-    public_key_algorithm: PublicKeyAlgorithm,
-    public_key: PublicKey,
+    public_key_algorithm: crypto.PublicKeyAlgorithm,
+    public_key: crypto.PublicKey,
     extensions: []pkix.Extension,
 
     pub fn parse(allocator: mem.Allocator, der: []const u8) !Certificate {
@@ -273,7 +237,7 @@ pub const Certificate = struct {
         errdefer subject.deinit(allocator);
 
         var raw_subject_public_key_info: []const u8 = undefined;
-        var public_key_algorithm: PublicKeyAlgorithm = undefined;
+        var public_key_algorithm: crypto.PublicKeyAlgorithm = undefined;
         var pk_info = blk: {
             var spki = tbs.readAsn1Element(.sequence) catch return error.MalformedSpki;
             raw_subject_public_key_info = spki.bytes;
@@ -283,7 +247,7 @@ pub const Certificate = struct {
             ) catch return error.MalformedPublicKeyAlgorithmIdentifier;
             var pk_ai = try pkix.AlgorithmIdentifier.parse(allocator, &pk_ai_seq);
             errdefer pk_ai.deinit(allocator);
-            public_key_algorithm = PublicKeyAlgorithm.fromOid(pk_ai.algorithm);
+            public_key_algorithm = crypto.PublicKeyAlgorithm.fromOid(pk_ai.algorithm);
             var spk = try asn1.BitString.read(&spki, allocator);
             break :blk PublicKeyInfo{ .algorithm = pk_ai, .public_key = spk };
         };
@@ -376,9 +340,9 @@ pub const Certificate = struct {
 
 fn parsePublicKey(
     allocator: mem.Allocator,
-    algo: PublicKeyAlgorithm,
+    algo: crypto.PublicKeyAlgorithm,
     key_data: *const PublicKeyInfo,
-) !PublicKey {
+) !crypto.PublicKey {
     var pk = try key_data.public_key.rightAlign(allocator);
     defer allocator.free(pk);
     var der = asn1.String.init(pk);
@@ -403,10 +367,10 @@ fn parsePublicKey(
             if (e <= 0) {
                 return error.NonPositiveRsaPublicExponent;
             }
-            return PublicKey{ .rsa = .{ .modulus = n, .exponent = @intCast(u64, e) } };
+            return crypto.PublicKey{ .rsa = .{ .modulus = n, .exponent = @intCast(u64, e) } };
         },
         else => {
-            return PublicKey{ .unknown = {} };
+            return crypto.PublicKey{ .unknown = {} };
         },
     }
 }

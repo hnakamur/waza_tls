@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const x509 = @import("x509.zig");
+const crypto = @import("crypto.zig");
 
 pub const CertificateChain = struct {
     certificate_chain: []const []const u8,
@@ -9,7 +10,7 @@ pub const CertificateChain = struct {
     // Leaf. This must implement crypto.Signer with an RSA, ECDSA or Ed25519 PublicKey.
     // For a server up to TLS 1.2, it can also implement crypto.Decrypter with
     // an RSA PublicKey.
-    private_key: ?PrivateKey = null,
+    private_key: ?crypto.PrivateKey = null,
     // SupportedSignatureAlgorithms is an optional list restricting what
     // signature algorithms the PrivateKey can be used for.
     supported_signature_algorithms: ?[]const SignatureScheme = null,
@@ -27,8 +28,4 @@ pub const CertificateChain = struct {
     pub fn deinit(self: *CertificateChain, allocator: mem.Allocator) void {
         allocator.free(self.certificate_chain);
     }
-};
-
-pub const PrivateKey = struct {
-    raw: []const u8,
 };

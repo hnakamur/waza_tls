@@ -28,6 +28,8 @@ const conn = @import("tls/conn.zig");
 const socket = @import("tls/socket.zig");
 const alert = @import("tls/alert.zig");
 const pkix = @import("tls/pkix.zig");
+const pkcs1 = @import("tls/pkcs1.zig");
+const crypto = @import("tls/crypto.zig");
 const rsa = @import("tls/rsa.zig");
 const pem = @import("tls/pem.zig");
 
