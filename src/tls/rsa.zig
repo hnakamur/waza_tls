@@ -4,10 +4,7 @@ const mem = std.mem;
 const memx = @import("../memx.zig");
 const HashType = @import("auth.zig").HashType;
 const SignOpts = @import("crypto.zig").SignOpts;
-const bigIntConstFromBytes = @import("common.zig").bigIntConstFromBytes;
-
-const big_zero = math.big.int.Const{ .limbs = &[_]math.big.Limb{0}, .positive = true };
-const big_one = math.big.int.Const{ .limbs = &[_]math.big.Limb{1}, .positive = true };
+const bigIntConstFromBytes = @import("big_int.zig").bigIntConstFromBytes;
 
 pub const PublicKey = struct {
     modulus: math.big.int.Const,
@@ -104,21 +101,27 @@ fn signPKCS1v15(
     defer allocator.free(m);
 }
 
-fn decryptAndCheck(priv_key: *const PrivateKey, c: *const math.big.int.Const) !math.big.Int {
-
+fn decryptAndCheck(
+    allocator: mem.Allocator,
+    priv_key: *const PrivateKey,
+    c: *const math.big.int.Const,
+) !math.big.Int {
+    _ = allocator;
+    _ = priv_key;
+    _ = c;
+    @panic("not implemented yet");
 }
 
 // decrypt performs an RSA decryption, resulting in a plaintext integer.
 fn decrypt(priv_key: *const PrivateKey, c: *const math.big.int.Const) !math.big.Int {
-	// TODO(agl): can we get away with reusing blinds?
-if (c.order(priv_key.public_key.modulus) == .gt) {
-    return error.Decryption;
+    // TODO(agl): can we get away with reusing blinds?
+    if (c.order(priv_key.public_key.modulus) == .gt) {
+        return error.Decryption;
+    }
+    if (priv_key.public_key.modulus.eqZero()) {
+        return error.Decryption;
+    }
 }
-if (priv_key.public_key.modulus.eqZero()) {
-    return error.Decryption;
-}
-}
-
 
 // These are ASN1 DER structures:
 //   DigestInfo ::= SEQUENCE {
@@ -177,17 +180,4 @@ test "divCeil" {
     try testing.expectEqual(@as(usize, 1), try math.divCeil(usize, 1, 8));
     try testing.expectEqual(@as(usize, 1), try math.divCeil(usize, 8, 8));
     try testing.expectEqual(@as(usize, 2), try math.divCeil(usize, 9, 8));
-}
-
-test "std.math.big.int.Const const" {
-    try testing.expectEqual(@as(u64, 0), try big_zero.to(u64));
-    try testing.expectEqual(@as(u64, 1), try big_one.to(u64));
-}
-
-test "std.math.big.int.Const zero" {
-    const allocator = testing.allocator;
-    var zero = (try std.math.big.int.Managed.initSet(allocator, 0)).toConst();
-    defer allocator.free(zero.limbs);
-    try testing.expectEqualSlices(std.math.big.Limb, &[_]std.math.big.Limb{0}, zero.limbs);
-    try testing.expect(zero.positive);
 }
