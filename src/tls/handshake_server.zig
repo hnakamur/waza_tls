@@ -172,7 +172,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         const certificate_chain = try allocator.dupe(
             []const u8,
-            &[_][]const u8{testEd25519Certificate},
+            &[_][]const u8{try allocator.dupe(u8, testEd25519Certificate)},
         );
         self.cert_chain = CertificateChain{
             .certificate_chain = certificate_chain,

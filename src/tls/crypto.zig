@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const asn1 = @import("asn1.zig");
 const rsa = @import("rsa.zig");
+const parsePkcs1PrivateKey = @import("pkcs1.zig").parsePkcs1PrivateKey;
 
 pub const PublicKeyAlgorithm = enum(u8) {
     unknown,
@@ -46,7 +47,15 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
     ecdsa: void,
     ed25519: Ed25519PrivateKey,
 
-    pub fn deinit(self: *PublicKey, allocator: mem.Allocator) void {
+    pub fn parse(allocator: mem.Allocator, der: []const u8) !PrivateKey {
+        if (parsePkcs1PrivateKey(allocator, der)) |rsa_key| {
+            return PrivateKey{ .rsa = rsa_key };
+        } else |_| {
+            @panic("not implemented yet");
+        }
+    }
+
+    pub fn deinit(self: *PrivateKey, allocator: mem.Allocator) void {
         switch (self.*) {
             .rsa => |*k| k.deinit(allocator),
             else => {},

@@ -11,6 +11,10 @@ const fmtx = @import("../fmtx.zig");
 //
 // https://datatracker.ietf.org/doc/html/rfc7468
 pub const Block = struct {
+    pub const certificate_label = "CERTIFICATE";
+    pub const private_key_label = "PRIVATE KEY";
+    pub const private_key_label_suffix = " PRIVATE KEY";
+
     const begin_boundary_prefix = "-----BEGIN ";
     const boundary_suffix = "-----";
     const end_boundary_prefix = "-----END ";
