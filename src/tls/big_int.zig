@@ -169,27 +169,12 @@ fn mod(
 ///
 /// rma's allocator is used for temporary storage to boost multiplication performance.
 pub fn gcdManaged(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
-    std.log.debug("gcdManaged start a={}, b={}", .{ a, b });
     try rma.ensureCapacity(math.min(a.len(), b.len()));
     var m = rma.toMutable();
     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
     defer limbs_buffer.deinit();
-    // var x_mut_ptr = if (x) |xx| &xx.toMutable() else null;
-    // var y_mut_ptr = if (y) |yy| &yy.toMutable() else null;
-    // var x_mut: Mutable = undefined;
-    // var y_mut: Mutable = undefined;
-    // var x_mut_ptr = if (x) |_| &x_mut else null;
-    // var y_mut_ptr = if (y) |_| &y_mut else null;
     try gcdMutable(&m, x, y, a.toConst(), b.toConst(), &limbs_buffer);
     rma.setMetadata(m.positive, m.len);
-    // if (x) |xx| xx.setMetadata(x_mut_ptr.?.positive, x_mut_ptr.?.len);
-    // if (y) |yy| {
-    //     // yy.setMetadata(y_mut_ptr.?.positive, y_mut_ptr.?.len);
-    //     yy.* = y_mut_ptr.?.toManaged(rma.allocator);
-    //     std.log.debug("gcdManaged set yy to {}", .{yy});
-    // }
-    // if (x) |xx| xx.* = x_mut.toManaged(rma.allocator);
-    // if (y) |yy| yy.* = y_mut.toManaged(rma.allocator);
 }
 
 test "gcdManaged" {
@@ -498,21 +483,12 @@ fn lehmerGcd(
         try y_m.sub(a.toConst(), y_m.toConst());
         try y_m.divTrunc(&r, y_m.toConst(), b_c);
         try yy.copy(y_m.toConst());
-        // try yy.toManaged(limbs_buffer.allocator).copy(y_m.toConst());
-        // yy.* = y_m.toMutable();
-        std.log.debug("lehmerGcd set yy to {}", .{yy.*});
     }
     if (x) |xx| {
         try xx.copy(ua.toConst());
-        // try xx.toManaged(limbs_buffer.allocator).copy(ua.toConst());
-        // var x_m = try ua.clone();
-        // defer x_m.deinit();
         if (!a_c.positive) {
             xx.negate();
-            // x_m.negate();
         }
-        // xx.copy(x_m.toConst());
-        // xx.* = x_m.toMutable();
     }
 
     result.copy(a.toConst());
