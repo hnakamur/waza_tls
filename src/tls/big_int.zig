@@ -62,13 +62,11 @@ fn expConst(
     }
     const m_abs = m.abs();
     var z = try expNn(allocator, x2.abs(), y.abs(), m_abs);
-    // std.log.debug("z.limbs.ptr=0x{x}", .{@ptrToInt(z.limbs.ptr)});
     z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
     if (!z.isPositive() and !m.eqZero()) {
         // make modulus result positive
         // z == x**y mod |m| && 0 <= z < |m|
         try z.sub(m_abs, z.toConst().abs());
-        // std.log.debug("z.limbs.ptr#2=0x{x}", .{@ptrToInt(z.limbs.ptr)});
         return z.toConst().abs();
     }
     return z.toConst();
@@ -717,9 +715,7 @@ fn expNn(
 
     var v = y_abs.limbs[y_abs_limbs_len - 1]; // v > 0 because y_abs is normalized and y_abs > 0
     const shift = nlz(v) + 1;
-    // std.log.debug("bigIntConstExpNN v={}, shift={}", .{ v, shift });
     v = math.shl(Limb, v, shift);
-    // std.log.debug("bigIntConstExpNN shifted v={}", .{v});
     var q = try Managed.init(allocator);
     defer q.deinit();
 
@@ -787,20 +783,6 @@ fn expNnWindowed(
     y_abs: Const,
     m_abs: Const,
 ) !Managed {
-    {
-        // var x_s = try x_abs.toStringAlloc(allocator, 10, .lower);
-        // defer allocator.free(x_s);
-        // var y_s = try y_abs.toStringAlloc(allocator, 10, .lower);
-        // defer allocator.free(y_s);
-        // var m_s = try m_abs.toStringAlloc(allocator, 10, .lower);
-        // defer allocator.free(m_s);
-        // std.log.debug("expNnWindowed start x={s}, y={s}, m={s}", .{ x_s, y_s, m_s });
-        std.log.debug(
-            "expNnWindowed start x={any}, y={any}, m={any}",
-            .{ x_abs.limbs, y_abs.limbs, m_abs.limbs },
-        );
-    }
-
     // zz and r are used to avoid allocating in mul and div as otherwise
     // the arguments would alias.
     var zz = try Managed.init(allocator);
@@ -837,7 +819,6 @@ fn expNnWindowed(
     }
 
     var z = try Managed.initSet(allocator, 1);
-    std.log.debug("len(z)#1={}", .{z.limbs.len});
     i = y_abs.limbs.len - 1;
     while (i >= 0) : (i -= 1) {
         var yi = y_abs.limbs[i];
@@ -851,32 +832,27 @@ fn expNnWindowed(
                 zz.swap(&z);
                 try zz.divTrunc(&r, z.toConst(), m_abs);
                 z.swap(&r);
-                std.log.debug("i={}, j={}, len(z)#2={}", .{ i, j, z.limbs.len });
 
                 try zz.sqr(z.toConst());
                 zz.swap(&z);
                 try zz.divTrunc(&r, z.toConst(), m_abs);
                 z.swap(&r);
-                std.log.debug("i={}, j={}, len(z)#3={}", .{ i, j, z.limbs.len });
 
                 try zz.sqr(z.toConst());
                 zz.swap(&z);
                 try zz.divTrunc(&r, z.toConst(), m_abs);
                 z.swap(&r);
-                std.log.debug("i={}, j={}, len(z)#4={}", .{ i, j, z.limbs.len });
 
                 try zz.sqr(z.toConst());
                 zz.swap(&z);
                 try zz.divTrunc(&r, z.toConst(), m_abs);
                 z.swap(&r);
-                std.log.debug("i={}, j={}, len(z)#5={}", .{ i, j, z.limbs.len });
             }
 
             try zz.mul(z.toConst(), powers[yi >> (@bitSizeOf(Limb) - n)].toConst());
             zz.swap(&z);
             try zz.divTrunc(&r, z.toConst(), m_abs);
             z.swap(&r);
-            std.log.debug("i={}, j={}, len(z)#6={}", .{ i, j, z.limbs.len });
 
             yi <<= n;
         }
@@ -885,12 +861,6 @@ fn expNnWindowed(
         }
     }
     z.normalize(z.len());
-    {
-        // var z_s = try z.toString(allocator, 10, .lower);
-        // defer allocator.free(z_s);
-        // std.log.debug("expNnWindowed exit z={s}", .{z_s});
-        std.log.debug("expNnWindowed exit z={any}, limbs.len={}, len={}", .{ z.limbs, z.limbs.len, z.len() });
-    }
     return z;
 }
 
@@ -900,7 +870,6 @@ fn expNnMontgomery(
     y_abs: Const,
     m_abs: Const,
 ) !Managed {
-    std.log.debug("expNnMontgomery start", .{});
     const m_len = normalizedLimbsLen(m_abs);
 
     // We want the lengths of x and m to be equal.
@@ -922,7 +891,6 @@ fn expNnMontgomery(
     // Ideally the precomputations would be performed outside, and reused
     // k0 = -m**-1 mod 2**_W. Algorithm from: Dumas, J.G. "On Newton–Raphson
     // Iteration for Multiplicative Inverses Modulo Prime Powers".
-    std.log.debug("expNnMontgomery m_abs.limbs={any}, m_abs.limbs.len={}", .{ m_abs.limbs, m_abs.limbs.len });
     var k0: Limb = 2 -% m_abs.limbs[0];
     var t: Limb = m_abs.limbs[0] -% 1;
     var i: usize = 1;
@@ -1216,10 +1184,10 @@ test "expConst" {
             out_base: u8,
             out: []const u8,
         ) !void {
-            std.log.debug(
-                "expConst test x=({}){s}, y=({}){s}, m=({}){s}",
-                .{ x_base, x, y_base, y, m_base, m },
-            );
+            // std.log.debug(
+            //     "expConst test x=({}){s}, y=({}){s}, m=({}){s}",
+            //     .{ x_base, x, y_base, y, m_base, m },
+            // );
             const allocator = testing.allocator;
             var x_i = try initConst(allocator, x_base, x);
             defer allocator.free(x_i.limbs);
@@ -1232,7 +1200,6 @@ test "expConst" {
 
             var got = try expConst(allocator, x_i, y_i, m_i);
             defer allocator.free(got.limbs);
-            // std.log.debug("got.limbs.ptr=0x{x}", .{@ptrToInt(got.limbs.ptr)});
             if (!got.eq(out_i)) {
                 var got_s = try got.toStringAlloc(allocator, 10, .lower);
                 defer allocator.free(got_s);
@@ -1425,47 +1392,4 @@ test "bigIntDivTrunc" {
     try f(-5, -3, 1, -2, 2, 1);
     try f(1, 2, 0, 1, 0, 1);
     try f(8, 4, 2, 0, 2, 0);
-}
-
-test "swap3" {
-    var a: usize = 1;
-    var b: usize = 2;
-    var c: usize = 3;
-
-    const tmp = a;
-    a = b;
-    b = c;
-    c = tmp;
-    // std.mem.swap(usize, &a, &b);
-    // std.mem.swap(usize, &b, &c);
-
-    try testing.expectEqual(@as(usize, 2), a);
-    try testing.expectEqual(@as(usize, 3), b);
-    try testing.expectEqual(@as(usize, 1), c);
-}
-
-test "subLimbsOverflow" {
-    const a: Limb = 2;
-    const b: Limb = 3;
-    const got = a -% b;
-    const want: Limb = 18446744073709551615;
-    try testing.expectEqual(want, got);
-}
-
-test "limbOverflowCalc" {
-    // testing.log_level = .debug;
-    const m: Limb = 0x5555666677778889;
-    var k0: Limb = 2 -% m;
-    var t: Limb = m -% 1;
-    std.log.debug("#1 k0={}, t={}", .{ k0, t });
-    var i: usize = 1;
-    while (i < @bitSizeOf(Limb)) : (i <<= 1) {
-        t *%= t;
-        k0 *%= (t +% 1);
-        std.log.debug("#2 i={}, k0={}, t={}", .{ i, k0, t });
-    }
-    k0 = 0 -% k0;
-
-    std.log.debug("#3 k0={}", .{k0});
-    try testing.expectEqual(@as(Limb, 8520446137833067079), k0);
 }
