@@ -31,13 +31,13 @@ pub fn bigIntConstFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
     return Const{ .limbs = limbs, .positive = true };
 }
 
-// bigIntConstExp returns x**y mod |m| (i.e. the sign of m is ignored).
+// expConst returns x**y mod |m| (i.e. the sign of m is ignored).
 // If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
 // and x and m are not relatively prime, returns error.BadBigIntInputs.
 //
 // Modular exponentiation of inputs of a particular size is not a
 // cryptographically constant-time operation.
-pub fn bigIntConstExp(
+fn expConst(
     allocator: mem.Allocator,
     x: Const,
     y: Const,
@@ -47,13 +47,13 @@ pub fn bigIntConstExp(
     var x2 = x;
     if (!y.positive) {
         if (m.eqZero()) {
-            return try bigIntConstClone(allocator, big_one);
+            return try cloneConst(allocator, big_one);
         }
         // for y < 0: x**y mod m == (x**(-1))**|y| mod m
         @panic("not implemented yet");
     }
     const m_abs = m.abs();
-    var z = try bigIntConstExpNN(allocator, x2.abs(), y.abs(), m_abs);
+    var z = try expNn(allocator, x2.abs(), y.abs(), m_abs);
     // std.log.debug("z.limbs.ptr=0x{x}", .{@ptrToInt(z.limbs.ptr)});
     z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
     if (!z.isPositive() and !m.eqZero()) {
@@ -66,27 +66,77 @@ pub fn bigIntConstExp(
     return z.toConst();
 }
 
-// bigIntConstModInverse returns the multiplicative inverse of g in the ring ℤ/nℤ.
+// modInverseConst returns the multiplicative inverse of g in the ring ℤ/nℤ.
 // If g and n are not relatively prime, g has no multiplicative
 // inverse in the ring ℤ/nℤ.  In this case, returns a zero.
-pub fn bigIntConstModInverse(
+fn modInverseConst(
     allocator: mem.Allocator,
     g: Const,
     n: Const,
 ) !Const {
     // GCD expects parameters a and b to be > 0.
-    var n2 = n;
+    var n2 = try n.toManaged(allocator);
+    defer n2.deinit();
     if (!n.positive) {
-        n2 = n.negate();
+        n2.negate();
     }
 
     var g2 = try g.toManaged(allocator);
     defer g2.deinit();
     if (!g.positive) {
-        try mod(&g2, g, n);
+        try mod(&g2, g, n2.toConst());
     }
 
-    @panic("not implemented yet");
+    var d = try Managed.init(allocator);
+    defer d.deinit();
+    var x = try Managed.init(allocator);
+    defer x.deinit();
+    try gcdManaged(&d, &x, null, g2, n2);
+
+    // if and only if d==1, g and n are relatively prime
+    if (!d.toConst().eq(big_one)) {
+        return big_zero;
+    }
+
+    // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
+    // but it may be negative, so convert to the range 0 <= z < |n|
+    var z = try Managed.init(allocator);
+    if (x.isPositive()) {
+        try z.copy(x.toConst());
+    } else {
+        try z.add(x.toConst(), n2.toConst());
+    }
+    return z.toConst();
+}
+
+test "modInverseConst" {
+    const f = struct {
+        fn f(element: []const u8, modulus: []const u8) !void {
+            const allocator = testing.allocator;
+            var element_m = try strToManaged(allocator, element);
+            defer element_m.deinit();
+            var modulus_m = try strToManaged(allocator, modulus);
+            defer modulus_m.deinit();
+            const inverse_c = try modInverseConst(allocator, element_m.toConst(), modulus_m.toConst());
+            defer allocator.free(inverse_c.limbs);
+            var inverse_m = try inverse_c.toManaged(allocator);
+            defer inverse_m.deinit();
+            try inverse_m.mul(inverse_c, element_m.toConst());
+            try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
+            if (!inverse_m.toConst().eq(big_one)) {
+                std.debug.print(
+                    "modInverseConst({}, {}) * {} % {} = {}, not 1",
+                    .{ element_m, modulus_m, element_m, modulus_m, inverse_m },
+                );
+                return error.TestExpectedError;
+            }
+        }
+    }.f;
+    try f("1234567", "458948883992");
+    try f("239487239847", "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919");
+    try f("-10", "13");
+    try f("10", "-13");
+    try f("-17", "-13");
 }
 
 // mod sets r to the modulus x%y for y != 0.
@@ -99,7 +149,7 @@ fn mod(
 ) !void {
     var q = try Managed.init(r.allocator);
     defer q.deinit();
-    try q.divTrunc(&r, x, y);
+    try q.divTrunc(r, x, y);
 }
 
 /// GCD sets rma to the greatest common divisor of a and b.
@@ -119,16 +169,27 @@ fn mod(
 ///
 /// rma's allocator is used for temporary storage to boost multiplication performance.
 pub fn gcdManaged(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
+    std.log.debug("gcdManaged start a={}, b={}", .{ a, b });
     try rma.ensureCapacity(math.min(a.len(), b.len()));
     var m = rma.toMutable();
     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
     defer limbs_buffer.deinit();
-    var x_mut = if (x) |xx| &xx.toMutable() else null;
-    var y_mut = if (y) |yy| &yy.toMutable() else null;
-    try gcdMutable(&m, x_mut, y_mut, a.toConst(), b.toConst(), &limbs_buffer);
+    // var x_mut_ptr = if (x) |xx| &xx.toMutable() else null;
+    // var y_mut_ptr = if (y) |yy| &yy.toMutable() else null;
+    // var x_mut: Mutable = undefined;
+    // var y_mut: Mutable = undefined;
+    // var x_mut_ptr = if (x) |_| &x_mut else null;
+    // var y_mut_ptr = if (y) |_| &y_mut else null;
+    try gcdMutable(&m, x, y, a.toConst(), b.toConst(), &limbs_buffer);
     rma.setMetadata(m.positive, m.len);
-    if (x) |xx| xx.setMetadata(x_mut.?.positive, x_mut.?.len);
-    if (y) |yy| yy.setMetadata(y_mut.?.positive, y_mut.?.len);
+    // if (x) |xx| xx.setMetadata(x_mut_ptr.?.positive, x_mut_ptr.?.len);
+    // if (y) |yy| {
+    //     // yy.setMetadata(y_mut_ptr.?.positive, y_mut_ptr.?.len);
+    //     yy.* = y_mut_ptr.?.toManaged(rma.allocator);
+    //     std.log.debug("gcdManaged set yy to {}", .{yy});
+    // }
+    // if (x) |xx| xx.* = x_mut.toManaged(rma.allocator);
+    // if (y) |yy| yy.* = y_mut.toManaged(rma.allocator);
 }
 
 test "gcdManaged" {
@@ -183,7 +244,7 @@ test "gcdManaged" {
                     return error.TestExpectedError;
                 }
                 if (!got_y.eq(want_y)) {
-                    std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_y, want_y });
+                    std.debug.print("gcd y mismatch, got={}, want={}\n", .{ got_y, want_y });
                     return error.TestExpectedError;
                 }
             }
@@ -213,13 +274,6 @@ test "gcdManaged" {
                 }
             }
         }
-
-        fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
-            var m = try Managed.init(allocator);
-            errdefer m.deinit();
-            try m.setString(10, value);
-            return m;
-        }
     }.f;
 
     testing.log_level = .debug;
@@ -247,6 +301,13 @@ test "gcdManaged" {
     );
 }
 
+fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
+    var m = try Managed.init(allocator);
+    errdefer m.deinit();
+    try m.setString(10, value);
+    return m;
+}
+
 /// rma may alias a or b.
 /// a and b may alias each other.
 /// Asserts that `rma` has enough limbs to store the result. Upper bound is
@@ -256,8 +317,8 @@ test "gcdManaged" {
 /// it will have the same length as it had when the function was called.
 pub fn gcdMutable(
     rma: *Mutable,
-    x: ?*Mutable,
-    y: ?*Mutable,
+    x: ?*Managed,
+    y: ?*Managed,
     a: Const,
     b: Const,
     limbs_buffer: *std.ArrayList(Limb),
@@ -266,12 +327,12 @@ pub fn gcdMutable(
         rma.copy(if (a.eqZero()) b else a);
         rma.abs();
         if (x) |xx| {
-            xx.set(if (a.eqZero()) @as(i8, 0) else blk: {
+            try xx.set(if (a.eqZero()) @as(i8, 0) else blk: {
                 break :blk if (a.positive) @as(i8, 1) else @as(i8, -1);
             });
         }
         if (y) |yy| {
-            yy.set(if (b.eqZero()) @as(i8, 0) else blk: {
+            try yy.set(if (b.eqZero()) @as(i8, 0) else blk: {
                 break :blk if (b.positive) @as(i8, 1) else @as(i8, -1);
             });
         }
@@ -297,8 +358,8 @@ pub fn gcdMutable(
 
 fn lehmerGcd(
     result: *Mutable,
-    x: ?*Mutable,
-    y: ?*Mutable,
+    x: ?*Managed,
+    y: ?*Managed,
     a_c: Const,
     b_c: Const,
     limbs_buffer: *std.ArrayList(Limb),
@@ -428,21 +489,30 @@ fn lehmerGcd(
 
     if (y) |yy| {
         // y = (z - a*x)/b
-        var tmp_y = try Managed.init(limbs_buffer.allocator);
-        defer tmp_y.deinit();
-        try tmp_y.mul(a_c, ua.toConst());
+        var y_m = try Managed.init(limbs_buffer.allocator);
+        defer y_m.deinit();
+        try y_m.mul(a_c, ua.toConst());
         if (!a_c.positive) {
-            tmp_y.negate();
+            y_m.negate();
         }
-        try tmp_y.sub(a.toConst(), tmp_y.toConst());
-        try tmp_y.divTrunc(&r, tmp_y.toConst(), b_c);
-        yy.copy(tmp_y.toConst());
+        try y_m.sub(a.toConst(), y_m.toConst());
+        try y_m.divTrunc(&r, y_m.toConst(), b_c);
+        try yy.copy(y_m.toConst());
+        // try yy.toManaged(limbs_buffer.allocator).copy(y_m.toConst());
+        // yy.* = y_m.toMutable();
+        std.log.debug("lehmerGcd set yy to {}", .{yy.*});
     }
     if (x) |xx| {
-        xx.copy(ua.toConst());
+        try xx.copy(ua.toConst());
+        // try xx.toManaged(limbs_buffer.allocator).copy(ua.toConst());
+        // var x_m = try ua.clone();
+        // defer x_m.deinit();
         if (!a_c.positive) {
             xx.negate();
+            // x_m.negate();
         }
+        // xx.copy(x_m.toConst());
+        // xx.* = x_m.toMutable();
     }
 
     result.copy(a.toConst());
@@ -605,9 +675,9 @@ fn euclidUpdate(
     }
 }
 
-// bigIntConstExpNN returns x**y mod m if m != 0,
+// expNn returns x**y mod m if m != 0,
 // otherwise it returns x**y.
-fn bigIntConstExpNN(
+fn expNn(
     allocator: mem.Allocator,
     x_abs: Const,
     y_abs: Const,
@@ -724,7 +794,7 @@ fn nlz(x: Limb) usize {
     return @clz(Limb, x);
 }
 
-fn bigIntConstClone(
+fn cloneConst(
     allocator: mem.Allocator,
     x: Const,
 ) !Const {
@@ -785,7 +855,7 @@ test "bigIntConstExp" {
             var out_i = try initConst(allocator, out_base, out);
             defer allocator.free(out_i.limbs);
 
-            var got = try bigIntConstExp(allocator, x_i, y_i, m_i);
+            var got = try expConst(allocator, x_i, y_i, m_i);
             defer allocator.free(got.limbs);
             // std.log.debug("got.limbs.ptr=0x{x}", .{@ptrToInt(got.limbs.ptr)});
             if (!got.eq(out_i)) {
