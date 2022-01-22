@@ -979,6 +979,7 @@ fn montgomery(
     assert(x.len == n and y.len == n and m.len == n);
 
     z.* = try allocator.realloc(z.*, n * 2);
+    mem.set(Limb, z.*, 0);
     var c: Limb = 0;
     var i: usize = 0;
     while (i < n) : (i += 1) {
