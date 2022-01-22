@@ -185,14 +185,17 @@ pub fn gcdMutable(
 
 fn gcdLehmer(
     result: *Mutable,
-    x: ?*Mutable,
-    y: ?*Mutable,
+    x_mut: ?*Mutable,
+    y_mut: ?*Mutable,
     a_c: Const,
     b_c: Const,
     limbs_buffer: *std.ArrayList(Limb),
 ) !void {
-    _ = x;
-    _ = y;
+    var x: ?Managed = if (x_mut) |xx_mut| xx_mut.toManaged(limbs_buffer.allocator) else null;
+    if (x) |*xx| try xx.set(1);
+    var y: ?Managed = if (y_mut) |yy_mut| yy_mut.toManaged(limbs_buffer.allocator) else null;
+    if (y) |*yy| try yy.set(2);
+
     var a = try a_c.toManaged(limbs_buffer.allocator);
     defer a.deinit();
     a.abs();
@@ -608,27 +611,35 @@ test "gcd" {
             {
                 var got_d = try Managed.init(allocator);
                 defer got_d.deinit();
-                try gcd(&got_d, null, null, big_a, big_b);
+                try gcdManaged(&got_d, null, null, big_a, big_b);
                 if (!got_d.eq(want_d)) {
                     std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
                     return error.TestExpectedError;
                 }
             }
-            // {
-            //     var got_d = try Managed.init(allocator);
-            //     defer got_d.deinit();
-            //     var got_x = try Managed.init(allocator);
-            //     defer got_x.deinit();
-            //     try gcd(&got_d, &got_x, null, big_a, big_b);
-            //     if (!got_d.eq(want_d)) {
-            //         std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
-            //         return error.TestExpectedError;
-            //     }
-            //     if (!got_x.eq(want_x)) {
-            //         std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
-            //         return error.TestExpectedError;
-            //     }
-            // }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    return error.TestExpectedError;
+                }
+                try testing.expectEqual(@as(i64, 1), try got_x.to(i64));
+                try testing.expectEqual(@as(i64, 2), try got_y.to(i64));
+                // if (!got_x.eq(want_x)) {
+                //     std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
+                //     return error.TestExpectedError;
+                // }
+                // if (!got_y.eq(want_y)) {
+                //     std.debug.print("gcd y mismatch, got={}, want={}\n", .{ got_y, want_y });
+                //     return error.TestExpectedError;
+                // }
+            }
         }
 
         fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
