@@ -800,18 +800,13 @@ fn expNnMontgomery(
     defer x_m.deinit();
 
     if (normalizedLimbsLen(x_m) < m_limbs_len) {
-        try x_m.ensureCapacity(m_limbs_len);
+        try ensureCapacityZero(&x_m, m_limbs_len);
     }
 
     // Ideally the precomputations would be performed outside, and reused
     // k0 = -m**-1 mod 2**_W. Algorithm from: Dumas, J.G. "On Newton–Raphson
     // Iteration for Multiplicative Inverses Modulo Prime Powers".
     std.log.debug("expNnMontgomery m_abs.limbs={any}, m_abs.limbs.len={}", .{ m_abs.limbs, m_abs.limbs.len });
-    // {
-    //     var m_abs_m = try m_abs.toManaged(allocator);
-    //     defer m_abs_m.deinit();
-    //     std.log.debug("expNnMontgomery m_abs={}", .{m_abs_m});
-    // }
     var k0: Limb = 2 -% m_abs.limbs[0];
     var t: Limb = m_abs.limbs[0] -% 1;
     var i: usize = 1;
@@ -831,19 +826,23 @@ fn expNnMontgomery(
     defer q.deinit();
     try q.divTrunc(&rr, zz.toConst(), m_abs);
     if (normalizedLimbsLen(rr) < m_limbs_len) {
-        try rr.ensureCapacity(m_limbs_len);
+        try ensureCapacityZero(&rr, m_limbs_len);
     }
 
     // one = 1, with equal length to that of m
-    var one = try Managed.initCapacity(allocator, m_limbs_len);
+    var one = try initManagedCapacityZero(allocator, m_limbs_len);
     defer one.deinit();
     try one.set(1);
+
+    var m_abs_m = try initManagedCapacityZero(allocator, m_limbs_len);
+    defer m_abs_m.deinit();
+    try m_abs_m.copy(m_abs);
 
     const n = 4;
     // powers[i] contains x^i
     var powers = try allocator.alloc(Managed, 1 << n);
     defer allocator.free(powers);
-    try montgomery(&powers[0], one.toConst(), rr.toConst(), m_abs, k0, m_limbs_len);
+    try montgomery(&powers[0], one, rr, m_abs_m, k0, m_limbs_len);
 
     _ = y_abs;
     @panic("expNnMontgomery not implemented yet");
@@ -860,12 +859,17 @@ fn expNnMontgomery(
 // z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
 fn montgomery(
     z: *Managed,
-    x: Const,
-    y: Const,
-    m: Const,
+    x: Managed,
+    y: Managed,
+    m: Managed,
     k: Limb,
     n: usize,
 ) !void {
+    // This code assumes x, y, m are all the same length, n.
+    // (required by addMulVVW and the for loop).
+    // It also assumes that x, y are already reduced mod m,
+    // or else the result will not be properly reduced.
+
     _ = z;
     _ = x;
     _ = y;
@@ -873,6 +877,21 @@ fn montgomery(
     _ = k;
     _ = n;
     @panic("montgomery not implemented yet");
+}
+
+fn initManagedCapacityZero(allocator: mem.Allocator, capacity: usize) !Managed {
+    var m = try Managed.initCapacity(allocator, capacity);
+    clearUnusedLimbs(&m);
+    return m;
+}
+
+fn ensureCapacityZero(r: *Managed, capacity: usize) !void {
+    try r.ensureCapacity(capacity);
+    clearUnusedLimbs(r);
+}
+
+fn clearUnusedLimbs(r: *Managed) void {
+    mem.set(Limb, r.limbs[r.len()..], 0);
 }
 
 // nlz returns the number of leading zeros in x.
