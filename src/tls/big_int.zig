@@ -125,7 +125,7 @@ test "modInverseConst" {
             try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
             if (!inverse_m.toConst().eq(big_one)) {
                 std.debug.print(
-                    "modInverseConst({}, {}) * {} % {} = {}, not 1",
+                    "modInverseConst({}, {}) * {} % {} = {}, not 1\n",
                     .{ element_m, modulus_m, element_m, modulus_m, inverse_m },
                 );
                 return error.TestExpectedError;
@@ -150,6 +150,13 @@ fn mod(
     var q = try Managed.init(r.allocator);
     defer q.deinit();
     try q.divTrunc(r, x, y);
+    if (!r.isPositive()) {
+        if (y.positive) {
+            try r.add(r.toConst(), y);
+        } else {
+            try r.sub(r.toConst(), y);
+        }
+    }
 }
 
 /// GCD sets rma to the greatest common divisor of a and b.
@@ -807,7 +814,7 @@ test "bigIntConstFromBytes" {
     try testing.expectEqualStrings("335812727627494322174", s);
 }
 
-test "bigIntConstExp" {
+test "expConst" {
     testing.log_level = .debug;
 
     const f = struct {
