@@ -11,6 +11,8 @@ const Const = std.math.big.int.Const;
 const Mutable = std.math.big.int.Mutable;
 const Managed = std.math.big.int.Managed;
 
+const bits = @import("bits.zig");
+
 const big_zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
 const big_one = Const{ .limbs = &[_]Limb{1}, .positive = true };
 
@@ -785,22 +787,22 @@ fn expNnMontgomery(
     m_abs: Const,
 ) !Managed {
     std.log.debug("expNnMontgomery start", .{});
-    const m_limbs_len = normalizedLimbsLen(m_abs);
+    const m_len = normalizedLimbsLen(m_abs);
 
     // We want the lengths of x and m to be equal.
     // It is OK if x >= m as long as normalizedLimbsLen(x_abs) == normalizedLimbsLen(m_abs).
-    var x_m = if (normalizedLimbsLen(x_abs) > m_limbs_len) blk: {
+    var x_m = if (normalizedLimbsLen(x_abs) > m_len) blk: {
         var q = try Managed.init(allocator);
         defer q.deinit();
-        var r = try Managed.init(allocator);
+        var r = try Managed.initCapacity(allocator, m_len);
         try q.divTrunc(&r, x_abs, m_abs);
-        // Note: now r.len() <= m_limbs_len, not guaranteed ==.
+        // Note: now r.len() <= m_len, not guaranteed ==.
         break :blk r;
     } else try x_abs.toManaged(allocator);
     defer x_m.deinit();
 
-    if (normalizedLimbsLen(x_m) < m_limbs_len) {
-        try ensureCapacityZero(&x_m, m_limbs_len);
+    if (normalizedLimbsLen(x_m) < m_len) {
+        try ensureCapacityZero(&x_m, m_len);
     }
 
     // Ideally the precomputations would be performed outside, and reused
@@ -821,31 +823,129 @@ fn expNnMontgomery(
     defer rr.deinit();
     var zz = try Managed.init(allocator);
     defer zz.deinit();
-    try zz.shiftLeft(rr, 2 * m_limbs_len * @bitSizeOf(Limb));
+    try zz.shiftLeft(rr, 2 * m_len * @bitSizeOf(Limb));
     var q = try Managed.init(allocator);
     defer q.deinit();
     try q.divTrunc(&rr, zz.toConst(), m_abs);
-    if (normalizedLimbsLen(rr) < m_limbs_len) {
-        try ensureCapacityZero(&rr, m_limbs_len);
+    if (normalizedLimbsLen(rr) < m_len) {
+        try ensureCapacityZero(&rr, m_len);
     }
 
     // one = 1, with equal length to that of m
-    var one = try initManagedCapacityZero(allocator, m_limbs_len);
+    var one = try initManagedCapacityZero(allocator, m_len);
     defer one.deinit();
     try one.set(1);
 
-    var m_abs_m = try initManagedCapacityZero(allocator, m_limbs_len);
+    var m_abs_m = try initManagedCapacityZero(allocator, m_len);
     defer m_abs_m.deinit();
     try m_abs_m.copy(m_abs);
 
     const n = 4;
     // powers[i] contains x^i
-    var powers = try allocator.alloc(Managed, 1 << n);
-    defer allocator.free(powers);
-    try montgomery(&powers[0], one, rr, m_abs_m, k0, m_limbs_len);
+    var powers = try allocator.alloc([]Limb, 1 << n);
+    defer {
+        for (powers) |p| allocator.free(p);
+        allocator.free(powers);
+    }
 
-    _ = y_abs;
-    @panic("expNnMontgomery not implemented yet");
+    powers[0] = try allocator.alloc(Limb, 2 * m_len);
+    try montgomery(
+        allocator,
+        &powers[0],
+        one.limbs[0..m_len],
+        rr.limbs[0..m_len],
+        m_abs_m.limbs[0..m_len],
+        k0,
+        m_len,
+    );
+    powers[1] = try allocator.alloc(Limb, 2 * m_len);
+    try montgomery(
+        allocator,
+        &powers[1],
+        x_m.limbs[0..m_len],
+        rr.limbs[0..m_len],
+        m_abs_m.limbs[0..m_len],
+        k0,
+        m_len,
+    );
+    i = 2;
+    while (i < 1 << n) : (i += 1) {
+        powers[i] = try allocator.alloc(Limb, 2 * m_len);
+        try montgomery(
+            allocator,
+            &powers[i],
+            powers[i - 1],
+            powers[1],
+            m_abs_m.limbs[0..m_len],
+            k0,
+            m_len,
+        );
+    }
+
+    // initialize z = 1 (Montgomery 1)
+    var z = try allocator.alloc(Limb, m_len);
+    defer allocator.free(z);
+    mem.copy(Limb, z, powers[0]);
+
+    var zz2 = try allocator.alloc(Limb, m_len);
+
+    // same windowed exponent, but with Montgomery multiplications
+    i = y_abs.limbs.len - 1;
+    while (i >= 0) : (i -= 1) {
+        var yi = y_abs.limbs[i];
+        var j: usize = 0;
+        while (j < @bitSizeOf(Limb)) : (j += n) {
+            if (i != y_abs.limbs.len - 1 or j != 0) {
+                try montgomery(allocator, &zz2, z, z, m_abs_m.limbs[0..m_len], k0, m_len);
+                try montgomery(allocator, &z, zz2, zz2, m_abs_m.limbs[0..m_len], k0, m_len);
+                try montgomery(allocator, &zz2, z, z, m_abs_m.limbs[0..m_len], k0, m_len);
+                try montgomery(allocator, &z, zz2, zz2, m_abs_m.limbs[0..m_len], k0, m_len);
+            }
+            try montgomery(
+                allocator,
+                &zz2,
+                z,
+                powers[yi >> (@bitSizeOf(Limb) - n)],
+                m_abs_m.limbs[0..m_len],
+                k0,
+                m_len,
+            );
+            mem.swap([]Limb, &z, &zz2);
+            yi <<= n;
+        }
+        if (i == 0) {
+            break;
+        }
+    }
+    // convert to regular number
+    try montgomery(allocator, &zz2, z, one.limbs[0..m_len], m_abs_m.limbs[0..m_len], k0, m_len);
+
+    // One last reduction, just in case.
+    // See golang.org/issue/13907.
+    var zz2m = Managed{
+        .allocator = allocator,
+        .limbs = zz2,
+        .metadata = zz2.len,
+    };
+    var o = zz2m.order(m_abs_m);
+    if (o == .gt or o == .eq) {
+        // Common case is m has high bit set; in that case,
+        // since zz is the same length as m, there can be just
+        // one multiple of m to remove. Just subtract.
+        // We think that the subtract should be sufficient in general,
+        // so do that unconditionally, but double-check,
+        // in case our beliefs are wrong.
+        // The div is not expected to be reached.
+        try zz2m.sub(zz2m.toConst(), m_abs);
+        o = zz2m.order(m_abs_m);
+        if (o == .gt or o == .eq) {
+            try zz.copy(zz2m.toConst());
+            try zz2m.divTrunc(&rr, zz.toConst(), m_abs);
+        }
+    }
+
+    zz2m.normalize(zz2m.limbs.len);
+    return zz2m;
 }
 
 // montgomery computes z mod m = x*y*2**(-n*_W) mod m,
@@ -858,10 +958,11 @@ fn expNnMontgomery(
 // x and y are required to satisfy 0 <= z < 2**(n*_W) and then the result
 // z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
 fn montgomery(
-    z: *Managed,
-    x: Managed,
-    y: Managed,
-    m: Managed,
+    allocator: mem.Allocator,
+    z: *[]Limb,
+    x: []const Limb,
+    y: []const Limb,
+    m: []const Limb,
     k: Limb,
     n: usize,
 ) !void {
@@ -869,14 +970,64 @@ fn montgomery(
     // (required by addMulVVW and the for loop).
     // It also assumes that x, y are already reduced mod m,
     // or else the result will not be properly reduced.
+    if (!(x.len == n and y.len == n and m.len == n)) {
+        std.log.err(
+            "montgomery len mismatch, x={}, y={}, m={}, n={}",
+            .{ x.len, y.len, m.len, n },
+        );
+    }
+    assert(x.len == n and y.len == n and m.len == n);
 
-    _ = z;
-    _ = x;
-    _ = y;
-    _ = m;
-    _ = k;
-    _ = n;
-    @panic("montgomery not implemented yet");
+    z.* = try allocator.realloc(z.*, n * 2);
+    var c: Limb = 0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        var d = y[i];
+        var c2 = addMulVvw(z.*[i .. n + i], x, d);
+        var t = z.*[i] *% k;
+        var c3 = addMulVvw(z.*[i .. n + i], m, t);
+        var cx = c +% c2;
+        var cy = cx +% c3;
+        z.*[n + i] = cy;
+        c = if (cx < c2 or cy < c3) 1 else 0;
+    }
+    if (c != 0) {
+        _ = subVv(z.*[0..n], z.*[n..], m);
+    } else {
+        mem.copy(Limb, z.*[0..n], z.*[n..]);
+    }
+    z.* = try allocator.realloc(z.*, n);
+}
+
+fn addMulVvw(z: []Limb, x: []const Limb, y: Limb) Limb {
+    var c: Limb = 0;
+    var i: usize = 0;
+    while (i < z.len and i < x.len) : (i += 1) {
+        var z0: Limb = undefined;
+        const z1 = mulAddWww(x[i], y, z[i], &z0);
+        z[i] = bits.add(z0, c, 0, &c);
+        c += z1;
+    }
+    return c;
+}
+
+// z1<<_W + z0 = x*y + c
+fn mulAddWww(x: Limb, y: Limb, c: Limb, z0: *Limb) Limb {
+    var lo: Limb = undefined;
+    const hi = bits.mul(x, y, &lo);
+    var cc: Limb = undefined;
+    z0.* = bits.add(lo, c, 0, &cc);
+    return hi + cc;
+}
+
+// The resulting carry c is either 0 or 1.
+fn subVv(z: []Limb, x: []const Limb, y: []const Limb) Limb {
+    var c: Limb = 0;
+    var i: usize = 0;
+    while (i < z.len and i < x.len and i < y.len) : (i += 1) {
+        z[i] = bits.sub(x[i], y[i], c, &c);
+    }
+    return c;
 }
 
 fn initManagedCapacityZero(allocator: mem.Allocator, capacity: usize) !Managed {
