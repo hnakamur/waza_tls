@@ -33,7 +33,7 @@ pub fn bigIntConstFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
 
 // expConst returns x**y mod |m| (i.e. the sign of m is ignored).
 // If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
-// and x and m are not relatively prime, returns error.BadBigIntInputs.
+// and x and m are not relatively prime, returns 0.
 //
 // Modular exponentiation of inputs of a particular size is not a
 // cryptographically constant-time operation.
@@ -45,12 +45,18 @@ fn expConst(
 ) !Const {
     // See Knuth, volume 2, section 4.6.3.
     var x2 = x;
+    var x3: ?Const = null;
+    defer if (x3) |xx3| allocator.free(xx3.limbs);
     if (!y.positive) {
         if (m.eqZero()) {
             return try cloneConst(allocator, big_one);
         }
         // for y < 0: x**y mod m == (x**(-1))**|y| mod m
-        @panic("not implemented yet");
+        x3 = try modInverseConst(allocator, x, m);
+        x2 = x3.?;
+        if (x2.eqZero()) {
+            return try cloneConst(allocator, big_zero);
+        }
     }
     const m_abs = m.abs();
     var z = try expNn(allocator, x2.abs(), y.abs(), m_abs);
@@ -95,7 +101,7 @@ fn modInverseConst(
 
     // if and only if d==1, g and n are relatively prime
     if (!d.toConst().eq(big_one)) {
-        return big_zero;
+        return try cloneConst(allocator, big_zero);
     }
 
     // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
@@ -702,7 +708,7 @@ fn expNn(
     const y_abs_limbs_len = normalizedLimbsLen(y_abs);
     if (x_abs.order(big_one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
         if (m_abs.limbs[0] & 1 == 1) {
-            @panic("not implemented yet#2");
+            return try expNnMontgomery(allocator, x_abs, y_abs, m_abs);
         }
         @panic("not implemented yet#3");
     }
@@ -772,6 +778,103 @@ fn expNn(
     return try z.clone();
 }
 
+fn expNnMontgomery(
+    allocator: mem.Allocator,
+    x_abs: Const,
+    y_abs: Const,
+    m_abs: Const,
+) !Managed {
+    std.log.debug("expNnMontgomery start", .{});
+    const m_limbs_len = normalizedLimbsLen(m_abs);
+
+    // We want the lengths of x and m to be equal.
+    // It is OK if x >= m as long as normalizedLimbsLen(x_abs) == normalizedLimbsLen(m_abs).
+    var x_m = if (normalizedLimbsLen(x_abs) > m_limbs_len) blk: {
+        var q = try Managed.init(allocator);
+        defer q.deinit();
+        var r = try Managed.init(allocator);
+        try q.divTrunc(&r, x_abs, m_abs);
+        // Note: now r.len() <= m_limbs_len, not guaranteed ==.
+        break :blk r;
+    } else try x_abs.toManaged(allocator);
+    defer x_m.deinit();
+
+    if (normalizedLimbsLen(x_m) < m_limbs_len) {
+        try x_m.ensureCapacity(m_limbs_len);
+    }
+
+    // Ideally the precomputations would be performed outside, and reused
+    // k0 = -m**-1 mod 2**_W. Algorithm from: Dumas, J.G. "On Newton–Raphson
+    // Iteration for Multiplicative Inverses Modulo Prime Powers".
+    std.log.debug("expNnMontgomery m_abs.limbs={any}, m_abs.limbs.len={}", .{ m_abs.limbs, m_abs.limbs.len });
+    // {
+    //     var m_abs_m = try m_abs.toManaged(allocator);
+    //     defer m_abs_m.deinit();
+    //     std.log.debug("expNnMontgomery m_abs={}", .{m_abs_m});
+    // }
+    var k0: Limb = 2 -% m_abs.limbs[0];
+    var t: Limb = m_abs.limbs[0] -% 1;
+    var i: usize = 1;
+    while (i < @bitSizeOf(Limb)) : (i <<= 1) {
+        t *%= t;
+        k0 *%= (t + 1);
+    }
+    k0 = 0 -% k0;
+
+    // RR = 2**(2*_W*len(m)) mod m
+    var rr = try Managed.initSet(allocator, 1);
+    defer rr.deinit();
+    var zz = try Managed.init(allocator);
+    defer zz.deinit();
+    try zz.shiftLeft(rr, 2 * m_limbs_len * @bitSizeOf(Limb));
+    var q = try Managed.init(allocator);
+    defer q.deinit();
+    try q.divTrunc(&rr, zz.toConst(), m_abs);
+    if (normalizedLimbsLen(rr) < m_limbs_len) {
+        try rr.ensureCapacity(m_limbs_len);
+    }
+
+    // one = 1, with equal length to that of m
+    var one = try Managed.initCapacity(allocator, m_limbs_len);
+    defer one.deinit();
+    try one.set(1);
+
+    const n = 4;
+    // powers[i] contains x^i
+    var powers = try allocator.alloc(Managed, 1 << n);
+    defer allocator.free(powers);
+    try montgomery(&powers[0], one.toConst(), rr.toConst(), m_abs, k0, m_limbs_len);
+
+    _ = y_abs;
+    @panic("expNnMontgomery not implemented yet");
+}
+
+// montgomery computes z mod m = x*y*2**(-n*_W) mod m,
+// assuming k = -1/m mod 2**_W.
+// z is used for storing the result which is returned;
+// z must not alias x, y or m.
+// See Gueron, "Efficient Software Implementations of Modular Exponentiation".
+// https://eprint.iacr.org/2011/239.pdf
+// In the terminology of that paper, this is an "Almost Montgomery Multiplication":
+// x and y are required to satisfy 0 <= z < 2**(n*_W) and then the result
+// z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
+fn montgomery(
+    z: *Managed,
+    x: Const,
+    y: Const,
+    m: Const,
+    k: Limb,
+    n: usize,
+) !void {
+    _ = z;
+    _ = x;
+    _ = y;
+    _ = m;
+    _ = k;
+    _ = n;
+    @panic("montgomery not implemented yet");
+}
+
 // nlz returns the number of leading zeros in x.
 fn nlz(x: Limb) usize {
     return @clz(Limb, x);
@@ -828,6 +931,7 @@ test "expConst" {
             out_base: u8,
             out: []const u8,
         ) !void {
+            std.log.debug("expConst test x={s}, y={s}, m={s}", .{ x, y, m });
             const allocator = testing.allocator;
             var x_i = try initConst(allocator, x_base, x);
             defer allocator.free(x_i.limbs);
@@ -864,14 +968,14 @@ test "expConst" {
     try f(10, "1", 10, "0", 10, "0", 10, "1");
     try f(10, "-10", 10, "0", 10, "0", 10, "1");
     try f(10, "1234", 10, "-1", 10, "0", 10, "1");
-    // try f(10, "17", 10, "-100", 10, "1234", 10, "865");
-    // try f(10, "2", 10, "-100", 10, "1234", 10, "0");
+    try f(10, "17", 10, "-100", 10, "1234", 10, "865");
+    try f(10, "2", 10, "-100", 10, "1234", 10, "0");
 
     // m == 1
     try f(10, "0", 10, "0", 10, "1", 10, "0");
     try f(10, "1", 10, "0", 10, "1", 10, "0");
     try f(10, "-10", 10, "0", 10, "1", 10, "0");
-    // try f(10, "1234", 10, "-1", 10, "1", 10, "0");
+    try f(10, "1234", 10, "-1", 10, "1", 10, "0");
 
     // misc
     try f(10, "5", 10, "1", 10, "3", 10, "2");
@@ -890,6 +994,18 @@ test "expConst" {
     try f(16, "8000000000000000", 10, "3", 10, "6719", 10, "5447");
     try f(16, "8000000000000000", 10, "1000", 10, "6719", 10, "1603");
     try f(16, "8000000000000000", 10, "1000000", 10, "6719", 10, "3199");
+    try f(16, "8000000000000000", 10, "-1000000", 10, "6719", 10, "3663"); // 3663 = ModInverse(3199, 6719) Issue #25865
+
+    try f(
+        16,
+        "ffffffffffffffffffffffffffffffff",
+        16,
+        "12345678123456781234567812345678123456789",
+        16,
+        "01112222333344445555666677778889",
+        16,
+        "36168FA1DB3AAE6C8CE647E137F97A",
+    );
 }
 
 test "bigIntDivTrunc" {
@@ -967,4 +1083,22 @@ test "subLimbsOverflow" {
     const got = a -% b;
     const want: Limb = 18446744073709551615;
     try testing.expectEqual(want, got);
+}
+
+test "limbOverflowCalc" {
+    // testing.log_level = .debug;
+    const m: Limb = 0x5555666677778889;
+    var k0: Limb = 2 -% m;
+    var t: Limb = m -% 1;
+    std.log.debug("#1 k0={}, t={}", .{ k0, t });
+    var i: usize = 1;
+    while (i < @bitSizeOf(Limb)) : (i <<= 1) {
+        t *%= t;
+        k0 *%= (t +% 1);
+        std.log.debug("#2 i={}, k0={}, t={}", .{ i, k0, t });
+    }
+    k0 = 0 -% k0;
+
+    std.log.debug("#3 k0={}", .{k0});
+    try testing.expectEqual(@as(Limb, 8520446137833067079), k0);
 }
