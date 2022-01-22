@@ -113,20 +113,9 @@ fn mod(
 // If a == 0 and b != 0, GCD sets z = |b|, x = 0, y = sign(b) * 1.
 //
 // If a != 0 and b == 0, GCD sets z = |a|, x = sign(a) * 1, y = 0.
-fn gcd(
-    d: *Managed,
-    x: ?*Managed,
-    y: ?*Managed,
-    a: Managed,
-    b: Managed,
-) !void {
+fn gcd(d: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
     // try d.gcd(a, b);
     try gcdManaged(d, a, b);
-
-    // a = aa * d;
-    // b = bb * d;
-    // d = a * x + b + y
-    //   = aa * d * x + bb * d * y;
 
     if (x) |x_out| {
         if (a.eqZero()) {
@@ -148,68 +137,54 @@ fn gcd(
     }
 }
 
-/// rma may alias x or y.
-/// x and y may alias each other.
+/// rma may alias a or b.
+/// a and b may alias each other.
 ///
 /// rma's allocator is used for temporary storage to boost multiplication performance.
-pub fn gcdManaged(
-    rma: *Managed,
-    x: Managed,
-    y: Managed,
-) !void {
-    try rma.ensureCapacity(math.min(x.len(), y.len()));
+pub fn gcdManaged(rma: *Managed, a: Managed, b: Managed) !void {
+    try rma.ensureCapacity(math.min(a.len(), b.len()));
     var m = rma.toMutable();
     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
     defer limbs_buffer.deinit();
-    try gcdMutable(&m, x.toConst(), y.toConst(), &limbs_buffer);
+    try gcdMutable(&m, a.toConst(), b.toConst(), &limbs_buffer);
     rma.setMetadata(m.positive, m.len);
 }
 
-/// rma may alias x or y.
-/// x and y may alias each other.
+/// rma may alias a or b.
+/// a and b may alias each other.
 /// Asserts that `rma` has enough limbs to store the result. Upper bound is
-/// `math.min(x.limbs.len, y.limbs.len)`.
+/// `math.min(a.limbs.len, b.limbs.len)`.
 ///
 /// `limbs_buffer` is used for temporary storage during the operation. When this function returns,
 /// it will have the same length as it had when the function was called.
-pub fn gcdMutable(
-    rma: *Mutable,
-    x: Const,
-    y: Const,
-    limbs_buffer: *std.ArrayList(Limb),
-) !void {
+pub fn gcdMutable(rma: *Mutable, a: Const, b: Const, limbs_buffer: *std.ArrayList(Limb)) !void {
     const prev_len = limbs_buffer.items.len;
     defer limbs_buffer.shrinkRetainingCapacity(prev_len);
-    const x_copy = if (rma.limbs.ptr == x.limbs.ptr) blk: {
+    const a_copy = if (rma.limbs.ptr == a.limbs.ptr) blk: {
         const start = limbs_buffer.items.len;
-        try limbs_buffer.appendSlice(x.limbs);
-        break :blk x.toMutable(limbs_buffer.items[start..]).toConst();
-    } else x;
-    const y_copy = if (rma.limbs.ptr == y.limbs.ptr) blk: {
+        try limbs_buffer.appendSlice(a.limbs);
+        break :blk a.toMutable(limbs_buffer.items[start..]).toConst();
+    } else a;
+    const b_copy = if (rma.limbs.ptr == b.limbs.ptr) blk: {
         const start = limbs_buffer.items.len;
-        try limbs_buffer.appendSlice(y.limbs);
-        break :blk y.toMutable(limbs_buffer.items[start..]).toConst();
-    } else y;
+        try limbs_buffer.appendSlice(b.limbs);
+        break :blk b.toMutable(limbs_buffer.items[start..]).toConst();
+    } else b;
 
-    return gcdLehmer(rma, x_copy, y_copy, limbs_buffer);
+    return gcdLehmer(rma, a_copy, b_copy, limbs_buffer);
 }
 
-fn gcdLehmer(
-    result: *Mutable,
-    xa: Const,
-    ya: Const,
-    limbs_buffer: *std.ArrayList(Limb),
-) !void {
-    var x = try xa.toManaged(limbs_buffer.allocator);
-    defer x.deinit();
-    x.abs();
+fn gcdLehmer(result: *Mutable, a_c: Const, b_c: Const, limbs_buffer: *std.ArrayList(Limb)) !void {
+    var a = try a_c.toManaged(limbs_buffer.allocator);
+    defer a.deinit();
+    a.abs();
 
-    var y = try ya.toManaged(limbs_buffer.allocator);
-    defer y.deinit();
-    y.abs();
+    var b = try b_c.toManaged(limbs_buffer.allocator);
+    defer b.deinit();
+    b.abs();
 
-    if (x.toConst().order(y.toConst()) == .lt) {
-        x.swap(&y);
+    if (a.toConst().order(b.toConst()) == .lt) {
+        a.swap(&b);
     }
 
     var t_big = try Managed.init(limbs_buffer.allocator);
@@ -218,15 +193,15 @@ fn gcdLehmer(
     var r = try Managed.init(limbs_buffer.allocator);
     defer r.deinit();
 
-    var tmp_x = try Managed.init(limbs_buffer.allocator);
-    defer tmp_x.deinit();
+    var tmp_a = try Managed.init(limbs_buffer.allocator);
+    defer tmp_a.deinit();
 
-    while (y.len() > 1) {
-        assert(x.isPositive() and y.isPositive());
-        assert(x.len() >= y.len());
+    while (b.len() > 1) {
+        assert(a.isPositive() and b.isPositive());
+        assert(a.len() >= b.len());
 
-        var xh: SignedDoubleLimb = x.limbs[x.len() - 1];
-        var yh: SignedDoubleLimb = if (x.len() > y.len()) 0 else y.limbs[x.len() - 1];
+        var xh: SignedDoubleLimb = a.limbs[a.len() - 1];
+        var yh: SignedDoubleLimb = if (a.len() > b.len()) 0 else b.limbs[a.len() - 1];
 
         var A: SignedDoubleLimb = 1;
         var B: SignedDoubleLimb = 0;
@@ -253,12 +228,12 @@ fn gcdLehmer(
         }
 
         if (B == 0) {
-            // t_big = x % y, r is unused
-            try r.divTrunc(&t_big, x.toConst(), y.toConst());
+            // t_big = a % b, r is unused
+            try r.divTrunc(&t_big, a.toConst(), b.toConst());
             assert(t_big.isPositive());
 
-            x.swap(&y);
-            y.swap(&t_big);
+            a.swap(&b);
+            b.swap(&t_big);
         } else {
             var storage: [8]Limb = undefined;
             const Ap = fixedIntFromSignedDoubleLimb(A, storage[0..2]).toConst();
@@ -266,32 +241,32 @@ fn gcdLehmer(
             const Cp = fixedIntFromSignedDoubleLimb(C, storage[4..6]).toConst();
             const Dp = fixedIntFromSignedDoubleLimb(D, storage[6..8]).toConst();
 
-            // t_big = Ax + By
-            try r.mul(x.toConst(), Ap);
-            try t_big.mul(y.toConst(), Bp);
+            // t_big = Aa + Bb
+            try r.mul(a.toConst(), Ap);
+            try t_big.mul(b.toConst(), Bp);
             try t_big.add(r.toConst(), t_big.toConst());
 
-            // u = Cx + Dy, r as u
-            try tmp_x.copy(x.toConst());
-            try x.mul(tmp_x.toConst(), Cp);
-            try r.mul(y.toConst(), Dp);
-            try r.add(x.toConst(), r.toConst());
+            // u = Ca + Db, r as u
+            try tmp_a.copy(a.toConst());
+            try a.mul(tmp_a.toConst(), Cp);
+            try r.mul(b.toConst(), Dp);
+            try r.add(a.toConst(), r.toConst());
 
-            x.swap(&t_big);
-            y.swap(&r);
+            a.swap(&t_big);
+            b.swap(&r);
         }
     }
 
     // euclidean algorithm
-    assert(x.toConst().order(y.toConst()) != .lt);
+    assert(a.toConst().order(b.toConst()) != .lt);
 
-    while (!y.toConst().eqZero()) {
-        try t_big.divTrunc(&r, x.toConst(), y.toConst());
-        x.swap(&y);
-        y.swap(&r);
+    while (!b.toConst().eqZero()) {
+        try t_big.divTrunc(&r, a.toConst(), b.toConst());
+        a.swap(&b);
+        b.swap(&r);
     }
 
-    result.copy(x.toConst());
+    result.copy(a.toConst());
 }
 
 // Storage must live for the lifetime of the returned value
