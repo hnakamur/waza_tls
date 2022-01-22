@@ -102,41 +102,18 @@ fn mod(
     try q.divTrunc(&r, x, y);
 }
 
-// GCD sets z to the greatest common divisor of a and b and returns z.
-// If x or y are not nil, GCD sets their value such that z = a*x + b*y.
-//
-// a and b may be positive, zero or negative. (Before Go 1.14 both had
-// to be > 0.) Regardless of the signs of a and b, z is always >= 0.
-//
-// If a == b == 0, GCD sets z = x = y = 0.
-//
-// If a == 0 and b != 0, GCD sets z = |b|, x = 0, y = sign(b) * 1.
-//
-// If a != 0 and b == 0, GCD sets z = |a|, x = sign(a) * 1, y = 0.
-fn gcd(d: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
-    // try d.gcd(a, b);
-    try gcdManaged(d, x, y, a, b);
-
-    // if (x) |x_out| {
-    //     if (a.eqZero()) {
-    //         try x_out.set(0);
-    //     } else if (b.eqZero()) {
-    //         try x_out.set(if (a.isPositive()) @as(i8, 1) else @as(i8, -1));
-    //     } else {
-    //         // TODO: implement
-    //     }
-    // }
-    // if (y) |y_out| {
-    //     if (b.eqZero()) {
-    //         try y_out.set(0);
-    //     } else if (a.eqZero()) {
-    //         try y_out.set(if (b.isPositive()) @as(i8, 1) else @as(i8, -1));
-    //     } else {
-    //         // TODO: implement
-    //     }
-    // }
-}
-
+/// GCD sets rma to the greatest common divisor of a and b.
+/// If x or y are not nil, GCD sets their value such that rma = a*x + b*y.
+///
+/// a and b may be positive, zero or negative. (Before Go 1.14 both had
+/// to be > 0.) Regardless of the signs of a and b, rma is always >= 0.
+///
+/// If a == b == 0, GCD sets rma = x = y = 0.
+///
+/// If a == 0 and b != 0, GCD sets rma = |b|, x = 0, y = sign(b) * 1.
+///
+/// If a != 0 and b == 0, GCD sets rma = |a|, x = sign(a) * 1, y = 0.
+///
 /// rma may alias a or b.
 /// a and b may alias each other.
 ///
@@ -150,12 +127,130 @@ pub fn gcdManaged(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Mana
     var y_mut = if (y) |yy| &yy.toMutable() else null;
     try gcdMutable(&m, x_mut, y_mut, a.toConst(), b.toConst(), &limbs_buffer);
     rma.setMetadata(m.positive, m.len);
+    if (x) |xx| xx.setMetadata(x_mut.?.positive, x_mut.?.len);
+    if (y) |yy| yy.setMetadata(y_mut.?.positive, y_mut.?.len);
+}
+
+test "gcdManaged" {
+    const f = struct {
+        fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
+            const allocator = testing.allocator;
+
+            var big_a = try strToManaged(allocator, a);
+            defer big_a.deinit();
+            var big_b = try strToManaged(allocator, b);
+            defer big_b.deinit();
+
+            var want_d = try strToManaged(allocator, d);
+            defer want_d.deinit();
+            var want_x = try strToManaged(allocator, x);
+            defer want_x.deinit();
+            var want_y = try strToManaged(allocator, y);
+            defer want_y.deinit();
+
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                try gcdManaged(&got_d, null, null, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                try gcdManaged(&got_d, &got_x, null, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    return error.TestExpectedError;
+                }
+                if (!got_x.eq(want_x)) {
+                    std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcdManaged(&got_d, null, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    return error.TestExpectedError;
+                }
+                if (!got_y.eq(want_y)) {
+                    std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_y, want_y });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    return error.TestExpectedError;
+                }
+                if (!got_x.eq(want_x)) {
+                    std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
+                    return error.TestExpectedError;
+                }
+                if (!got_y.eq(want_y)) {
+                    std.debug.print("gcd y mismatch, got={}, want={}\n", .{ got_y, want_y });
+                    std.debug.print(
+                        "gcd y mismatch, got.limbs={any}, got.metadata={x}, want.limbs={any}, want.metadata={x}\n",
+                        .{ got_y.limbs, got_y.metadata, want_y.limbs, want_y.metadata },
+                    );
+                    return error.TestExpectedError;
+                }
+            }
+        }
+
+        fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
+            var m = try Managed.init(allocator);
+            errdefer m.deinit();
+            try m.setString(10, value);
+            return m;
+        }
+    }.f;
+
+    testing.log_level = .debug;
+
+    // a <= 0 || b <= 0
+    try f("0", "0", "0", "0", "0");
+    try f("7", "0", "1", "0", "7");
+    try f("7", "0", "-1", "0", "-7");
+    try f("11", "1", "0", "11", "0");
+    try f("7", "-1", "-2", "-77", "35");
+    try f("935", "-3", "8", "64515", "24310");
+    try f("935", "-3", "-8", "64515", "-24310");
+    try f("935", "3", "-8", "-64515", "-24310");
+
+    try f("1", "-9", "47", "120", "23");
+    try f("7", "1", "-2", "77", "35");
+    try f("935", "-3", "8", "64515", "24310");
+    try f("935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000");
+    try f(
+        "1",
+        "-221",
+        "22059940471369027483332068679400581064239780177629666810348940098015901108344",
+        "98920366548084643601728869055592650835572950932266967461790948584315647051443",
+        "991",
+    );
 }
 
 /// rma may alias a or b.
 /// a and b may alias each other.
 /// Asserts that `rma` has enough limbs to store the result. Upper bound is
-/// `math.min(a.limbs.len, b.limbs.len)`.
+/// `math.min(normalizedLimbsLen(a), normalizedLimbsLen(b))`.
 ///
 /// `limbs_buffer` is used for temporary storage during the operation. When this function returns,
 /// it will have the same length as it had when the function was called.
@@ -167,8 +262,25 @@ pub fn gcdMutable(
     b: Const,
     limbs_buffer: *std.ArrayList(Limb),
 ) !void {
+    if (a.eqZero() or b.eqZero()) {
+        rma.copy(if (a.eqZero()) b else a);
+        rma.abs();
+        if (x) |xx| {
+            xx.set(if (a.eqZero()) @as(i8, 0) else blk: {
+                break :blk if (a.positive) @as(i8, 1) else @as(i8, -1);
+            });
+        }
+        if (y) |yy| {
+            yy.set(if (b.eqZero()) @as(i8, 0) else blk: {
+                break :blk if (b.positive) @as(i8, 1) else @as(i8, -1);
+            });
+        }
+        return;
+    }
+
     const prev_len = limbs_buffer.items.len;
     defer limbs_buffer.shrinkRetainingCapacity(prev_len);
+
     const a_copy = if (rma.limbs.ptr == a.limbs.ptr) blk: {
         const start = limbs_buffer.items.len;
         try limbs_buffer.appendSlice(a.limbs);
@@ -180,22 +292,17 @@ pub fn gcdMutable(
         break :blk b.toMutable(limbs_buffer.items[start..]).toConst();
     } else b;
 
-    return gcdLehmer(rma, x, y, a_copy, b_copy, limbs_buffer);
+    return lehmerGcd(rma, x, y, a_copy, b_copy, limbs_buffer);
 }
 
-fn gcdLehmer(
+fn lehmerGcd(
     result: *Mutable,
-    x_mut: ?*Mutable,
-    y_mut: ?*Mutable,
+    x: ?*Mutable,
+    y: ?*Mutable,
     a_c: Const,
     b_c: Const,
     limbs_buffer: *std.ArrayList(Limb),
 ) !void {
-    var x: ?Managed = if (x_mut) |xx_mut| xx_mut.toManaged(limbs_buffer.allocator) else null;
-    if (x) |*xx| try xx.set(1);
-    var y: ?Managed = if (y_mut) |yy_mut| yy_mut.toManaged(limbs_buffer.allocator) else null;
-    if (y) |*yy| try yy.set(2);
-
     var a = try a_c.toManaged(limbs_buffer.allocator);
     defer a.deinit();
     a.abs();
@@ -203,106 +310,314 @@ fn gcdLehmer(
     var b = try b_c.toManaged(limbs_buffer.allocator);
     defer b.deinit();
     b.abs();
+    std.log.debug("lehmerGcd start b={}", .{b});
 
-    if (a.toConst().order(b.toConst()) == .lt) {
-        a.swap(&b);
+    var ua = try Managed.init(limbs_buffer.allocator);
+    defer ua.deinit();
+
+    var ub = try Managed.init(limbs_buffer.allocator);
+    defer ub.deinit();
+
+    const extended = x != null or y != null;
+    if (extended) {
+        // ua (ub) tracks how many times input a has been accumulated into a (b).
+        try ua.set(1);
+        try ub.set(0);
     }
 
-    var t_big = try Managed.init(limbs_buffer.allocator);
-    defer t_big.deinit();
+    // ensure A >= B
+    if (a.toConst().order(b.toConst()) == .lt) {
+        a.swap(&b);
+        ua.swap(&ub);
+    }
+
+    var q = try Managed.init(limbs_buffer.allocator);
+    defer q.deinit();
 
     var r = try Managed.init(limbs_buffer.allocator);
     defer r.deinit();
 
-    var tmp_a = try Managed.init(limbs_buffer.allocator);
-    defer tmp_a.deinit();
+    var s = try Managed.init(limbs_buffer.allocator);
+    defer s.deinit();
 
-    while (b.len() > 1) {
-        assert(a.isPositive() and b.isPositive());
-        assert(a.len() >= b.len());
+    var t = try Managed.init(limbs_buffer.allocator);
+    defer t.deinit();
 
-        var xh: SignedDoubleLimb = a.limbs[a.len() - 1];
-        var yh: SignedDoubleLimb = if (a.len() > b.len()) 0 else b.limbs[a.len() - 1];
+    // loop invariant a >= b
+    std.log.debug("before loop, b.normalizedLimbsLen={}", .{normalizedLimbsLen(&b)});
+    while (normalizedLimbsLen(&b) > 1) {
+        // Simulate the effect of the single-precision steps using the cosequences.
+        // a = u0*a + v0*b
+        // b = u1*a + v1*b
+        var @"u0": Limb = undefined;
+        var @"u1": Limb = undefined;
+        var v0: Limb = undefined;
+        var v1: Limb = undefined;
+        var even: bool = undefined;
+        lehmerSimulate(&a, &b, &@"u0", &@"u1", &v0, &v1, &even);
 
-        var A: SignedDoubleLimb = 1;
-        var B: SignedDoubleLimb = 0;
-        var C: SignedDoubleLimb = 0;
-        var D: SignedDoubleLimb = 1;
+        // multiprecision Step
+        if (v0 != 0) {
+            // Simulate the effect of the single-precision steps using the cosequences.
+            // a = u0*a + v0*b
+            // b = u1*a + v1*b
+            try lehmerUpdate(&a, &b, &q, &r, &s, &t, @"u0", @"u1", v0, v1, even);
 
-        while (yh + C != 0 and yh + D != 0) {
-            const q = @divFloor(xh + A, yh + C);
-            const qp = @divFloor(xh + B, yh + D);
-            if (q != qp) {
-                break;
+            if (extended) {
+                // ua = u0*ua + v0*ub
+                // ub = u1*ua + v1*ub
+                try lehmerUpdate(&ua, &ub, &q, &r, &s, &t, @"u0", @"u1", v0, v1, even);
             }
-
-            var t = A - q * C;
-            A = C;
-            C = t;
-            t = B - q * D;
-            B = D;
-            D = t;
-
-            t = xh - q * yh;
-            xh = yh;
-            yh = t;
-        }
-
-        if (B == 0) {
-            // t_big = a % b, r is unused
-            try r.divTrunc(&t_big, a.toConst(), b.toConst());
-            assert(t_big.isPositive());
-
-            a.swap(&b);
-            b.swap(&t_big);
         } else {
-            var storage: [8]Limb = undefined;
-            const Ap = fixedIntFromSignedDoubleLimb(A, storage[0..2]).toConst();
-            const Bp = fixedIntFromSignedDoubleLimb(B, storage[2..4]).toConst();
-            const Cp = fixedIntFromSignedDoubleLimb(C, storage[4..6]).toConst();
-            const Dp = fixedIntFromSignedDoubleLimb(D, storage[6..8]).toConst();
-
-            // t_big = Aa + Bb
-            try r.mul(a.toConst(), Ap);
-            try t_big.mul(b.toConst(), Bp);
-            try t_big.add(r.toConst(), t_big.toConst());
-
-            // u = Ca + Db, r as u
-            try tmp_a.copy(a.toConst());
-            try a.mul(tmp_a.toConst(), Cp);
-            try r.mul(b.toConst(), Dp);
-            try r.add(a.toConst(), r.toConst());
-
-            a.swap(&t_big);
-            b.swap(&r);
+            // Single-digit calculations failed to simulate any quotients.
+            // Do a standard Euclidean step.
+            std.log.debug("before euclidUpdate b={}", .{b});
+            try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
         }
     }
 
-    // euclidean algorithm
-    assert(a.toConst().order(b.toConst()) != .lt);
+    std.log.debug("before, if b={}", .{b});
+    if (!b.eqZero()) {
+        // extended Euclidean algorithm base case if B is a single Word
+        if (normalizedLimbsLen(&a) > 1) {
+            // A is longer than a single Word, so one update is needed.
+            try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
+        }
+        if (!b.eqZero()) {
+            // A and B are both a single Word.
+            var a_word = a.limbs[0];
+            var b_word = b.limbs[0];
+            if (extended) {
+                var uaw: Limb = 1;
+                var ubw: Limb = 0;
+                var va: Limb = 0;
+                var vb: Limb = 1;
+                var even = true;
+                std.log.debug("lehmerGcd before while loop#1", .{});
+                while (b_word != 0) {
+                    const qw = a_word / b_word;
+                    const rw = a_word % b_word;
+                    a_word = b_word;
+                    b_word = rw;
 
-    while (!b.toConst().eqZero()) {
-        try t_big.divTrunc(&r, a.toConst(), b.toConst());
-        a.swap(&b);
-        b.swap(&r);
+                    const new_ubw = uaw + qw * ubw;
+                    uaw = ubw;
+                    ubw = new_ubw;
+
+                    const new_vb = va + qw * vb;
+                    va = vb;
+                    vb = new_vb;
+
+                    even = !even;
+                }
+                std.log.debug("lehmerGcd after while loop#1", .{});
+
+                try t.set(uaw);
+                try s.set(va);
+                t.setSign(even);
+                s.setSign(!even);
+
+                try t.mul(ua.toConst(), t.toConst());
+                try s.mul(ub.toConst(), s.toConst());
+
+                try ua.add(t.toConst(), s.toConst());
+            } else {
+                std.log.debug("lehmerGcd before while loop#2", .{});
+                while (b_word != 0) {
+                    const new_a_word = a_word % b_word;
+                    a_word = b_word;
+                    b_word = new_a_word;
+                }
+                std.log.debug("lehmerGcd after while loop#2", .{});
+            }
+            a.limbs[0] = a_word;
+        }
+    }
+
+    if (y) |yy| {
+        // y = (z - a*x)/b
+        var tmp_y = try Managed.init(limbs_buffer.allocator);
+        defer tmp_y.deinit();
+        try tmp_y.mul(a_c, ua.toConst());
+        std.log.debug("after mul a*x, tmp_y={}, a={}, ua={}", .{tmp_y, a_c, ua});
+        if (!a_c.positive) {
+            tmp_y.negate();
+        }
+        std.log.debug("after neg, tmp_y={}, a_c.positive={}", .{tmp_y, a_c.positive});
+        try tmp_y.sub(a.toConst(), tmp_y.toConst());
+        std.log.debug("after sub, tmp_y={}, a={}", .{tmp_y, a});
+        try tmp_y.divTrunc(&r, tmp_y.toConst(), b_c);
+        std.log.debug("after div, tmp_y={}, b_c={}", .{tmp_y, b_c});
+        yy.copy(tmp_y.toConst());
+        std.log.debug("after copy, yy={}, tmp_y={}", .{yy, tmp_y});
+    }
+    if (x) |xx| {
+        xx.copy(ua.toConst());
+        if (!a_c.positive) {
+            xx.negate();
+        }
     }
 
     result.copy(a.toConst());
 }
 
-// Storage must live for the lifetime of the returned value
-fn fixedIntFromSignedDoubleLimb(A: SignedDoubleLimb, storage: []Limb) Mutable {
-    assert(storage.len >= 2);
-
-    const A_is_positive = A >= 0;
-    const Au = @intCast(DoubleLimb, if (A < 0) -A else A);
-    storage[0] = @truncate(Limb, Au);
-    storage[1] = @truncate(Limb, Au >> limb_bits);
-    return .{
-        .limbs = storage[0..2],
-        .positive = A_is_positive,
-        .len = 2,
+/// Returns the normalized limbs length without a possible sequence of leading zeros.
+/// Note: This returns 1 when r == 0.
+fn normalizedLimbsLen(r: anytype) usize {
+    return switch (@TypeOf(r)) {
+        Managed, *Managed, *const Managed => r.len(),
+        Mutable, *Mutable, *const Mutable => r.len,
+        Const, *const Const => r.limbs.len,
+        else => @panic("Unsuported type for normalizedLimbsLen"),
     };
+}
+
+/// lehmerSimulate attempts to simulate several Euclidean update steps
+/// using the leading digits of A and B.  It sets u0, u1, v0, v1
+/// such that A and B can be updated as:
+///		A = u0*A + v0*B
+///		B = u1*A + v1*B
+/// Requirements: A >= B and len(B.abs) >= 2
+/// Since we are calculating with full words to avoid overflow,
+/// we use 'even' to track the sign of the cosequences.
+/// For even iterations: u0, v1 >= 0 && u1, v0 <= 0
+/// For odd  iterations: u0, v1 <= 0 && u1, v0 >= 0
+fn lehmerSimulate(
+    a: *Managed,
+    b: *Managed,
+    @"u0": *Limb,
+    @"u1": *Limb,
+    v0: *Limb,
+    v1: *Limb,
+    even: *bool,
+) void {
+    // initialize the digits
+    var a1: Limb = undefined;
+    var a2: Limb = undefined;
+    var @"u2": Limb = undefined;
+    var v2: Limb = undefined;
+
+    const m = normalizedLimbsLen(b); // m >= 2
+    const n = normalizedLimbsLen(a); // n >= m >= 2
+
+    // extract the top Word of bits from A and B
+    const h = nlz(a.limbs[n - 1]);
+    a1 = math.shl(Limb, a.limbs[n - 1], h) | math.shr(Limb, a.limbs[n - 2], @bitSizeOf(Limb) - h);
+    // B may have implicit zero words in the high bits if the lengths differ
+    a2 = if (n == m)
+        math.shl(Limb, b.limbs[n - 1], h) | math.shr(Limb, b.limbs[n - 2], @bitSizeOf(Limb) - h)
+    else if (n == m + 1)
+        math.shr(Limb, b.limbs[n - 2], @bitSizeOf(Limb) - h)
+    else
+        0;
+
+    // Since we are calculating with full words to avoid overflow,
+    // we use 'even' to track the sign of the cosequences.
+    // For even iterations: u0, v1 >= 0 && u1, v0 <= 0
+    // For odd  iterations: u0, v1 <= 0 && u1, v0 >= 0
+    // The first iteration starts with k=1 (odd).
+    even.* = false;
+    // variables to track the cosequences
+    @"u0".* = 0;
+    @"u1".* = 1;
+    @"u2" = 0;
+    v0.* = 0;
+    v1.* = 0;
+    v2 = 1;
+
+    // Calculate the quotient and cosequences using Collins' stopping condition.
+    // Note that overflow of a Word is not possible when computing the remainder
+    // sequence and cosequences since the cosequence size is bounded by the input size.
+    // See section 4.2 of Jebelean for details.
+    std.log.debug("lehmerSimulate before while loop", .{});
+    while (a2 >= v2 and a1 -% a2 >= v1.* + v2) {
+        const q = a1 / a2;
+        const r = a1 % a2;
+        a1 = a2;
+        a2 = r;
+
+        const u2_new = @"u1".* + q * @"u2";
+        @"u0".* = @"u1".*;
+        @"u1".* = @"u2";
+        @"u2" = u2_new;
+
+        const v2_new = @"v1".* + q * @"v2";
+        @"v0".* = @"v1".*;
+        @"v1".* = @"v2";
+        @"v2" = v2_new;
+
+        even.* = !even.*;
+    }
+    std.log.debug("lehmerSimulate after while loop", .{});
+}
+
+// lehmerUpdate updates the inputs a and b such that:
+//		a = u0*a + v0*b
+//		b = u1*a + v1*b
+// where the signs of u0, u1, v0, v1 are given by even
+// For even == true: u0, v1 >= 0 && u1, v0 <= 0
+// For even == false: u0, v1 <= 0 && u1, v0 >= 0
+// q, r, s, t are temporary variables to avoid allocations in the multiplication
+fn lehmerUpdate(
+    a: *Managed,
+    b: *Managed,
+    q: *Managed,
+    r: *Managed,
+    s: *Managed,
+    t: *Managed,
+    @"u0": Limb,
+    @"u1": Limb,
+    v0: Limb,
+    v1: Limb,
+    even: bool,
+) !void {
+    try t.set(@"u0");
+    try s.set(v0);
+    t.setSign(even);
+    s.setSign(!even);
+
+    try t.mul(a.toConst(), t.toConst());
+    try s.mul(b.toConst(), s.toConst());
+
+    try r.set(@"u1");
+    try q.set(v1);
+    r.setSign(!even);
+    q.setSign(even);
+
+    try r.mul(a.toConst(), r.toConst());
+    try q.mul(b.toConst(), q.toConst());
+
+    try a.add(t.toConst(), s.toConst());
+    try b.add(r.toConst(), q.toConst());
+}
+
+/// euclidUpdate performs a single step of the Euclidean GCD algorithm
+/// if extended is true, it also updates the cosequence ua, ub
+fn euclidUpdate(
+    a: *Managed,
+    b: *Managed,
+    ua: *Managed,
+    ub: *Managed,
+    q: *Managed,
+    r: *Managed,
+    s: *Managed,
+    t: *Managed,
+    extended: bool,
+) !void {
+    try q.divTrunc(r, a.toConst(), b.toConst());
+
+    const tmp: Managed = a.*;
+    a.* = b.*;
+    b.* = r.*;
+    r.* = tmp;
+
+    if (extended) {
+        // ua, ub = ub, ua - q*ub
+        try t.copy(ub.toConst());
+        try s.mul(ub.toConst(), q.toConst());
+        try ub.sub(ua.toConst(), s.toConst());
+        try ua.copy(t.toConst());
+    }
 }
 
 // bigIntConstExpNN returns x**y mod m if m != 0,
@@ -347,14 +662,15 @@ fn bigIntConstExpNN(
     // (x^2...x^15) but then reduces the number of multiply-reduces by a
     // third. Even for a 32-bit exponent, this reduces the number of
     // operations. Uses Montgomery method for odd moduli.
-    if (x_abs.order(big_one) == .gt and y_abs.limbs.len > 1 and !m_abs.eqZero()) {
+    const y_abs_limbs_len = normalizedLimbsLen(y_abs);
+    if (x_abs.order(big_one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
         if (m_abs.limbs[0] & 1 == 1) {
             @panic("not implemented yet#2");
         }
         @panic("not implemented yet#3");
     }
 
-    var v = y_abs.limbs[y_abs.limbs.len - 1]; // v > 0 because y_abs is normalized and y_abs > 0
+    var v = y_abs.limbs[y_abs_limbs_len - 1]; // v > 0 because y_abs is normalized and y_abs > 0
     const shift = nlz(v) + 1;
     // std.log.debug("bigIntConstExpNN v={}, shift={}", .{ v, shift });
     v = math.shl(Limb, v, shift);
@@ -393,7 +709,7 @@ fn bigIntConstExpNN(
         v = math.shl(Limb, v, 1);
     }
 
-    var i: isize = @intCast(isize, y_abs.limbs.len) - 2;
+    var i: isize = @intCast(isize, normalizedLimbsLen(y_abs)) - 2;
     while (i >= 0) : (i -= 1) {
         v = y_abs.limbs[@intCast(usize, i)];
 
@@ -591,84 +907,27 @@ test "bigIntDivTrunc" {
     try f(8, 4, 2, 0, 2, 0);
 }
 
-test "gcd" {
-    const f = struct {
-        fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
-            const allocator = testing.allocator;
+test "swap3" {
+    var a: usize = 1;
+    var b: usize = 2;
+    var c: usize = 3;
 
-            var big_a = try strToManaged(allocator, a);
-            defer big_a.deinit();
-            var big_b = try strToManaged(allocator, b);
-            defer big_b.deinit();
+    const tmp = a;
+    a = b;
+    b = c;
+    c = tmp;
+    // std.mem.swap(usize, &a, &b);
+    // std.mem.swap(usize, &b, &c);
 
-            var want_d = try strToManaged(allocator, d);
-            defer want_d.deinit();
-            var want_x = try strToManaged(allocator, x);
-            defer want_x.deinit();
-            var want_y = try strToManaged(allocator, y);
-            defer want_y.deinit();
+    try testing.expectEqual(@as(usize, 2), a);
+    try testing.expectEqual(@as(usize, 3), b);
+    try testing.expectEqual(@as(usize, 1), c);
+}
 
-            {
-                var got_d = try Managed.init(allocator);
-                defer got_d.deinit();
-                try gcdManaged(&got_d, null, null, big_a, big_b);
-                if (!got_d.eq(want_d)) {
-                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
-                    return error.TestExpectedError;
-                }
-            }
-            {
-                var got_d = try Managed.init(allocator);
-                defer got_d.deinit();
-                var got_x = try Managed.init(allocator);
-                defer got_x.deinit();
-                var got_y = try Managed.init(allocator);
-                defer got_y.deinit();
-                try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
-                if (!got_d.eq(want_d)) {
-                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
-                    return error.TestExpectedError;
-                }
-                try testing.expectEqual(@as(i64, 1), try got_x.to(i64));
-                try testing.expectEqual(@as(i64, 2), try got_y.to(i64));
-                // if (!got_x.eq(want_x)) {
-                //     std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
-                //     return error.TestExpectedError;
-                // }
-                // if (!got_y.eq(want_y)) {
-                //     std.debug.print("gcd y mismatch, got={}, want={}\n", .{ got_y, want_y });
-                //     return error.TestExpectedError;
-                // }
-            }
-        }
-
-        fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
-            var m = try Managed.init(allocator);
-            errdefer m.deinit();
-            try m.setString(10, value);
-            return m;
-        }
-    }.f;
-
-    // a <= 0 || b <= 0
-    try f("0", "0", "0", "0", "0");
-    try f("7", "0", "1", "0", "7");
-    try f("7", "0", "-1", "0", "-7");
-    try f("11", "1", "0", "11", "0");
-    try f("7", "-1", "-2", "-77", "35");
-    try f("935", "-3", "8", "64515", "24310");
-    try f("935", "-3", "-8", "64515", "-24310");
-    try f("935", "3", "-8", "-64515", "-24310");
-
-    try f("1", "-9", "47", "120", "23");
-    try f("7", "1", "-2", "77", "35");
-    try f("935", "-3", "8", "64515", "24310");
-    try f("935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000");
-    try f(
-        "1",
-        "-221",
-        "22059940471369027483332068679400581064239780177629666810348940098015901108344",
-        "98920366548084643601728869055592650835572950932266967461790948584315647051443",
-        "991",
-    );
+test "subLimbsOverflow" {
+    const a: Limb = 2;
+    const b: Limb = 3;
+    const got = a -% b;
+    const want: Limb = 18446744073709551615;
+    try testing.expectEqual(want, got);
 }

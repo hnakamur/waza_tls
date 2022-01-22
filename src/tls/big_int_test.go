@@ -84,3 +84,121 @@ func TestBigIntDivMod(t *testing.T) {
 	}
 
 }
+
+var gcdTests = []struct {
+	d, x, y, a, b string
+}{
+	// a <= 0 || b <= 0
+	// {"0", "0", "0", "0", "0"},
+	// {"7", "0", "1", "0", "7"},
+	// {"7", "0", "-1", "0", "-7"},
+	// {"11", "1", "0", "11", "0"},
+	// {"7", "-1", "-2", "-77", "35"},
+	// {"935", "-3", "8", "64515", "24310"},
+	{"935", "-3", "-8", "64515", "-24310"},
+	// {"935", "3", "-8", "-64515", "-24310"},
+
+	// {"1", "-9", "47", "120", "23"},
+	// {"7", "1", "-2", "77", "35"},
+	// {"935", "-3", "8", "64515", "24310"},
+	// {"935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000"},
+	// {"1", "-221", "22059940471369027483332068679400581064239780177629666810348940098015901108344", "98920366548084643601728869055592650835572950932266967461790948584315647051443", "991"},
+}
+
+func testGcd(t *testing.T, d, x, y, a, b *big.Int) {
+	var X *big.Int
+	if x != nil {
+		X = new(big.Int)
+	}
+	var Y *big.Int
+	if y != nil {
+		Y = new(big.Int)
+	}
+
+	D := new(big.Int).GCD(X, Y, a, b)
+	if D.Cmp(d) != 0 {
+		t.Errorf("GCD(%s, %s, %s, %s): got d = %s, want %s", x, y, a, b, D, d)
+	}
+	if x != nil && X.Cmp(x) != 0 {
+		t.Errorf("GCD(%s, %s, %s, %s): got x = %s, want %s", x, y, a, b, X, x)
+	}
+	if y != nil && Y.Cmp(y) != 0 {
+		t.Errorf("GCD(%s, %s, %s, %s): got y = %s, want %s", x, y, a, b, Y, y)
+	}
+
+	// check results in presence of aliasing (issue #11284)
+	a2 := new(big.Int).Set(a)
+	b2 := new(big.Int).Set(b)
+	a2.GCD(X, Y, a2, b2) // result is same as 1st argument
+	if a2.Cmp(d) != 0 {
+		t.Errorf("aliased z = a GCD(%s, %s, %s, %s): got d = %s, want %s", x, y, a, b, a2, d)
+	}
+	if x != nil && X.Cmp(x) != 0 {
+		t.Errorf("aliased z = a GCD(%s, %s, %s, %s): got x = %s, want %s", x, y, a, b, X, x)
+	}
+	if y != nil && Y.Cmp(y) != 0 {
+		t.Errorf("aliased z = a GCD(%s, %s, %s, %s): got y = %s, want %s", x, y, a, b, Y, y)
+	}
+
+	a2 = new(big.Int).Set(a)
+	b2 = new(big.Int).Set(b)
+	b2.GCD(X, Y, a2, b2) // result is same as 2nd argument
+	if b2.Cmp(d) != 0 {
+		t.Errorf("aliased z = b GCD(%s, %s, %s, %s): got d = %s, want %s", x, y, a, b, b2, d)
+	}
+	if x != nil && X.Cmp(x) != 0 {
+		t.Errorf("aliased z = b GCD(%s, %s, %s, %s): got x = %s, want %s", x, y, a, b, X, x)
+	}
+	if y != nil && Y.Cmp(y) != 0 {
+		t.Errorf("aliased z = b GCD(%s, %s, %s, %s): got y = %s, want %s", x, y, a, b, Y, y)
+	}
+
+	a2 = new(big.Int).Set(a)
+	b2 = new(big.Int).Set(b)
+	D = new(big.Int).GCD(a2, b2, a2, b2) // x = a, y = b
+	if D.Cmp(d) != 0 {
+		t.Errorf("aliased x = a, y = b GCD(%s, %s, %s, %s): got d = %s, want %s", x, y, a, b, D, d)
+	}
+	if x != nil && a2.Cmp(x) != 0 {
+		t.Errorf("aliased x = a, y = b GCD(%s, %s, %s, %s): got x = %s, want %s", x, y, a, b, a2, x)
+	}
+	if y != nil && b2.Cmp(y) != 0 {
+		t.Errorf("aliased x = a, y = b GCD(%s, %s, %s, %s): got y = %s, want %s", x, y, a, b, b2, y)
+	}
+
+	a2 = new(big.Int).Set(a)
+	b2 = new(big.Int).Set(b)
+	D = new(big.Int).GCD(b2, a2, a2, b2) // x = b, y = a
+	if D.Cmp(d) != 0 {
+		t.Errorf("aliased x = b, y = a GCD(%s, %s, %s, %s): got d = %s, want %s", x, y, a, b, D, d)
+	}
+	if x != nil && b2.Cmp(x) != 0 {
+		t.Errorf("aliased x = b, y = a GCD(%s, %s, %s, %s): got x = %s, want %s", x, y, a, b, b2, x)
+	}
+	if y != nil && a2.Cmp(y) != 0 {
+		t.Errorf("aliased x = b, y = a GCD(%s, %s, %s, %s): got y = %s, want %s", x, y, a, b, a2, y)
+	}
+}
+
+func TestGcd(t *testing.T) {
+	for _, test := range gcdTests {
+		d, _ := new(big.Int).SetString(test.d, 0)
+		// x, _ := new(big.Int).SetString(test.x, 0)
+		// y, _ := new(big.Int).SetString(test.y, 0)
+		a, _ := new(big.Int).SetString(test.a, 0)
+		b, _ := new(big.Int).SetString(test.b, 0)
+
+		testGcd(t, d, nil, nil, a, b)
+		// testGcd(t, d, x, nil, a, b)
+		// testGcd(t, d, nil, y, a, b)
+		// testGcd(t, d, x, y, a, b)
+	}
+}
+
+func TestUintSubOverflow(t *testing.T) {
+	a := uint(2)
+	b := uint(3)
+	if got, want := a-b, uint(18446744073709551615); got != want {
+		t.Errorf("result mismatch, got=%d, want=%d", got, want)
+	}
+}
