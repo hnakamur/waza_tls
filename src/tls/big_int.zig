@@ -310,7 +310,6 @@ fn lehmerGcd(
     var b = try b_c.toManaged(limbs_buffer.allocator);
     defer b.deinit();
     b.abs();
-    std.log.debug("lehmerGcd start b={}", .{b});
 
     var ua = try Managed.init(limbs_buffer.allocator);
     defer ua.deinit();
@@ -344,7 +343,6 @@ fn lehmerGcd(
     defer t.deinit();
 
     // loop invariant a >= b
-    std.log.debug("before loop, b.normalizedLimbsLen={}", .{normalizedLimbsLen(&b)});
     while (normalizedLimbsLen(&b) > 1) {
         // Simulate the effect of the single-precision steps using the cosequences.
         // a = u0*a + v0*b
@@ -371,12 +369,10 @@ fn lehmerGcd(
         } else {
             // Single-digit calculations failed to simulate any quotients.
             // Do a standard Euclidean step.
-            std.log.debug("before euclidUpdate b={}", .{b});
             try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
         }
     }
 
-    std.log.debug("before, if b={}", .{b});
     if (!b.eqZero()) {
         // extended Euclidean algorithm base case if B is a single Word
         if (normalizedLimbsLen(&a) > 1) {
@@ -393,7 +389,6 @@ fn lehmerGcd(
                 var va: Limb = 0;
                 var vb: Limb = 1;
                 var even = true;
-                std.log.debug("lehmerGcd before while loop#1", .{});
                 while (b_word != 0) {
                     const qw = a_word / b_word;
                     const rw = a_word % b_word;
@@ -410,7 +405,6 @@ fn lehmerGcd(
 
                     even = !even;
                 }
-                std.log.debug("lehmerGcd after while loop#1", .{});
 
                 try t.set(uaw);
                 try s.set(va);
@@ -422,13 +416,11 @@ fn lehmerGcd(
 
                 try ua.add(t.toConst(), s.toConst());
             } else {
-                std.log.debug("lehmerGcd before while loop#2", .{});
                 while (b_word != 0) {
                     const new_a_word = a_word % b_word;
                     a_word = b_word;
                     b_word = new_a_word;
                 }
-                std.log.debug("lehmerGcd after while loop#2", .{});
             }
             a.limbs[0] = a_word;
         }
@@ -439,17 +431,12 @@ fn lehmerGcd(
         var tmp_y = try Managed.init(limbs_buffer.allocator);
         defer tmp_y.deinit();
         try tmp_y.mul(a_c, ua.toConst());
-        std.log.debug("after mul a*x, tmp_y={}, a={}, ua={}", .{tmp_y, a_c, ua});
         if (!a_c.positive) {
             tmp_y.negate();
         }
-        std.log.debug("after neg, tmp_y={}, a_c.positive={}", .{tmp_y, a_c.positive});
         try tmp_y.sub(a.toConst(), tmp_y.toConst());
-        std.log.debug("after sub, tmp_y={}, a={}", .{tmp_y, a});
         try tmp_y.divTrunc(&r, tmp_y.toConst(), b_c);
-        std.log.debug("after div, tmp_y={}, b_c={}", .{tmp_y, b_c});
         yy.copy(tmp_y.toConst());
-        std.log.debug("after copy, yy={}, tmp_y={}", .{yy, tmp_y});
     }
     if (x) |xx| {
         xx.copy(ua.toConst());
@@ -529,7 +516,6 @@ fn lehmerSimulate(
     // Note that overflow of a Word is not possible when computing the remainder
     // sequence and cosequences since the cosequence size is bounded by the input size.
     // See section 4.2 of Jebelean for details.
-    std.log.debug("lehmerSimulate before while loop", .{});
     while (a2 >= v2 and a1 -% a2 >= v1.* + v2) {
         const q = a1 / a2;
         const r = a1 % a2;
@@ -548,7 +534,6 @@ fn lehmerSimulate(
 
         even.* = !even.*;
     }
-    std.log.debug("lehmerSimulate after while loop", .{});
 }
 
 // lehmerUpdate updates the inputs a and b such that:
@@ -646,7 +631,6 @@ fn bigIntConstExpNN(
         defer q.deinit();
         var r = try Managed.init(allocator);
         errdefer r.deinit();
-        // std.log.debug("r.limbs.ptr=0x{x}", .{@ptrToInt(r.limbs.ptr)});
         try q.divFloor(&r, x_abs, m_abs);
         return r;
     }
