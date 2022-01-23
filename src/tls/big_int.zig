@@ -39,7 +39,7 @@ pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
 //
 // Modular exponentiation of inputs of a particular size is not a
 // cryptographically constant-time operation.
-fn expConst(
+pub fn expConst(
     allocator: mem.Allocator,
     x: Const,
     y: Const,
@@ -1145,6 +1145,32 @@ fn cloneConst(
         .limbs = try allocator.dupe(Limb, x.limbs),
         .positive = x.positive,
     };
+}
+
+// bytes writes the value of z into buf using big-endian encoding.
+// The value of z is encoded in the slice buf[i:]. If the value of z
+// cannot be represented in buf, bytes panics. The number i of unused
+// bytes at the beginning of buf is returned as result.
+pub fn fillBytes(
+    c: Const,
+    dest: []u8,
+) void {
+    mem.set(u8, dest, 0);
+    var i: usize = dest.len;
+    for (c.limbs) |d| {
+        var d2: Limb = d;
+        var j: usize = 0;
+        while (j < @sizeOf(Limb)) : (j += 1) {
+            const b = @truncate(u8, d2);
+            if (i > 0) {
+                i -= 1;
+                dest[i] = b;
+            } else if (b != 0) {
+                @panic("dest buffer too small to fill bytes");
+            }
+            d2 >>= 8;
+        }
+    }
 }
 
 const testing = std.testing;

@@ -93,7 +93,7 @@ const CrtValue = struct {
     // D mod (prime-1).
     exp: math.big.int.Const,
 
-     // R·Coeff ≡ 1 mod Prime.
+    // R·Coeff ≡ 1 mod Prime.
     coeff: math.big.int.Const,
 
     // product of primes prior to this (inc p and q).
@@ -148,8 +148,9 @@ fn signPKCS1v15(
     defer allocator.free(m.limbs);
 
     var c = try decryptAndCheck(priv_key, allocator, m);
-    _ = c;
-    @panic("not implemented yet");
+    defer allocator.free(c.limbs);
+    bigint.fillBytes(c, em);
+    return em;
 }
 
 fn decryptAndCheck(
@@ -158,13 +159,13 @@ fn decryptAndCheck(
     c: math.big.int.Const,
 ) !math.big.int.Const {
     var m = try decrypt(priv_key, allocator, c);
-    _ = m;
+
+    // TODO: implement check
 
     // In order to defend against errors in the CRT computation, m^e is
     // calculated, which should match the original ciphertext.
-    @panic("not implemented yet");
 
-    // return m;
+    return m;
 }
 
 // decrypt performs an RSA decryption, resulting in a plaintext integer.
@@ -173,7 +174,6 @@ fn decrypt(
     allocator: mem.Allocator,
     c: math.big.int.Const,
 ) !math.big.int.Const {
-    _ = allocator;
     // TODO(agl): can we get away with reusing blinds?
     if (c.order(priv_key.public_key.modulus) == .gt) {
         return error.Decryption;
@@ -181,7 +181,13 @@ fn decrypt(
     if (priv_key.public_key.modulus.eqZero()) {
         return error.Decryption;
     }
-    @panic("not implemented yet");
+
+    var m = if (priv_key.precomputed) |_| {
+        @panic("not implemented yet");
+    } else blk: {
+        break :blk try bigint.expConst(allocator, c, priv_key.d, priv_key.public_key.modulus);
+    };
+    return m;
 }
 
 // These are ASN1 DER structures:
