@@ -296,35 +296,35 @@ pub const Name = struct {
         memx.deinitSliceAndElems(AttributeTypeAndValue, self.extra_names, allocator);
     }
 
-    // pub fn format(
-    //     self: Name,
-    //     comptime fmt: []const u8,
-    //     options: std.fmt.FormatOptions,
-    //     writer: anytype,
-    // ) !void {
-    //     _ = fmt;
-    //     _ = options;
+    pub fn format(
+        self: Name,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
 
-    //     _ = try writer.write("Name{ ");
-    //     try formatStringSliceField("country", self.country, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringSliceField("organization", self.organization, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringSliceField("organizational_unit", self.organizational_unit, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringSliceField("locality", self.locality, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringSliceField("province", self.province, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringSliceField("street_address", self.street_address, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringSliceField("postal_code", self.postal_code, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringField("serial_number", self.serial_number, fmt, options, writer);
-    //     _ = try writer.write(", ");
-    //     try formatStringField("common_name", self.common_name, fmt, options, writer);
-    //     _ = try writer.write(" }");
-    // }
+        _ = try writer.write("Name{ ");
+        try formatStringSliceField("country", self.country, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringSliceField("organization", self.organization, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringSliceField("organizational_unit", self.organizational_unit, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringSliceField("locality", self.locality, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringSliceField("province", self.province, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringSliceField("street_address", self.street_address, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringSliceField("postal_code", self.postal_code, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringField("serial_number", self.serial_number, fmt, options, writer);
+        _ = try writer.write(", ");
+        try formatStringField("common_name", self.common_name, fmt, options, writer);
+        _ = try writer.write(" }");
+    }
 };
 
 fn formatStringSliceField(

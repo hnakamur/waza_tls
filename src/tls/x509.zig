@@ -313,31 +313,30 @@ pub const Certificate = struct {
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
     }
 
-    // pub fn format(
-    //     self: Certificate,
-    //     comptime fmt: []const u8,
-    //     options: std.fmt.FormatOptions,
-    //     writer: anytype,
-    // ) !void {
-    //     _ = fmt;
-    //     _ = options;
-    //     _ = try writer.write("Certificate{ ");
-    //     try std.fmt.format(writer, "version = {}", .{self.version});
-    //     try std.fmt.format(writer, ", serial_number = (omitted)", .{});
-    //     // try self.serial_number.format(fmt, options, writer);
-    //     try std.fmt.format(writer, ", signature_algorithm = {}", .{self.signature_algorithm});
-    //     try std.fmt.format(writer, ", issuer = {}", .{self.issuer});
-    //     try std.fmt.format(writer, ", not_before = ", .{});
-    //     try writeUtcTime(&self.not_before, writer);
-    //     try std.fmt.format(writer, ", not_after = ", .{});
-    //     try writeUtcTime(&self.not_after, writer);
-    //     try std.fmt.format(writer, ", subject = {}", .{self.subject});
-    //     try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
-    //     // try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
-    //     try std.fmt.format(writer, ", public_key = (omitted)", .{});
-    //     try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
-    //     _ = try writer.write(" }");
-    // }
+    pub fn format(
+        self: Certificate,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        _ = try writer.write("Certificate{ ");
+        try std.fmt.format(writer, "version = {}", .{self.version});
+        try std.fmt.format(writer, ", serial_number = {}", .{self.serial_number});
+        try std.fmt.format(writer, ", signature_algorithm = {}", .{self.signature_algorithm});
+        try std.fmt.format(writer, ", issuer = {}", .{self.issuer});
+        try std.fmt.format(writer, ", not_before = ", .{});
+        try writeUtcTime(&self.not_before, writer);
+        try std.fmt.format(writer, ", not_after = ", .{});
+        try writeUtcTime(&self.not_after, writer);
+        try std.fmt.format(writer, ", subject = {}", .{self.subject});
+        try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
+        try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
+        try std.fmt.format(writer, ", public_key = (omitted)", .{});
+        try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
+        _ = try writer.write(" }");
+    }
 };
 
 fn parsePublicKey(
@@ -541,5 +540,5 @@ test "Certificate.parse" {
     var serial_str = try cert.serial_number.toStringAlloc(allocator, 10, .lower);
     defer allocator.free(serial_str);
     // try testing.expectEqualStrings("322468385791552616392937435680808374704", serial_str);
-    // std.log.debug("certificate={any}", .{cert});
+    std.log.debug("certificate={any}", .{cert});
 }

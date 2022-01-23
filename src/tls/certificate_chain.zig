@@ -35,6 +35,9 @@ pub const CertificateChain = struct {
         if (self.private_key) |*key| {
             key.deinit(allocator);
         }
+        if (self.leaf) |leaf| {
+            leaf.deinit(allocator);
+        }
     }
 };
 
@@ -78,7 +81,14 @@ pub fn x509KeyPair(
         return error.NotPrivateKey;
     }
 
+    // We don't need to parse the public key for TLS, but we so do anyway
+    // to check that it looks sane and matches the private key.
+
+    // TODO: implement
+
     const private_key = try crypto.PrivateKey.parse(allocator, key_der_block.bytes);
+
+    // TODO: implement
 
     return CertificateChain{
         .certificate_chain = certificate_chain.toOwnedSlice(allocator),
