@@ -93,8 +93,7 @@ pub const BitString = struct {
         allocator.free(self.bytes);
     }
 
-    // rightAlign returns a slice where the padding bits are at the beginning. The
-    // slice may share memory with the BitString.
+    // rightAlign returns a slice where the padding bits are at the beginning.
     pub fn rightAlign(self: *const BitString, allocator: mem.Allocator) ![]const u8 {
         const shift_u4 = @intCast(u4, 8 - self.bit_length % 8);
         if (shift_u4 == 8 or self.bytes.len == 0) {

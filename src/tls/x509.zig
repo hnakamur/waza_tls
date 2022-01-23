@@ -155,6 +155,7 @@ pub const Certificate = struct {
     public_key_algorithm: crypto.PublicKeyAlgorithm,
     public_key: crypto.PublicKey,
     extensions: []pkix.Extension,
+    signature: []const u8 = &[_]u8{},
 
     pub fn parse(allocator: mem.Allocator, der: []const u8) !Certificate {
         var input = asn1.String.init(der);
@@ -295,6 +296,11 @@ pub const Certificate = struct {
             };
         };
         try cert.processExtensions(allocator);
+
+        var signature = try asn1.BitString.read(&input, allocator);
+        defer signature.deinit(allocator);
+        cert.signature = try signature.rightAlign(allocator);
+
         return cert;
     }
 
@@ -311,6 +317,7 @@ pub const Certificate = struct {
         self.subject.deinit(allocator);
         self.public_key.deinit(allocator);
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
+        if (self.signature.len > 0) allocator.free(self.signature);
     }
 
     pub fn format(
@@ -333,8 +340,8 @@ pub const Certificate = struct {
         try std.fmt.format(writer, ", subject = {}", .{self.subject});
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
         try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
-        try std.fmt.format(writer, ", public_key = (omitted)", .{});
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
+        try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
     }
 };
