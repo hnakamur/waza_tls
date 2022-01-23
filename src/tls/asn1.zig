@@ -702,8 +702,41 @@ pub const ObjectIdentifier = struct {
     pub const public_key_ecdsa = initConst(&.{ 1, 2, 840, 10045, 2, 1 });
     pub const public_key_ed25519 = signature_ed25519;
 
+    pub const signature_md2_with_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 2 });
+    pub const signature_md5_with_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 4 });
+    pub const signature_sha1_with_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 5 });
+    pub const signature_sha256_with_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 11 });
+    pub const signature_sha384_with_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 12 });
+    pub const signature_sha512_with_rsa = initConst(&.{ 1, 2, 840, 113549, 1, 1, 13 });
+    pub const signature_dsa_with_sha1 = initConst(&.{ 1, 2, 840, 10040, 4, 3 });
+    pub const signature_dsa_with_sha256 = initConst(&.{ 2, 16, 840, 1, 101, 3, 4, 3, 2 });
+    pub const signature_ecdsa_with_sha1 = initConst(&.{ 1, 2, 840, 10045, 4, 1 });
+    pub const signature_ecdsa_with_sha256 = initConst(&.{ 1, 2, 840, 10045, 4, 3, 2 });
+    pub const signature_ecdsa_with_sha384 = initConst(&.{ 1, 2, 840, 10045, 4, 3, 3 });
+    pub const signature_ecdsa_with_sha512 = initConst(&.{ 1, 2, 840, 10045, 4, 3, 4 });
     pub const signature_rsa_pss = initConst(&.{ 1, 2, 840, 113549, 1, 1, 10 });
     pub const signature_ed25519 = initConst(&.{ 1, 3, 101, 112 });
+
+    // iso_signature_sha1_with_rsa means the same as signature_sha1_with_rsa
+    // but it's specified by ISO. Microsoft's makecert.exe has been known
+    // to produce certificates with this OID.
+    pub const iso_signature_sha1_with_rsa = initConst(&.{ 1, 3, 14, 3, 2, 29 });
+
+    pub const sha256 = initConst(&.{ 2, 16, 840, 1, 101, 3, 4, 2, 1 });
+    pub const sha384 = initConst(&.{ 2, 16, 840, 1, 101, 3, 4, 2, 2 });
+    pub const sha512 = initConst(&.{ 2, 16, 840, 1, 101, 3, 4, 2, 3 });
+
+    pub const extension_subject_key_id = initConst(&.{ 2, 5, 29, 14 });
+    pub const extension_key_usage = initConst(&.{ 2, 5, 29, 15 });
+    pub const extension_extended_key_usage = initConst(&.{ 2, 5, 29, 37 });
+    pub const extension_authority_key_id = initConst(&.{ 2, 5, 29, 35 });
+    pub const extension_basic_constraints = initConst(&.{ 2, 5, 29, 19 });
+    pub const extension_subject_alt_name = initConst(&.{ 2, 5, 29, 17 });
+    pub const extension_certificate_policies = initConst(&.{ 2, 5, 29, 32 });
+    pub const extension_name_constraints = initConst(&.{ 2, 5, 29, 30 });
+    pub const extension_crl_distribution_points = initConst(&.{ 2, 5, 29, 31 });
+    pub const extension_authority_info_access = initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 1, 1 });
+    pub const extension_crl_number = initConst(&.{ 2, 5, 29, 20 });
 
     components: []const u32,
 

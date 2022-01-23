@@ -95,18 +95,107 @@ pub const SignatureAlgorithmDetail = struct {
 };
 
 const signature_algorithm_details = [_]SignatureAlgorithmDetail{
-    // .{.algo = md2_with_rsa, .name = "MD2-RSA", }
     .{
-        .algo = .pure_ed25519,
-        .name = "Ed25519",
-        .oid = oid_signature_ed25519,
-        .pub_key_algo = .ed25519,
+        .algo = .md2_with_rsa,
+        .name = "MD2-RSA",
+        .oid = asn1.ObjectIdentifier.signature_md2_with_rsa,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .md5_with_rsa,
+        .name = "MD5-RSA",
+        .oid = asn1.ObjectIdentifier.signature_md5_with_rsa,
+        .pub_key_algo = .rsa,
     },
     .{
         .algo = .sha1_with_rsa,
         .name = "SHA1-RSA",
-        .oid = oid_signature_sha1_with_rsa,
+        .oid = asn1.ObjectIdentifier.signature_sha1_with_rsa,
         .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha1_with_rsa,
+        .name = "SHA1-RSA",
+        .oid = asn1.ObjectIdentifier.iso_signature_sha1_with_rsa,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha256_with_rsa,
+        .name = "SHA256-RSA",
+        .oid = asn1.ObjectIdentifier.signature_sha256_with_rsa,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha384_with_rsa,
+        .name = "SHA384-RSA",
+        .oid = asn1.ObjectIdentifier.signature_sha384_with_rsa,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha512_with_rsa,
+        .name = "SHA512-RSA",
+        .oid = asn1.ObjectIdentifier.signature_sha512_with_rsa,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha256_with_rsa_pss,
+        .name = "SHA256-RSAPSS",
+        .oid = asn1.ObjectIdentifier.signature_rsa_pss,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha384_with_rsa_pss,
+        .name = "SHA384-RSAPSS",
+        .oid = asn1.ObjectIdentifier.signature_rsa_pss,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .sha512_with_rsa_pss,
+        .name = "SHA512-RSAPSS",
+        .oid = asn1.ObjectIdentifier.signature_rsa_pss,
+        .pub_key_algo = .rsa,
+    },
+    .{
+        .algo = .dsa_with_sha1,
+        .name = "DSA-SHA1",
+        .oid = asn1.ObjectIdentifier.signature_dsa_with_sha1,
+        .pub_key_algo = .dsa,
+    },
+    .{
+        .algo = .dsa_with_sha256,
+        .name = "DSA-SHA256",
+        .oid = asn1.ObjectIdentifier.signature_dsa_with_sha256,
+        .pub_key_algo = .dsa,
+    },
+    .{
+        .algo = .ecdsa_with_sha1,
+        .name = "ECDSA-SHA1",
+        .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha1,
+        .pub_key_algo = .ecdsa,
+    },
+    .{
+        .algo = .ecdsa_with_sha256,
+        .name = "ECDSA-SHA256",
+        .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha256,
+        .pub_key_algo = .ecdsa,
+    },
+    .{
+        .algo = .ecdsa_with_sha384,
+        .name = "ECDSA-SHA384",
+        .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha384,
+        .pub_key_algo = .ecdsa,
+    },
+    .{
+        .algo = .ecdsa_with_sha512,
+        .name = "ECDSA-SHA512",
+        .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha512,
+        .pub_key_algo = .ecdsa,
+    },
+    .{
+        .algo = .pure_ed25519,
+        .name = "Ed25519",
+        .oid = asn1.ObjectIdentifier.signature_ed25519,
+        .pub_key_algo = .ed25519,
     },
 };
 
@@ -156,6 +245,7 @@ pub const Certificate = struct {
     public_key: crypto.PublicKey,
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
+    unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
 
     pub fn parse(allocator: mem.Allocator, der: []const u8) !Certificate {
         var input = asn1.String.init(der);
@@ -217,6 +307,7 @@ pub const Certificate = struct {
         }
         var sig_ai = try pkix.AlgorithmIdentifier.parse(allocator, &sig_ai_seq);
         defer sig_ai.deinit(allocator);
+        std.log.debug("sig_ai={}", .{sig_ai});
         const signature_algorithm = try SignatureAlgorithm.fromAlgorithmIdentifier(&sig_ai);
 
         var issuer_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedIssuer;
@@ -273,6 +364,7 @@ pub const Certificate = struct {
                                 return error.MalformedExtension;
                             var ext = try pkix.Extension.parse(&extension_der, allocator);
                             try extensions.append(allocator, ext);
+                            std.log.debug("extension appended, ext={}", .{ext});
                         }
                     }
                 }
@@ -305,9 +397,42 @@ pub const Certificate = struct {
     }
 
     fn processExtensions(self: *Certificate, allocator: mem.Allocator) !void {
-        _ = self;
-        _ = allocator;
-        // TODO: implement
+        var unhandled_critical_extensions = std.ArrayListUnmanaged(*const pkix.Extension){};
+
+        for (self.extensions) |*ext| {
+            std.log.debug("Certificate.processExtensions oid={}", .{ext.id});
+            var unhandled = false;
+            if (ext.id.components.len == 4 and
+                mem.startsWith(u32, ext.id.components, &[_]u32{ 2, 5, 29 }))
+            {
+                switch (ext.id.components[3]) {
+                    15 => {},
+                    19 => {},
+                    17 => {},
+                    30 => {},
+                    31 => {},
+                    35 => {},
+                    37 => {},
+                    14 => {},
+                    32 => {},
+                    else => unhandled = true,
+                }
+            } else if (ext.id.eql(asn1.ObjectIdentifier.extension_authority_info_access)) {
+                // RFC 5280 4.2.2.1: Authority Information Access
+            } else {
+                // Unknown extensions are recorded if critical.
+                unhandled = true;
+            }
+
+            if (ext.critical and unhandled) {
+                try unhandled_critical_extensions.append(allocator, ext);
+            }
+        }
+        if (unhandled_critical_extensions.items.len > 0) {
+            self.unhandled_critical_extensions = unhandled_critical_extensions.toOwnedSlice(
+                allocator,
+            );
+        }
     }
 
     pub fn deinit(self: *Certificate, allocator: mem.Allocator) void {
@@ -318,6 +443,9 @@ pub const Certificate = struct {
         self.public_key.deinit(allocator);
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
+        if (self.unhandled_critical_extensions.len > 0) {
+            allocator.free(self.unhandled_critical_extensions);
+        }
     }
 
     pub fn format(
@@ -487,7 +615,10 @@ pub fn parseAsn1String(allocator: mem.Allocator, tag: asn1.TagAndClass, value: [
             return try allocator.dupe(u8, value);
         },
         // TODO: implement
-        else => return error.UnsupportedStringType,
+        else => {
+            std.log.err("Unsupported asn1 string type, tag={}", .{tag});
+            return error.UnsupportedStringType;
+        },
     }
 }
 
@@ -539,8 +670,9 @@ test "Certificate.parse" {
     const allocator = testing.allocator;
     // const test_rsa_pss_certificate = "\x30\x82\x02\x58\x30\x82\x01\x8d\xa0\x03\x02\x01\x02\x02\x11\x00\xf2\x99\x26\xeb\x87\xea\x8a\x0d\xb9\xfc\xc2\x47\x34\x7c\x11\xb0\x30\x41\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0a\x30\x34\xa0\x0f\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa1\x1c\x30\x1a\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x08\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa2\x03\x02\x01\x20\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x1e\x17\x0d\x31\x37\x31\x31\x32\x33\x31\x36\x31\x36\x31\x30\x5a\x17\x0d\x31\x38\x31\x31\x32\x33\x31\x36\x31\x36\x31\x30\x5a\x30\x12\x31\x10\x30\x0e\x06\x03\x55\x04\x0a\x13\x07\x41\x63\x6d\x65\x20\x43\x6f\x30\x81\x9f\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00\x03\x81\x8d\x00\x30\x81\x89\x02\x81\x81\x00\xdb\x46\x7d\x93\x2e\x12\x27\x06\x48\xbc\x06\x28\x21\xab\x7e\xc4\xb6\xa2\x5d\xfe\x1e\x52\x45\x88\x7a\x36\x47\xa5\x08\x0d\x92\x42\x5b\xc2\x81\xc0\xbe\x97\x79\x98\x40\xfb\x4f\x6d\x14\xfd\x2b\x13\x8b\xc2\xa5\x2e\x67\xd8\xd4\x09\x9e\xd6\x22\x38\xb7\x4a\x0b\x74\x73\x2b\xc2\x34\xf1\xd1\x93\xe5\x96\xd9\x74\x7b\xf3\x58\x9f\x6c\x61\x3c\xc0\xb0\x41\xd4\xd9\x2b\x2b\x24\x23\x77\x5b\x1c\x3b\xbd\x75\x5d\xce\x20\x54\xcf\xa1\x63\x87\x1d\x1e\x24\xc4\xf3\x1d\x1a\x50\x8b\xaa\xb6\x14\x43\xed\x97\xa7\x75\x62\xf4\x14\xc8\x52\xd7\x02\x03\x01\x00\x01\xa3\x46\x30\x44\x30\x0e\x06\x03\x55\x1d\x0f\x01\x01\xff\x04\x04\x03\x02\x05\xa0\x30\x13\x06\x03\x55\x1d\x25\x04\x0c\x30\x0a\x06\x08\x2b\x06\x01\x05\x05\x07\x03\x01\x30\x0c\x06\x03\x55\x1d\x13\x01\x01\xff\x04\x02\x30\x00\x30\x0f\x06\x03\x55\x1d\x11\x04\x08\x30\x06\x87\x04\x7f\x00\x00\x01\x30\x41\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0a\x30\x34\xa0\x0f\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa1\x1c\x30\x1a\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x08\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\xa2\x03\x02\x01\x20\x03\x81\x81\x00\xcd\xac\x4e\xf2\xce\x5f\x8d\x79\x88\x10\x42\x70\x7f\x7c\xbf\x1b\x5a\x8a\x00\xef\x19\x15\x4b\x40\x15\x17\x71\x00\x6c\xd4\x16\x26\xe5\x49\x6d\x56\xda\x0c\x1a\x13\x9f\xd8\x46\x95\x59\x3c\xb6\x7f\x87\x76\x5e\x18\xaa\x03\xea\x06\x75\x22\xdd\x78\xd2\xa5\x89\xb8\xc9\x23\x64\xe1\x28\x38\xce\x34\x6c\x6e\x06\x7b\x51\xf1\xa7\xe6\xf4\xb3\x7f\xfa\xb1\x3f\x14\x11\x89\x66\x79\xd1\x8e\x88\x0e\x0b\xa0\x9e\x30\x2a\xc0\x67\xef\xca\x46\x02\x88\xe9\x53\x81\x22\x69\x22\x97\xad\x80\x93\xd4\xf7\xdd\x70\x14\x24\xd7\x70\x0a\x46\xa1";
     // var cert = try Certificate.parse(allocator, test_rsa_pss_certificate);
-    const github_der = @embedFile("../../tests/github.der");
-    var cert = try Certificate.parse(allocator, github_der);
+    // const der = @embedFile("../../tests/google.com.crt.der");
+    const der = @embedFile("../../tests/github.der");
+    var cert = try Certificate.parse(allocator, der);
     defer cert.deinit(allocator);
     try testing.expectEqual(@as(i64, 3), cert.version);
 
