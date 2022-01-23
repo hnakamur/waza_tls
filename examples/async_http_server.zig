@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const mem = std.mem;
 const net = std.net;
 const os = std.os;
@@ -85,7 +86,7 @@ const ClientHandler = struct {
                     // TODO: implement
                     unreachable;
                 }
-            } else |err| {
+            } else |_| {
                 // TODO: implement
                 unreachable;
             }
@@ -98,9 +99,9 @@ const ClientHandler = struct {
             self,
             send_callback,
             &self.completion,
-            self.sock,
+            sock,
             buffer,
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+            if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0,
         );
         suspend {
             self.frame = @frame();
@@ -112,6 +113,7 @@ const ClientHandler = struct {
         completion: *IO.Completion,
         result: IO.SendError!usize,
     ) void {
+        _ = completion;
         self.send_result = result;
         resume self.frame;
     }
@@ -122,9 +124,9 @@ const ClientHandler = struct {
             self,
             recv_callback,
             &self.completion,
-            self.sock,
+            sock,
             buffer,
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+            if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0,
         );
         suspend {
             self.frame = @frame();
@@ -136,6 +138,7 @@ const ClientHandler = struct {
         completion: *IO.Completion,
         result: IO.RecvError!usize,
     ) void {
+        _ = completion;
         self.recv_result = result;
         resume self.frame;
     }
@@ -146,7 +149,7 @@ const ClientHandler = struct {
             self,
             close_callback,
             &self.completion,
-            self.sock,
+            sock,
         );
         suspend {
             self.frame = @frame();
@@ -158,6 +161,7 @@ const ClientHandler = struct {
         completion: *IO.Completion,
         result: IO.CloseError!void,
     ) void {
+        _ = completion;
         self.close_result = result;
         resume self.frame;
     }
@@ -180,6 +184,7 @@ const ClientHandler = struct {
         completion: *IO.Completion,
         result: IO.TimeoutError!void,
     ) void {
+        _ = completion;
         self.timeout_result = result;
         resume self.frame;
     }
@@ -195,12 +200,12 @@ const Server = struct {
 
     fn init(allocator: mem.Allocator, address: std.net.Address) !Server {
         const kernel_backlog = 513;
-        const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+        const server = try os.socket(address.any.family, os.SOCK.STREAM | os.SOCK.CLOEXEC, 0);
 
         try os.setsockopt(
             server,
-            os.SOL_SOCKET,
-            os.SO_REUSEADDR,
+            os.SOL.SOCKET,
+            os.SO.REUSEADDR,
             &std.mem.toBytes(@as(c_int, 1)),
         );
         try os.bind(server, &address.any, address.getOsSockLen());
@@ -244,6 +249,7 @@ const Server = struct {
         completion: *IO.Completion,
         result: IO.AcceptError!os.socket_t,
     ) void {
+        _ = completion;
         self.accept_result = result;
         resume self.frame;
     }

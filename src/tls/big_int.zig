@@ -16,9 +16,9 @@ const bits = @import("bits.zig");
 const big_zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
 const big_one = Const{ .limbs = &[_]Limb{1}, .positive = true };
 
-// setBytes interprets buf as the bytes of a big-endian unsigned
+// constFromBytes interprets buf as the bytes of a big-endian unsigned
 // integer, sets z to that value, and returns z.
-pub fn bigIntConstFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
+pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
     var limbs = try allocator.alloc(Limb, try math.divCeil(usize, buf.len, @sizeOf(Limb)));
     errdefer allocator.free(limbs);
 
@@ -130,9 +130,11 @@ test "modInverseConst" {
             try inverse_m.mul(inverse_c, element_m.toConst());
             try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
             if (!inverse_m.toConst().eq(big_one)) {
+                var inverse_s = try inverse_m.toString(allocator, 10, .lower);
+                defer allocator.free(inverse_s);
                 std.debug.print(
-                    "modInverseConst({}, {}) * {} % {} = {}, not 1\n",
-                    .{ element_m, modulus_m, element_m, modulus_m, inverse_m },
+                    "modInverseConst({s}, {s}) * {s} % {s} = {s}, not 1\n",
+                    .{ element, modulus, element, modulus, inverse_s },
                 );
                 return error.TestExpectedError;
             }
@@ -212,7 +214,9 @@ test "gcdManaged" {
                 defer got_d.deinit();
                 try gcdManaged(&got_d, null, null, big_a, big_b);
                 if (!got_d.eq(want_d)) {
-                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
                     return error.TestExpectedError;
                 }
             }
@@ -223,11 +227,15 @@ test "gcdManaged" {
                 defer got_x.deinit();
                 try gcdManaged(&got_d, &got_x, null, big_a, big_b);
                 if (!got_d.eq(want_d)) {
-                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
                     return error.TestExpectedError;
                 }
                 if (!got_x.eq(want_x)) {
-                    std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
+                    var got_x_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_x_s);
+                    std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
                     return error.TestExpectedError;
                 }
             }
@@ -238,11 +246,15 @@ test "gcdManaged" {
                 defer got_y.deinit();
                 try gcdManaged(&got_d, null, &got_y, big_a, big_b);
                 if (!got_d.eq(want_d)) {
-                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
                     return error.TestExpectedError;
                 }
                 if (!got_y.eq(want_y)) {
-                    std.debug.print("gcd y mismatch, got={}, want={}\n", .{ got_y, want_y });
+                    var got_y_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_y_s);
+                    std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
                     return error.TestExpectedError;
                 }
             }
@@ -255,19 +267,21 @@ test "gcdManaged" {
                 defer got_y.deinit();
                 try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
                 if (!got_d.eq(want_d)) {
-                    std.debug.print("gcd d mismatch, got={}, want={}\n", .{ got_d, want_d });
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
                     return error.TestExpectedError;
                 }
                 if (!got_x.eq(want_x)) {
-                    std.debug.print("gcd x mismatch, got={}, want={}\n", .{ got_x, want_x });
+                    var got_x_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_x_s);
+                    std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
                     return error.TestExpectedError;
                 }
                 if (!got_y.eq(want_y)) {
-                    std.debug.print("gcd y mismatch, got={}, want={}\n", .{ got_y, want_y });
-                    std.debug.print(
-                        "gcd y mismatch, got.limbs={any}, got.metadata={x}, want.limbs={any}, want.metadata={x}\n",
-                        .{ got_y.limbs, got_y.metadata, want_y.limbs, want_y.metadata },
-                    );
+                    var got_y_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_y_s);
+                    std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
                     return error.TestExpectedError;
                 }
             }
@@ -1152,17 +1166,17 @@ test "std.Const const" {
 
 test "std.Const zero" {
     const allocator = testing.allocator;
-    var zero = (try std.Managed.initSet(allocator, 0)).toConst();
+    var zero = (try Managed.initSet(allocator, 0)).toConst();
     defer allocator.free(zero.limbs);
-    try testing.expectEqualSlices(std.Limb, &[_]std.Limb{0}, zero.limbs);
+    try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero.limbs);
     try testing.expect(zero.positive);
 }
 
-test "bigIntConstFromBytes" {
+test "constFromBytes" {
     testing.log_level = .debug;
     const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
     const allocator = testing.allocator;
-    var i = try bigIntConstFromBytes(allocator, buf);
+    var i = try constFromBytes(allocator, buf);
     defer allocator.free(i.limbs);
 
     var s = try i.toStringAlloc(allocator, 10, .lower);

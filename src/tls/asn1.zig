@@ -1589,24 +1589,26 @@ test "readAsn1BigInt" {
         fn f(want_str: anyerror![]const u8, input: []const u8) !void {
             const allocator = testing.allocator;
             var s = String.init(input);
-            if (want_str) |str| {
-                var want = blk: {
-                    var m = try math.big.int.Managed.init(allocator);
-                    errdefer m.deinit();
-                    try m.setString(10, str);
-                    break :blk m.toConst();
-                };
-                defer allocator.free(want.limbs);
+            if (want_str) |w_str| {
                 var got = try s.readAsn1BigInt(allocator);
                 defer allocator.free(got.limbs);
-                if (!want.eq(got)) {
-                    std.debug.print("input={}, want_str={s}, want={}, got={}\n", .{
-                        fmtx.fmtSliceHexEscapeLower(input), str, want, got,
+                var got_str = try got.toStringAlloc(allocator, 10, .lower);
+                defer allocator.free(got_str);
+                if (!mem.eql(u8, w_str, got_str)) {
+                    std.debug.print("input={}, want={s}, got={s}\n", .{
+                        fmtx.fmtSliceHexEscapeLower(input), w_str, got_str,
                     });
                 }
-                try testing.expect(want.eq(got));
+                try testing.expectEqualStrings(w_str, got_str);
             } else |err| {
-                try testing.expectError(err, s.readAsn1Int64());
+                if (s.readAsn1BigInt(allocator)) |got| {
+                    var got_str = try got.toStringAlloc(allocator, 10, .lower);
+                    defer allocator.free(got_str);
+                    std.debug.print("input={}, want error {}, got={s}\n", .{
+                        fmtx.fmtSliceHexEscapeLower(input), err, got_str,
+                    });
+                    return error.TestExpectedError;
+                } else |_| {}
             }
         }
     }.f;
@@ -1634,24 +1636,26 @@ test "parseBigInt" {
             var t: TagAndLength = undefined;
             var offset = try TagAndLength.parse(input, 0, &t);
             const inner_der = input[offset .. offset + t.length];
-            if (want_str) |str| {
+            if (want_str) |w_str| {
                 var got = try parseBigInt(allocator, inner_der);
                 defer allocator.free(got.limbs);
-                var want = blk: {
-                    var m = try math.big.int.Managed.init(allocator);
-                    errdefer m.deinit();
-                    try m.setString(10, str);
-                    break :blk m.toConst();
-                };
-                defer allocator.free(want.limbs);
-                if (!want.eq(got)) {
-                    std.debug.print("input={}, want_str={s}, want={}, got={}\n", .{
-                        fmtx.fmtSliceHexEscapeLower(input), str, want, got,
+                var got_str = try got.toStringAlloc(allocator, 10, .lower);
+                defer allocator.free(got_str);
+                if (!mem.eql(u8, w_str, got_str)) {
+                    std.debug.print("input={}, want={s}, got={s}\n", .{
+                        fmtx.fmtSliceHexEscapeLower(input), w_str, got_str,
                     });
                 }
-                try testing.expect(want.eq(got));
+                try testing.expectEqualStrings(w_str, got_str);
             } else |err| {
-                try testing.expectError(err, parseBigInt(allocator, inner_der));
+                if (parseBigInt(allocator, inner_der)) |got| {
+                    var got_str = try got.toStringAlloc(allocator, 10, .lower);
+                    defer allocator.free(got_str);
+                    std.debug.print("input={}, want error {}, got={s}\n", .{
+                        fmtx.fmtSliceHexEscapeLower(input), err, got_str,
+                    });
+                    return error.TestExpectedError;
+                } else |_| {}
             }
         }
     }.f;

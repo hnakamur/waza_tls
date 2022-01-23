@@ -56,10 +56,10 @@ pub fn main() !void {
     );
     defer proxy.deinit();
 
-    os.sigaction(os.SIGINT, &.{
+    os.sigaction(os.SIG.INT, &.{
         .handler = .{ .handler = sigchld },
         .mask = os.system.empty_sigset,
-        .flags = os.system.SA_NOCLDSTOP,
+        .flags = os.system.SA.NOCLDSTOP,
     }, null);
 
     try proxy.server.start();

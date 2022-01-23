@@ -121,7 +121,7 @@ fn HashAdapter(comptime HashImpl: type) type {
 const testing = std.testing;
 
 test "Hash.Sha256" {
-    var h = Hash{ .Sha256 = Sha256Hash.init(.{}) };
+    var h = Hash{ .sha256 = Sha256Hash.init(.{}) };
     h.update("hello");
     const digest_len = Sha256Hash.digest_length;
     var out: [digest_len]u8 = undefined;
@@ -130,7 +130,7 @@ test "Hash.Sha256" {
     try testing.expectEqual(digest_len, bytes_written);
     std.log.debug("Sha256Hash hash={}\n", .{std.fmt.fmtSliceHexLower(&out)});
 
-    var h2 = Hash{ .Sha256 = Sha256Hash.init(.{}) };
+    var h2 = Hash{ .sha256 = Sha256Hash.init(.{}) };
     h2.update("hello");
     var out2 = [_]u8{0} ** (digest_len + 4);
     const bytes_written2 = h2.finalToSlice(&out2);
@@ -139,7 +139,7 @@ test "Hash.Sha256" {
 }
 
 test "Hash.Sha384" {
-    var h = Hash{ .Sha384 = Sha384Hash.init(.{}) };
+    var h = Hash{ .sha384 = Sha384Hash.init(.{}) };
     h.update("hello");
     const digest_len = Sha384Hash.digest_length;
     var out: [digest_len]u8 = undefined;

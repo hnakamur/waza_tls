@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const mem = std.mem;
 const net = std.net;
 const os = std.os;
@@ -21,7 +22,7 @@ const Client = struct {
     done: bool = false,
 
     fn init(allocator: mem.Allocator, address: std.net.Address) !Client {
-        const sock = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+        const sock = try os.socket(address.any.family, os.SOCK.STREAM | os.SOCK.CLOEXEC, 0);
         const send_buf = try allocator.alloc(u8, 8192);
         const recv_buf = try allocator.alloc(u8, 8192);
 
@@ -55,7 +56,7 @@ const Client = struct {
         _ = try self.send(self.sock, fbs.getWritten());
 
         const received = try self.recv(self.sock, self.recv_buf);
-        std.debug.warn("response={s}", .{self.recv_buf[0..received]});
+        std.log.warn("response={s}", .{self.recv_buf[0..received]});
 
         try self.close(self.sock);
         self.done = true;
@@ -77,6 +78,7 @@ const Client = struct {
         completion: *IO.Completion,
         result: IO.ConnectError!void,
     ) void {
+        _ = completion;
         self.connect_result = result;
         resume self.frame;
     }
@@ -87,9 +89,9 @@ const Client = struct {
             self,
             send_callback,
             &self.completion,
-            self.sock,
+            sock,
             buffer,
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+            if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0,
         );
         suspend {
             self.frame = @frame();
@@ -101,6 +103,7 @@ const Client = struct {
         completion: *IO.Completion,
         result: IO.SendError!usize,
     ) void {
+        _ = completion;
         self.send_result = result;
         resume self.frame;
     }
@@ -111,9 +114,9 @@ const Client = struct {
             self,
             recv_callback,
             &self.completion,
-            self.sock,
+            sock,
             buffer,
-            if (std.Target.current.os.tag == .linux) os.MSG_NOSIGNAL else 0,
+            if (builtin.target.os.tag == .linux) os.MSG.NOSIGNAL else 0,
         );
         suspend {
             self.frame = @frame();
@@ -125,6 +128,7 @@ const Client = struct {
         completion: *IO.Completion,
         result: IO.RecvError!usize,
     ) void {
+        _ = completion;
         self.recv_result = result;
         resume self.frame;
     }
@@ -135,7 +139,7 @@ const Client = struct {
             self,
             close_callback,
             &self.completion,
-            self.sock,
+            sock,
         );
         suspend {
             self.frame = @frame();
@@ -147,6 +151,7 @@ const Client = struct {
         completion: *IO.Completion,
         result: IO.CloseError!void,
     ) void {
+        _ = completion;
         self.close_result = result;
         resume self.frame;
     }

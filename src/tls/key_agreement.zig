@@ -176,7 +176,7 @@ pub const EcdheKeyAgreement = struct {
 
         const private_key = cert_chain.private_key.?;
         var sign_opts = SignOpts{ .hash_type = sig_hash_type };
-        var sig = private_key.sign(allocator, signed, sign_opts);
+        var sig = try private_key.sign(allocator, signed, sign_opts);
         defer allocator.free(sig);
 
         const sig_and_hash_len: usize = if (v1_2_or_later) 2 else 0;

@@ -18,12 +18,12 @@ const Server = struct {
 
     fn init(allocator: mem.Allocator, address: std.net.Address) !Server {
         const kernel_backlog = 513;
-        const server = try os.socket(address.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+        const server = try os.socket(address.any.family, os.SOCK.STREAM | os.SOCK.CLOEXEC, 0);
 
         try os.setsockopt(
             server,
-            os.SOL_SOCKET,
-            os.SO_REUSEADDR,
+            os.SOL.SOCKET,
+            os.SO.REUSEADDR,
             &std.mem.toBytes(@as(c_int, 1)),
         );
         try os.bind(server, &address.any, address.getOsSockLen());
@@ -217,6 +217,7 @@ const ClientHandler = struct {
         completion: *IO.LinkedCompletion,
         result: IO.RecvError!usize,
     ) void {
+        _ = completion;
         if (result) |received| {
             // std.debug.print("received={d}\n", .{received});
 
@@ -254,12 +255,12 @@ const ClientHandler = struct {
                             // });
                             if (req.isKeepAlive()) |keep_alive| {
                                 self.keep_alive = keep_alive;
-                            } else |err| {
+                            } else |_| {
                                 self.sendError(.http_version_not_supported);
                                 return;
                             }
                             self.request_version = req.version;
-                            self.req_content_length = if (req.headers.getContentLength()) |len| len else |err| {
+                            self.req_content_length = if (req.headers.getContentLength()) |len| len else |_| {
                                 // std.debug.print("bad request, invalid content-length, err={s}\n", .{@errorName(err)});
                                 self.sendError(.bad_request);
                                 return;
@@ -286,7 +287,7 @@ const ClientHandler = struct {
                                     return;
                                 }
                             }
-                        } else |err| {
+                        } else |_| {
                             self.sendError(.bad_request);
                             return;
                         }
@@ -425,6 +426,7 @@ const ClientHandler = struct {
         completion: *IO.LinkedCompletion,
         result: IO.SendError!usize,
     ) void {
+        _ = completion;
         if (result) |sent| {
             // std.debug.print("sent response bytes={d}\n", .{sent});
             self.send_buf_sent_len += sent;
@@ -535,10 +537,10 @@ pub fn main() anyerror!void {
     const port = getEnvUint(u16, "PORT", port_default, port_max);
     const address = try std.net.Address.parseIp4("127.0.0.1", port);
     global_server = try Server.init(allocator, address);
-    os.sigaction(os.SIGINT, &.{
+    os.sigaction(os.SIG.INT, &.{
         .handler = .{ .handler = sigchld },
         .mask = os.system.empty_sigset,
-        .flags = os.system.SA_NOCLDSTOP,
+        .flags = os.system.SA.NOCLDSTOP,
     }, null);
     defer global_server.deinit();
     try global_server.run();

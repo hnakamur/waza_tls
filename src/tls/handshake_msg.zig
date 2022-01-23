@@ -1499,12 +1499,12 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
     errdefer allocator.free(supported_points);
     const supported_signature_algorithms = try allocator.dupe(
         SignatureScheme,
-        &[_]SignatureScheme{.Pkcs1WithSha256},
+        &[_]SignatureScheme{.pkcs1_with_sha256},
     );
     errdefer allocator.free(supported_signature_algorithms);
     const supported_signature_algorithms_cert = try allocator.dupe(
         SignatureScheme,
-        &[_]SignatureScheme{.Pkcs1WithSha256},
+        &[_]SignatureScheme{.pkcs1_with_sha256},
     );
     errdefer allocator.free(supported_signature_algorithms_cert);
     const alpn_protocols = try allocator.dupe(

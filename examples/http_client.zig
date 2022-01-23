@@ -65,7 +65,7 @@ const Client = struct {
     }
 
     fn connect(self: *Self, addr: std.net.Address) !void {
-        self.socket = try os.socket(addr.any.family, os.SOCK_STREAM | os.SOCK_CLOEXEC, 0);
+        self.socket = try os.socket(addr.any.family, os.SOCK.STREAM | os.SOCK.CLOEXEC, 0);
 
         self.io.connectWithTimeout(
             *Self,
@@ -82,6 +82,7 @@ const Client = struct {
         comp: *IO.LinkedCompletion,
         result: IO.ConnectError!void,
     ) void {
+        _ = comp;
         if (result) |_| {
             self.state = .SendingHeaders;
             var fbs = std.io.fixedBufferStream(self.send_buf);
@@ -137,6 +138,7 @@ const Client = struct {
         comp: *IO.LinkedCompletion,
         result: IO.SendError!usize,
     ) void {
+        _ = comp;
         std.debug.print("MyContext.sendCallback, result={}\n", .{result});
         if (result) |sent| {
             self.send_buf_sent_len += @intCast(u32, sent);
@@ -233,6 +235,7 @@ const Client = struct {
         comp: *IO.LinkedCompletion,
         result: IO.RecvError!usize,
     ) void {
+        _ = comp;
         // std.debug.print("MyContext.recvCallback, result={}\n", .{result});
         if (result) |received| {
             if (received == 0) {

@@ -4,7 +4,7 @@ const mem = std.mem;
 const memx = @import("../memx.zig");
 const HashType = @import("auth.zig").HashType;
 const SignOpts = @import("crypto.zig").SignOpts;
-const bigIntConstFromBytes = @import("big_int.zig").bigIntConstFromBytes;
+const bigint = @import("big_int.zig");
 
 pub const PublicKey = struct {
     modulus: math.big.int.Const,
@@ -31,6 +31,10 @@ pub const PrivateKey = struct {
     // prime factors of N, has >= 2 elements.
     primes: []math.big.int.Const,
 
+    // Precomputed contains precomputed values that speed up private
+    // operations, if available.
+    precomputed: ?PrecomputedValues = null,
+
     pub fn deinit(self: *PrivateKey, allocator: mem.Allocator) void {
         self.public_key.deinit(allocator);
         allocator.free(self.d.limbs);
@@ -38,6 +42,9 @@ pub const PrivateKey = struct {
             allocator.free(prime.limbs);
         }
         allocator.free(self.primes);
+        if (self.precomputed) |*precomputed| {
+            precomputed.deinit(allocator);
+        }
     }
 
     // Sign signs digest with priv, reading randomness from rand. If opts is a
@@ -56,6 +63,46 @@ pub const PrivateKey = struct {
     ) ![]const u8 {
         // TODO: handle PSSOptions case
         return try signPKCS1v15(self, allocator, opts.hash_type, digest);
+    }
+};
+
+const PrecomputedValues = struct {
+    // D mod (P-1) (or mod Q-1)
+    dp: math.big.int.Const,
+    dq: math.big.int.Const,
+
+    // Q^-1 mod P
+    qinv: math.big.int.Const,
+
+    // CRTValues is used for the 3rd and subsequent primes. Due to a
+    // historical accident, the CRT for the first two primes is handled
+    // differently in PKCS #1 and interoperability is sufficiently
+    // important that we mirror this.
+    crt_values: []CrtValue = &[_]CrtValue{},
+
+    pub fn deinit(self: *PrecomputedValues, allocator: mem.Allocator) void {
+        allocator.free(self.dp.limbs);
+        allocator.free(self.dq.limbs);
+        allocator.free(self.qinv.limbs);
+        memx.deinitSliceAndElems(CrtValue, self.crt_values, allocator);
+    }
+};
+
+// CRTValue contains the precomputed Chinese remainder theorem values.
+const CrtValue = struct {
+    // D mod (prime-1).
+    exp: math.big.int.Const,
+
+     // R·Coeff ≡ 1 mod Prime.
+    coeff: math.big.int.Const,
+
+    // product of primes prior to this (inc p and q).
+    r: math.big.int.Const,
+
+    pub fn deinit(self: *CrtValue, allocator: mem.Allocator) void {
+        allocator.free(self.exp.limbs);
+        allocator.free(self.coeff.limbs);
+        allocator.free(self.r.limbs);
     }
 };
 
@@ -79,7 +126,7 @@ fn signPKCS1v15(
     digest: []const u8,
 ) ![]const u8 {
     var hash_len: usize = undefined;
-    const prefix = try pcks1v15HashInfo(hash_type, digest.len);
+    const prefix = try pcks1v15HashInfo(hash_type, digest.len, &hash_len);
 
     const t_len = prefix.len + hash_len;
     const k = priv_key.public_key.size();
@@ -97,23 +144,36 @@ fn signPKCS1v15(
     mem.copy(u8, em[k - t_len .. k - hash_len], prefix);
     mem.copy(u8, em[k - hash_len .. k], digest);
 
-    var m = try bigIntConstFromBytes(allocator, em);
-    defer allocator.free(m);
-}
+    var m = try bigint.constFromBytes(allocator, em);
+    defer allocator.free(m.limbs);
 
-fn decryptAndCheck(
-    allocator: mem.Allocator,
-    priv_key: *const PrivateKey,
-    c: *const math.big.int.Const,
-) !math.big.Int {
-    _ = allocator;
-    _ = priv_key;
+    var c = try decryptAndCheck(priv_key, allocator, m);
     _ = c;
     @panic("not implemented yet");
 }
 
+fn decryptAndCheck(
+    priv_key: *const PrivateKey,
+    allocator: mem.Allocator,
+    c: math.big.int.Const,
+) !math.big.int.Const {
+    var m = try decrypt(priv_key, allocator, c);
+    _ = m;
+
+    // In order to defend against errors in the CRT computation, m^e is
+    // calculated, which should match the original ciphertext.
+    @panic("not implemented yet");
+
+    // return m;
+}
+
 // decrypt performs an RSA decryption, resulting in a plaintext integer.
-fn decrypt(priv_key: *const PrivateKey, c: *const math.big.int.Const) !math.big.Int {
+fn decrypt(
+    priv_key: *const PrivateKey,
+    allocator: mem.Allocator,
+    c: math.big.int.Const,
+) !math.big.int.Const {
+    _ = allocator;
     // TODO(agl): can we get away with reusing blinds?
     if (c.order(priv_key.public_key.modulus) == .gt) {
         return error.Decryption;
@@ -121,6 +181,7 @@ fn decrypt(priv_key: *const PrivateKey, c: *const math.big.int.Const) !math.big.
     if (priv_key.public_key.modulus.eqZero()) {
         return error.Decryption;
     }
+    @panic("not implemented yet");
 }
 
 // These are ASN1 DER structures:
