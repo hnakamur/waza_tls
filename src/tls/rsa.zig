@@ -160,11 +160,13 @@ fn decryptAndCheck(
 ) !math.big.int.Const {
     var m = try decrypt(priv_key, allocator, c);
 
-    // TODO: implement check
-
     // In order to defend against errors in the CRT computation, m^e is
     // calculated, which should match the original ciphertext.
-
+    var check = try encrypt(allocator, &priv_key.public_key, m);
+    defer bigint.deinitConst(check, allocator);
+    if (!c.eq(check)) {
+        return error.RsaInternalError;
+    }
     return m;
 }
 
@@ -189,6 +191,17 @@ fn decrypt(
     };
     return m;
 }
+
+fn encrypt(
+    allocator: mem.Allocator,
+    public_key: *const PublicKey,
+    m: math.big.int.Const,
+)!math.big.int.Const {
+    var e = try math.big.int.Managed.initSet(allocator, public_key.exponent);
+    defer e.deinit();
+    return try bigint.expConst(allocator, m, e.toConst(), public_key.modulus);
+}
+
 
 // These are ASN1 DER structures:
 //   DigestInfo ::= SEQUENCE {

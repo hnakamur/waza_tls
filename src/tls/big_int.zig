@@ -72,6 +72,10 @@ pub fn expConst(
     return z.toConst();
 }
 
+pub fn deinitConst(c: Const, allocator: mem.Allocator) void {
+    allocator.free(c.limbs);
+}
+
 // modInverseConst returns the multiplicative inverse of g in the ring ℤ/nℤ.
 // If g and n are not relatively prime, g has no multiplicative
 // inverse in the ring ℤ/nℤ.  In this case, returns a zero.
