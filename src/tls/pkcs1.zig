@@ -4,6 +4,7 @@ const mem = std.mem;
 const asn1 = @import("asn1.zig");
 const memx = @import("../memx.zig");
 const rsa = @import("rsa.zig");
+const bigint = @import("big_int.zig");
 
 // Pkcs1PrivateKey is a structure which mirrors the PKCS #1 ASN.1 for an RSA private key.
 const Pkcs1PrivateKey = struct {
@@ -27,18 +28,18 @@ const Pkcs1PrivateKey = struct {
             const version = try s.readAsn1Uint64();
 
             var n = try s.readAsn1BigInt(allocator);
-            errdefer allocator.free(n.limbs);
+            errdefer bigint.deinitConst(n, allocator);
 
             const e = try s.readAsn1Uint64();
 
             var d = try s.readAsn1BigInt(allocator);
-            errdefer allocator.free(d.limbs);
+            errdefer bigint.deinitConst(d, allocator);
 
             var p = try s.readAsn1BigInt(allocator);
-            errdefer allocator.free(p.limbs);
+            errdefer bigint.deinitConst(p, allocator);
 
             var q = try s.readAsn1BigInt(allocator);
-            errdefer allocator.free(q.limbs);
+            errdefer bigint.deinitConst(q, allocator);
 
             break :blk Pkcs1PrivateKey{
                 .version = version,
@@ -80,9 +81,9 @@ const Pkcs1PrivateKey = struct {
         allocator.free(self.d.limbs);
         allocator.free(self.p.limbs);
         allocator.free(self.q.limbs);
-        if (self.dp) |*dp| allocator.free(dp.limbs);
-        if (self.dq) |*dq| allocator.free(dq.limbs);
-        if (self.qinv) |*qinv| allocator.free(qinv.limbs);
+        if (self.dp) |dp| bigint.deinitConst(dp, allocator);
+        if (self.dq) |dq| bigint.deinitConst(dq, allocator);
+        if (self.qinv) |qinv| bigint.deinitConst(qinv, allocator);
         memx.deinitSliceAndElems(Pkcs1AdditionalRsaPrime, self.additional_primes, allocator);
     }
 };
@@ -121,13 +122,13 @@ const Pkcs1AdditionalRsaPrime = struct {
         var s = try input.readAsn1(.sequence);
 
         var prime = try s.readAsn1BigInt(allocator);
-        errdefer allocator.free(prime.limbs);
+        errdefer bigint.deinitConst(prime, allocator);
 
         var exp = try s.readAsn1BigInt(allocator);
-        errdefer allocator.free(exp.limbs);
+        errdefer bigint.deinitConst(exp, allocator);
 
         var coeff = try s.readAsn1BigInt(allocator);
-        errdefer allocator.free(coeff.limbs);
+        errdefer bigint.deinitConst(coeff, allocator);
 
         return Pkcs1AdditionalRsaPrime{
             .prime = prime,
@@ -183,9 +184,9 @@ pub fn parsePkcs1PrivateKey(allocator: mem.Allocator, der: []const u8) !rsa.Priv
         .primes = primes,
     };
 
-    if (priv.dp) |*dp| allocator.free(dp.limbs);
-    if (priv.dq) |*dq| allocator.free(dq.limbs);
-    if (priv.qinv) |*qinv| allocator.free(qinv.limbs);
+    if (priv.dp) |dp| bigint.deinitConst(dp, allocator);
+    if (priv.dq) |dq| bigint.deinitConst(dq, allocator);
+    if (priv.qinv) |qinv| bigint.deinitConst(qinv, allocator);
     for (priv.additional_primes) |*a| {
         allocator.free(a.exp.limbs);
         allocator.free(a.coeff.limbs);

@@ -3,6 +3,7 @@ const math = std.math;
 const mem = std.mem;
 const x509 = @import("x509.zig");
 const pkix = @import("pkix.zig");
+const bigint = @import("big_int.zig");
 
 // TagAndClass represents an ASN.1 identifier octet, consisting of a tag number
 // (indicating a type) and class (such as context-specific or constructed).
@@ -1490,7 +1491,7 @@ test "readOptionalAsn1Integer" {
             const allocator = testing.allocator;
             var s = String.init(input);
             var got = try s.readOptionalAsn1Integer(T, tag, allocator, default_value);
-            defer if (T == math.big.int.Const) allocator.free(got.limbs);
+            defer if (T == math.big.int.Const) bigint.deinitConst(got, allocator);
             const got_str =
                 switch (T) {
                 i8, i16, i24, i32, i64, u8, u16, u24, u32, u64 => blk: {
@@ -1514,7 +1515,7 @@ test "readOptionalAsn1Integer" {
     {
         const allocator = testing.allocator;
         var default_value = (try math.big.int.Managed.initSet(allocator, 0)).toConst();
-        defer allocator.free(default_value.limbs);
+        defer bigint.deinitConst(default_value, allocator);
 
         // var default_value_debug_str = try allocDebugPrintBigIntManaged(default_value, allocator);
         // std.debug.print("default_value: {s}\n", .{default_value_debug_str});
@@ -1531,7 +1532,7 @@ test "readOptionalAsn1Integer" {
     {
         const allocator = testing.allocator;
         var default_value = (try math.big.int.Managed.initSet(allocator, 0)).toConst();
-        defer allocator.free(default_value.limbs);
+        defer bigint.deinitConst(default_value, allocator);
 
         // var default_value_debug_str = try allocDebugPrintBigIntManaged(default_value, allocator);
         // std.debug.print("default_value: {s}\n", .{default_value_debug_str});
@@ -1555,7 +1556,7 @@ test "readAsn1Integer" {
             const allocator = testing.allocator;
             var s = String.init(input);
             var got = try s.readAsn1Integer(T, allocator);
-            defer if (T == math.big.int.Const) allocator.free(got.limbs);
+            defer if (T == math.big.int.Const) bigint.deinitConst(got, allocator);
 
             const got_str =
                 switch (T) {
@@ -1591,7 +1592,7 @@ test "readAsn1BigInt" {
             var s = String.init(input);
             if (want_str) |w_str| {
                 var got = try s.readAsn1BigInt(allocator);
-                defer allocator.free(got.limbs);
+                defer bigint.deinitConst(got, allocator);
                 var got_str = try got.toStringAlloc(allocator, 10, .lower);
                 defer allocator.free(got_str);
                 if (!mem.eql(u8, w_str, got_str)) {
@@ -1638,7 +1639,7 @@ test "parseBigInt" {
             const inner_der = input[offset .. offset + t.length];
             if (want_str) |w_str| {
                 var got = try parseBigInt(allocator, inner_der);
-                defer allocator.free(got.limbs);
+                defer bigint.deinitConst(got, allocator);
                 var got_str = try got.toStringAlloc(allocator, 10, .lower);
                 defer allocator.free(got_str);
                 if (!mem.eql(u8, w_str, got_str)) {

@@ -38,8 +38,8 @@ pub const PrivateKey = struct {
     pub fn deinit(self: *PrivateKey, allocator: mem.Allocator) void {
         self.public_key.deinit(allocator);
         allocator.free(self.d.limbs);
-        for (self.primes) |*prime| {
-            allocator.free(prime.limbs);
+        for (self.primes) |prime| {
+            bigint.deinitConst(prime, allocator);
         }
         allocator.free(self.primes);
         if (self.precomputed) |*precomputed| {
@@ -145,10 +145,10 @@ fn signPKCS1v15(
     mem.copy(u8, em[k - hash_len .. k], digest);
 
     var m = try bigint.constFromBytes(allocator, em);
-    defer allocator.free(m.limbs);
+    defer bigint.deinitConst(m, allocator);
 
     var c = try decryptAndCheck(priv_key, allocator, m);
-    defer allocator.free(c.limbs);
+    defer bigint.deinitConst(c, allocator);
     bigint.fillBytes(c, em);
     return em;
 }
@@ -196,12 +196,11 @@ fn encrypt(
     allocator: mem.Allocator,
     public_key: *const PublicKey,
     m: math.big.int.Const,
-)!math.big.int.Const {
+) !math.big.int.Const {
     var e = try math.big.int.Managed.initSet(allocator, public_key.exponent);
     defer e.deinit();
     return try bigint.expConst(allocator, m, e.toConst(), public_key.modulus);
 }
-
 
 // These are ASN1 DER structures:
 //   DigestInfo ::= SEQUENCE {

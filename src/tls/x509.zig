@@ -6,6 +6,7 @@ const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
 const pkix = @import("pkix.zig");
 const crypto = @import("crypto.zig");
+const bigint = @import("big_int.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const memx = @import("../memx.zig");
 
@@ -199,7 +200,7 @@ pub const Certificate = struct {
             math.big.int.Const,
             allocator,
         ) catch return error.MalformedSerialNumber;
-        errdefer allocator.free(serial_number.limbs);
+        errdefer bigint.deinitConst(serial_number, allocator);
 
         var sig_ai_seq = tbs.readAsn1(
             .sequence,
@@ -359,7 +360,7 @@ fn parsePublicKey(
             der = der.readAsn1(.sequence) catch return error.InvalidRsaPublicKey;
             var n = der.readAsn1Integer(math.big.int.Const, allocator) catch
                 return error.InvalidRsaModulus;
-            errdefer allocator.free(n.limbs);
+            errdefer bigint.deinitConst(n, allocator);
             const e = der.readAsn1Integer(i64, allocator) catch
                 return error.InvalidRsaPublicExponent;
             if (!n.positive) {

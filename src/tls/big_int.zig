@@ -48,7 +48,7 @@ pub fn expConst(
     // See Knuth, volume 2, section 4.6.3.
     var x2 = x;
     var x3: ?Const = null;
-    defer if (x3) |xx3| allocator.free(xx3.limbs);
+    defer if (x3) |xx3| deinitConst(xx3, allocator);
     if (!y.positive) {
         if (m.eqZero()) {
             return try cloneConst(allocator, big_one);
@@ -128,7 +128,7 @@ test "modInverseConst" {
             var modulus_m = try strToManaged(allocator, modulus);
             defer modulus_m.deinit();
             const inverse_c = try modInverseConst(allocator, element_m.toConst(), modulus_m.toConst());
-            defer allocator.free(inverse_c.limbs);
+            defer deinitConst(inverse_c, allocator);
             var inverse_m = try inverse_c.toManaged(allocator);
             defer inverse_m.deinit();
             try inverse_m.mul(inverse_c, element_m.toConst());
@@ -1187,7 +1187,7 @@ test "bigint.Const const" {
 test "std.Const zero" {
     const allocator = testing.allocator;
     var zero = (try Managed.initSet(allocator, 0)).toConst();
-    defer allocator.free(zero.limbs);
+    defer deinitConst(zero, allocator);
     try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero.limbs);
     try testing.expect(zero.positive);
 }
@@ -1197,7 +1197,7 @@ test "constFromBytes" {
     const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
     const allocator = testing.allocator;
     var i = try constFromBytes(allocator, buf);
-    defer allocator.free(i.limbs);
+    defer deinitConst(i, allocator);
 
     var s = try i.toStringAlloc(allocator, 10, .lower);
     defer allocator.free(s);
@@ -1224,16 +1224,16 @@ test "expConst" {
             // );
             const allocator = testing.allocator;
             var x_i = try initConst(allocator, x_base, x);
-            defer allocator.free(x_i.limbs);
+            defer deinitConst(x_i, allocator);
             var y_i = try initConst(allocator, y_base, y);
-            defer allocator.free(y_i.limbs);
+            defer deinitConst(y_i, allocator);
             var m_i = try initConst(allocator, m_base, m);
-            defer allocator.free(m_i.limbs);
+            defer deinitConst(m_i, allocator);
             var out_i = try initConst(allocator, out_base, out);
-            defer allocator.free(out_i.limbs);
+            defer deinitConst(out_i, allocator);
 
             var got = try expConst(allocator, x_i, y_i, m_i);
-            defer allocator.free(got.limbs);
+            defer deinitConst(got, allocator);
             if (!got.eq(out_i)) {
                 var got_s = try got.toStringAlloc(allocator, 10, .lower);
                 defer allocator.free(got_s);
