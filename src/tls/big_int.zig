@@ -115,37 +115,37 @@ fn modInverseConst(
     return z.toConst();
 }
 
-// test "modInverseConst" {
-//     const f = struct {
-//         fn f(element: []const u8, modulus: []const u8) !void {
-//             const allocator = testing.allocator;
-//             var element_m = try strToManaged(allocator, element);
-//             defer element_m.deinit();
-//             var modulus_m = try strToManaged(allocator, modulus);
-//             defer modulus_m.deinit();
-//             const inverse_c = try modInverseConst(allocator, element_m.toConst(), modulus_m.toConst());
-//             defer allocator.free(inverse_c.limbs);
-//             var inverse_m = try inverse_c.toManaged(allocator);
-//             defer inverse_m.deinit();
-//             try inverse_m.mul(inverse_c, element_m.toConst());
-//             try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
-//             if (!inverse_m.toConst().eq(big_one)) {
-//                 var inverse_s = try inverse_m.toString(allocator, 10, .lower);
-//                 defer allocator.free(inverse_s);
-//                 std.debug.print(
-//                     "modInverseConst({s}, {s}) * {s} % {s} = {s}, not 1\n",
-//                     .{ element, modulus, element, modulus, inverse_s },
-//                 );
-//                 return error.TestExpectedError;
-//             }
-//         }
-//     }.f;
-//     try f("1234567", "458948883992");
-//     try f("239487239847", "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919");
-//     try f("-10", "13");
-//     try f("10", "-13");
-//     try f("-17", "-13");
-// }
+test "modInverseConst" {
+    const f = struct {
+        fn f(element: []const u8, modulus: []const u8) !void {
+            const allocator = testing.allocator;
+            var element_m = try strToManaged(allocator, element);
+            defer element_m.deinit();
+            var modulus_m = try strToManaged(allocator, modulus);
+            defer modulus_m.deinit();
+            const inverse_c = try modInverseConst(allocator, element_m.toConst(), modulus_m.toConst());
+            defer allocator.free(inverse_c.limbs);
+            var inverse_m = try inverse_c.toManaged(allocator);
+            defer inverse_m.deinit();
+            try inverse_m.mul(inverse_c, element_m.toConst());
+            try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
+            if (!inverse_m.toConst().eq(big_one)) {
+                var inverse_s = try inverse_m.toString(allocator, 10, .lower);
+                defer allocator.free(inverse_s);
+                std.debug.print(
+                    "modInverseConst({s}, {s}) * {s} % {s} = {s}, not 1\n",
+                    .{ element, modulus, element, modulus, inverse_s },
+                );
+                return error.TestExpectedError;
+            }
+        }
+    }.f;
+    try f("1234567", "458948883992");
+    try f("239487239847", "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919");
+    try f("-10", "13");
+    try f("10", "-13");
+    try f("-17", "-13");
+}
 
 // mod sets r to the modulus x%y for y != 0.
 // If y == 0, a division-by-zero run-time panic occurs.
@@ -192,126 +192,126 @@ pub fn gcdManaged(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Mana
     rma.setMetadata(m.positive, m.len);
 }
 
-// test "gcdManaged" {
-//     const f = struct {
-//         fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
-//             const allocator = testing.allocator;
+test "gcdManaged" {
+    const f = struct {
+        fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
+            const allocator = testing.allocator;
 
-//             var big_a = try strToManaged(allocator, a);
-//             defer big_a.deinit();
-//             var big_b = try strToManaged(allocator, b);
-//             defer big_b.deinit();
+            var big_a = try strToManaged(allocator, a);
+            defer big_a.deinit();
+            var big_b = try strToManaged(allocator, b);
+            defer big_b.deinit();
 
-//             var want_d = try strToManaged(allocator, d);
-//             defer want_d.deinit();
-//             var want_x = try strToManaged(allocator, x);
-//             defer want_x.deinit();
-//             var want_y = try strToManaged(allocator, y);
-//             defer want_y.deinit();
+            var want_d = try strToManaged(allocator, d);
+            defer want_d.deinit();
+            var want_x = try strToManaged(allocator, x);
+            defer want_x.deinit();
+            var want_y = try strToManaged(allocator, y);
+            defer want_y.deinit();
 
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 try gcdManaged(&got_d, null, null, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 var got_x = try Managed.init(allocator);
-//                 defer got_x.deinit();
-//                 try gcdManaged(&got_d, &got_x, null, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_x.eq(want_x)) {
-//                     var got_x_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_x_s);
-//                     std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 var got_y = try Managed.init(allocator);
-//                 defer got_y.deinit();
-//                 try gcdManaged(&got_d, null, &got_y, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_y.eq(want_y)) {
-//                     var got_y_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_y_s);
-//                     std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 var got_x = try Managed.init(allocator);
-//                 defer got_x.deinit();
-//                 var got_y = try Managed.init(allocator);
-//                 defer got_y.deinit();
-//                 try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_x.eq(want_x)) {
-//                     var got_x_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_x_s);
-//                     std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_y.eq(want_y)) {
-//                     var got_y_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_y_s);
-//                     std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//         }
-//     }.f;
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                try gcdManaged(&got_d, null, null, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                try gcdManaged(&got_d, &got_x, null, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+                if (!got_x.eq(want_x)) {
+                    var got_x_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_x_s);
+                    std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcdManaged(&got_d, null, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+                if (!got_y.eq(want_y)) {
+                    var got_y_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_y_s);
+                    std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+                if (!got_x.eq(want_x)) {
+                    var got_x_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_x_s);
+                    std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
+                    return error.TestExpectedError;
+                }
+                if (!got_y.eq(want_y)) {
+                    var got_y_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_y_s);
+                    std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
+                    return error.TestExpectedError;
+                }
+            }
+        }
+    }.f;
 
-//     testing.log_level = .debug;
+    testing.log_level = .debug;
 
-//     // a <= 0 || b <= 0
-//     try f("0", "0", "0", "0", "0");
-//     try f("7", "0", "1", "0", "7");
-//     try f("7", "0", "-1", "0", "-7");
-//     try f("11", "1", "0", "11", "0");
-//     try f("7", "-1", "-2", "-77", "35");
-//     try f("935", "-3", "8", "64515", "24310");
-//     try f("935", "-3", "-8", "64515", "-24310");
-//     try f("935", "3", "-8", "-64515", "-24310");
+    // a <= 0 || b <= 0
+    try f("0", "0", "0", "0", "0");
+    try f("7", "0", "1", "0", "7");
+    try f("7", "0", "-1", "0", "-7");
+    try f("11", "1", "0", "11", "0");
+    try f("7", "-1", "-2", "-77", "35");
+    try f("935", "-3", "8", "64515", "24310");
+    try f("935", "-3", "-8", "64515", "-24310");
+    try f("935", "3", "-8", "-64515", "-24310");
 
-//     try f("1", "-9", "47", "120", "23");
-//     try f("7", "1", "-2", "77", "35");
-//     try f("935", "-3", "8", "64515", "24310");
-//     try f("935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000");
-//     try f(
-//         "1",
-//         "-221",
-//         "22059940471369027483332068679400581064239780177629666810348940098015901108344",
-//         "98920366548084643601728869055592650835572950932266967461790948584315647051443",
-//         "991",
-//     );
-// }
+    try f("1", "-9", "47", "120", "23");
+    try f("7", "1", "-2", "77", "35");
+    try f("935", "-3", "8", "64515", "24310");
+    try f("935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000");
+    try f(
+        "1",
+        "-221",
+        "22059940471369027483332068679400581064239780177629666810348940098015901108344",
+        "98920366548084643601728869055592650835572950932266967461790948584315647051443",
+        "991",
+    );
+}
 
 fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
     var m = try Managed.init(allocator);
@@ -1157,32 +1157,32 @@ fn cloneConst(
     };
 }
 
-// const testing = std.testing;
+const testing = std.testing;
 
-// test "std.Const const" {
-//     try testing.expectEqual(@as(u64, 0), try big_zero.to(u64));
-//     try testing.expectEqual(@as(u64, 1), try big_one.to(u64));
-// }
+test "bigint.Const const" {
+    try testing.expectEqual(@as(u64, 0), try big_zero.to(u64));
+    try testing.expectEqual(@as(u64, 1), try big_one.to(u64));
+}
 
-// test "std.Const zero" {
-//     const allocator = testing.allocator;
-//     var zero = (try Managed.initSet(allocator, 0)).toConst();
-//     defer allocator.free(zero.limbs);
-//     try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero.limbs);
-//     try testing.expect(zero.positive);
-// }
+test "std.Const zero" {
+    const allocator = testing.allocator;
+    var zero = (try Managed.initSet(allocator, 0)).toConst();
+    defer allocator.free(zero.limbs);
+    try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero.limbs);
+    try testing.expect(zero.positive);
+}
 
-// test "constFromBytes" {
-//     testing.log_level = .debug;
-//     const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
-//     const allocator = testing.allocator;
-//     var i = try constFromBytes(allocator, buf);
-//     defer allocator.free(i.limbs);
+test "constFromBytes" {
+    testing.log_level = .debug;
+    const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
+    const allocator = testing.allocator;
+    var i = try constFromBytes(allocator, buf);
+    defer allocator.free(i.limbs);
 
-//     var s = try i.toStringAlloc(allocator, 10, .lower);
-//     defer allocator.free(s);
-//     try testing.expectEqualStrings("335812727627494322174", s);
-// }
+    var s = try i.toStringAlloc(allocator, 10, .lower);
+    defer allocator.free(s);
+    try testing.expectEqualStrings("335812727627494322174", s);
+}
 
 // test "expConst" {
 //     testing.log_level = .debug;
@@ -1356,54 +1356,54 @@ fn cloneConst(
 //     );
 // }
 
-// test "bigIntDivTrunc" {
-//     // Zig's std.Managed.divTrunc equals to Go's math/big.QuoRem.
-//     const f = struct {
-//         fn f(x: i64, y: i64, q: i64, r: i64, d: i64, m: i64) !void {
-//             _ = d;
-//             _ = m;
-//             const allocator = testing.allocator;
-//             { // no alias
-//                 var big_x = try Managed.initSet(allocator, x);
-//                 defer big_x.deinit();
-//                 var big_y = try Managed.initSet(allocator, y);
-//                 defer big_y.deinit();
-//                 var big_q = try Managed.init(allocator);
-//                 defer big_q.deinit();
-//                 var big_r = try Managed.init(allocator);
-//                 defer big_r.deinit();
-//                 try big_q.divTrunc(&big_r, big_x.toConst(), big_y.toConst());
-//                 try testing.expectEqual(q, try big_q.to(i64));
-//                 try testing.expectEqual(r, try big_r.to(i64));
-//             }
-//             // Though these test passes, Managed.divTrunc document says nothing
-//             // about aliases, and Mutable.divTrunc document says q may alias with
-//             // a or b, but says nothing about r.
-//             { // alias r and x, q and y
-//                 var big_q = try Managed.initSet(allocator, y);
-//                 defer big_q.deinit();
-//                 var big_r = try Managed.initSet(allocator, x);
-//                 defer big_r.deinit();
-//                 try big_q.divTrunc(&big_r, big_r.toConst(), big_q.toConst());
-//                 try testing.expectEqual(q, try big_q.to(i64));
-//                 try testing.expectEqual(r, try big_r.to(i64));
-//             }
-//             { // alias q and x, r and y
-//                 var big_q = try Managed.initSet(allocator, x);
-//                 defer big_q.deinit();
-//                 var big_r = try Managed.initSet(allocator, y);
-//                 defer big_r.deinit();
-//                 try big_q.divTrunc(&big_r, big_q.toConst(), big_r.toConst());
-//                 try testing.expectEqual(q, try big_q.to(i64));
-//                 try testing.expectEqual(r, try big_r.to(i64));
-//             }
-//         }
-//     }.f;
+test "bigIntDivTrunc" {
+    // Zig's std.Managed.divTrunc equals to Go's math/big.QuoRem.
+    const f = struct {
+        fn f(x: i64, y: i64, q: i64, r: i64, d: i64, m: i64) !void {
+            _ = d;
+            _ = m;
+            const allocator = testing.allocator;
+            { // no alias
+                var big_x = try Managed.initSet(allocator, x);
+                defer big_x.deinit();
+                var big_y = try Managed.initSet(allocator, y);
+                defer big_y.deinit();
+                var big_q = try Managed.init(allocator);
+                defer big_q.deinit();
+                var big_r = try Managed.init(allocator);
+                defer big_r.deinit();
+                try big_q.divTrunc(&big_r, big_x.toConst(), big_y.toConst());
+                try testing.expectEqual(q, try big_q.to(i64));
+                try testing.expectEqual(r, try big_r.to(i64));
+            }
+            // Though these test passes, Managed.divTrunc document says nothing
+            // about aliases, and Mutable.divTrunc document says q may alias with
+            // a or b, but says nothing about r.
+            { // alias r and x, q and y
+                var big_q = try Managed.initSet(allocator, y);
+                defer big_q.deinit();
+                var big_r = try Managed.initSet(allocator, x);
+                defer big_r.deinit();
+                try big_q.divTrunc(&big_r, big_r.toConst(), big_q.toConst());
+                try testing.expectEqual(q, try big_q.to(i64));
+                try testing.expectEqual(r, try big_r.to(i64));
+            }
+            { // alias q and x, r and y
+                var big_q = try Managed.initSet(allocator, x);
+                defer big_q.deinit();
+                var big_r = try Managed.initSet(allocator, y);
+                defer big_r.deinit();
+                try big_q.divTrunc(&big_r, big_q.toConst(), big_r.toConst());
+                try testing.expectEqual(q, try big_q.to(i64));
+                try testing.expectEqual(r, try big_r.to(i64));
+            }
+        }
+    }.f;
 
-//     try f(5, 3, 1, 2, 1, 2);
-//     try f(-5, 3, -1, -2, -2, 1);
-//     try f(5, -3, -1, 2, -1, 2);
-//     try f(-5, -3, 1, -2, 2, 1);
-//     try f(1, 2, 0, 1, 0, 1);
-//     try f(8, 4, 2, 0, 2, 0);
-// }
+    try f(5, 3, 1, 2, 1, 2);
+    try f(-5, 3, -1, -2, -2, 1);
+    try f(5, -3, -1, 2, -1, 2);
+    try f(-5, -3, 1, -2, 2, 1);
+    try f(1, 2, 0, 1, 0, 1);
+    try f(8, 4, 2, 0, 2, 0);
+}
