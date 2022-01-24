@@ -355,6 +355,8 @@ pub const Certificate = struct {
     ip_addresses: []std.net.Address = &[_]std.net.Address{},
     uris: []const []const u8 = &[_][]const u8{},
 
+    policy_identifiers: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
+
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
     unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
@@ -526,6 +528,7 @@ pub const Certificate = struct {
             allocator.free(self.ip_addresses);
         }
         memx.freeElemsAndFreeSlice([]const u8, self.uris, allocator);
+        memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.policy_identifiers, allocator);
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
         if (self.unhandled_critical_extensions.len > 0) {
@@ -584,6 +587,7 @@ pub const Certificate = struct {
         try std.fmt.format(writer, ", ip_addresses = {any}", .{self.ip_addresses});
         _ = try writer.write(", uris = ");
         try fmtx.formatStringSlice(self.uris, fmt, options, writer);
+        try std.fmt.format(writer, ", policy_identifiers = {any}", .{self.policy_identifiers});
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
@@ -616,7 +620,7 @@ pub const Certificate = struct {
                         allocator,
                         ext.value,
                     ),
-                    32 => {},
+                    32 => try self.parseCertificatePoliciesExtension(allocator, ext.value),
                     else => unhandled = true,
                 }
             } else if (ext.id.eql(asn1.ObjectIdentifier.extension_authority_info_access)) {
@@ -801,6 +805,26 @@ pub const Certificate = struct {
             handled = true;
         }
         return handled;
+    }
+
+    fn parseCertificatePoliciesExtension(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        der: []const u8,
+    ) !void {
+        var s = asn1.String.init(der);
+        s = s.readAsn1(.sequence) catch return error.InvaliCertificatePolicies;
+        var oids = std.ArrayListUnmanaged(asn1.ObjectIdentifier){};
+        errdefer memx.deinitArrayListAndElems(asn1.ObjectIdentifier, &oids, allocator);
+        while (!s.empty()) {
+            s = s.readAsn1(.sequence) catch return error.InvaliCertificatePolicies;
+            var oid = asn1.ObjectIdentifier.parse(allocator, &s) catch
+                return error.InvaliCertificatePolicies;
+            try oids.append(allocator, oid);
+        }
+        if (oids.items.len > 0) {
+            self.policy_identifiers = oids.toOwnedSlice(allocator);
+        }
     }
 };
 
