@@ -43,6 +43,55 @@ pub fn fmtSliceHexEscapeUpper(bytes: []const u8) std.fmt.Formatter(formatSliceHe
     return .{ .data = bytes };
 }
 
+pub fn formatStringSlice(
+    slice: []const []const u8,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = fmt;
+    _ = options;
+    _ = try writer.write("{");
+    for (slice) |s, i| {
+        if (i > 0) {
+            _ = try writer.write(", ");
+        }
+        try std.fmt.format(writer, "\"{s}\"", .{s});
+    }
+    _ = try writer.write(" }");
+}
+
+pub fn formatStringSliceField(
+    name: []const u8,
+    slice: []const []const u8,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = fmt;
+    _ = options;
+    try std.fmt.format(writer, "{s} = {{ ", .{name});
+    for (slice) |s, i| {
+        if (i > 0) {
+            _ = try writer.write(", ");
+        }
+        try std.fmt.format(writer, "\"{s}\"", .{s});
+    }
+    _ = try writer.write(" }");
+}
+
+pub fn formatStringField(
+    name: []const u8,
+    s: []const u8,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = fmt;
+    _ = options;
+    try std.fmt.format(writer, "{s} = \"{s}\"", .{ name, s });
+}
+
 const testing = std.testing;
 
 test "fmtSliceHexEscapeLower" {

@@ -749,6 +749,9 @@ pub const ObjectIdentifier = struct {
     pub const extension_authority_info_access = initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 1, 1 });
     pub const extension_crl_number = initConst(&.{ 2, 5, 29, 20 });
 
+    pub const authority_info_access_ocsp = initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 48, 1 });
+    pub const authority_info_access_issuers = initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 48, 2 });
+
     components: []const u32,
 
     pub fn initConst(components: []const u32) ObjectIdentifier {

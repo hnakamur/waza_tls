@@ -9,6 +9,7 @@ const crypto = @import("crypto.zig");
 const bigint = @import("big_int.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const memx = @import("../memx.zig");
+const fmtx = @import("../fmtx.zig");
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -342,6 +343,9 @@ pub const Certificate = struct {
     subject_key_id: []const u8 = &[_]u8{},
     authority_key_id: []const u8 = &[_]u8{},
 
+    ocsp_servers: []const []const u8 = &[_][]const u8{},
+    issuing_certificate_urls: []const []const u8 = &[_][]const u8{},
+
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
     unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
@@ -505,6 +509,14 @@ pub const Certificate = struct {
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.unknown_usages, allocator);
         if (self.subject_key_id.len > 0) allocator.free(self.subject_key_id);
         if (self.authority_key_id.len > 0) allocator.free(self.authority_key_id);
+        if (self.ocsp_servers.len > 0) {
+            for (self.ocsp_servers) |s| allocator.free(s);
+            allocator.free(self.ocsp_servers);
+        }
+        if (self.issuing_certificate_urls.len > 0) {
+            for (self.issuing_certificate_urls) |url| allocator.free(url);
+            allocator.free(self.issuing_certificate_urls);
+        }
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
         if (self.unhandled_critical_extensions.len > 0) {
@@ -552,6 +564,10 @@ pub const Certificate = struct {
             ", authority_key_id = {s}",
             .{std.fmt.fmtSliceHexLower(self.authority_key_id)},
         );
+        _ = try writer.write(", ocsp_servers = ");
+        try fmtx.formatStringSlice(self.ocsp_servers, fmt, options, writer);
+        _ = try writer.write(", issuing_certificate_urls = ");
+        try fmtx.formatStringSlice(self.issuing_certificate_urls, fmt, options, writer);
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
@@ -585,7 +601,7 @@ pub const Certificate = struct {
                     else => unhandled = true,
                 }
             } else if (ext.id.eql(asn1.ObjectIdentifier.extension_authority_info_access)) {
-                // RFC 5280 4.2.2.1: Authority Information Access
+                try self.parseAuthorityInfoAccessExtension(allocator, ext.value);
             } else {
                 // Unknown extensions are recorded if critical.
                 unhandled = true;
@@ -651,6 +667,43 @@ pub const Certificate = struct {
         self.basic_constraints_valid = true;
         self.is_ca = is_ca;
         self.max_path_len = max_path_len;
+    }
+
+    fn parseAuthorityInfoAccessExtension(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        der: []const u8,
+    ) !void {
+        // RFC 5280 4.2.2.1: Authority Information Access
+        var s = asn1.String.init(der);
+        s = s.readAsn1(.sequence) catch return error.InvalidAuthorityInfoAccess;
+        var ocsp_servers = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &ocsp_servers, allocator);
+        var issuing_certificate_urls = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &issuing_certificate_urls, allocator);
+        while (!s.empty()) {
+            var aia_der = s.readAsn1(.sequence) catch return error.InvalidAuthorityInfoAccess;
+            var method = asn1.ObjectIdentifier.parse(allocator, &aia_der) catch return error.InvalidAuthorityInfoAccess;
+            defer method.deinit(allocator);
+            if (!aia_der.peekAsn1Tag(asn1.TagAndClass.init(6).contextSpecific())) {
+                continue;
+            }
+            if (aia_der.readOptionalAsn1(asn1.TagAndClass.init(6).contextSpecific()) catch
+                return error.InvalidAuthorityInfoAccess) |inner_der|
+            {
+                if (method.eql(asn1.ObjectIdentifier.authority_info_access_ocsp)) {
+                    try ocsp_servers.append(allocator, try allocator.dupe(u8, inner_der.bytes));
+                } else if (method.eql(asn1.ObjectIdentifier.authority_info_access_issuers)) {
+                    try issuing_certificate_urls.append(allocator, try allocator.dupe(u8, inner_der.bytes));
+                }
+            }
+        }
+        if (ocsp_servers.items.len > 0) {
+            self.ocsp_servers = ocsp_servers.toOwnedSlice(allocator);
+        }
+        if (issuing_certificate_urls.items.len > 0) {
+            self.issuing_certificate_urls = issuing_certificate_urls.toOwnedSlice(allocator);
+        }
     }
 };
 
@@ -878,7 +931,6 @@ fn _isX509Printable(b: u8) bool {
 }
 
 const testing = std.testing;
-const fmtx = @import("../fmtx.zig");
 
 test "isX509Printable" {
     var c: u8 = 0;

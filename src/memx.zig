@@ -29,6 +29,15 @@ pub fn deinitArrayListAndElems(
     list.deinit(allocator);
 }
 
+pub fn freeElemsAndDeinitArrayList(
+    comptime T: type,
+    list: *std.ArrayListUnmanaged(T),
+    allocator: mem.Allocator,
+) void {
+    for (list.items) |elem| allocator.free(elem);
+    list.deinit(allocator);
+}
+
 pub fn deinitSliceAndElems(
     comptime T: type,
     slice: []T,

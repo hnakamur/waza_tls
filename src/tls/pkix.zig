@@ -307,54 +307,23 @@ pub const Name = struct {
         _ = options;
 
         _ = try writer.write("Name{ ");
-        try formatStringSliceField("country", self.country, fmt, options, writer);
+        try fmtx.formatStringSliceField("country", self.country, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringSliceField("organization", self.organization, fmt, options, writer);
+        try fmtx.formatStringSliceField("organization", self.organization, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringSliceField("organizational_unit", self.organizational_unit, fmt, options, writer);
+        try fmtx.formatStringSliceField("organizational_unit", self.organizational_unit, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringSliceField("locality", self.locality, fmt, options, writer);
+        try fmtx.formatStringSliceField("locality", self.locality, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringSliceField("province", self.province, fmt, options, writer);
+        try fmtx.formatStringSliceField("province", self.province, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringSliceField("street_address", self.street_address, fmt, options, writer);
+        try fmtx.formatStringSliceField("street_address", self.street_address, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringSliceField("postal_code", self.postal_code, fmt, options, writer);
+        try fmtx.formatStringSliceField("postal_code", self.postal_code, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringField("serial_number", self.serial_number, fmt, options, writer);
+        try fmtx.formatStringField("serial_number", self.serial_number, fmt, options, writer);
         _ = try writer.write(", ");
-        try formatStringField("common_name", self.common_name, fmt, options, writer);
+        try fmtx.formatStringField("common_name", self.common_name, fmt, options, writer);
         _ = try writer.write(" }");
     }
 };
-
-fn formatStringSliceField(
-    name: []const u8,
-    slice: []const []const u8,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    _ = fmt;
-    _ = options;
-    try std.fmt.format(writer, "{s} = {{ ", .{name});
-    for (slice) |s, i| {
-        if (i > 0) {
-            _ = try writer.write(", ");
-        }
-        try std.fmt.format(writer, "\"{s}\"", .{s});
-    }
-    _ = try writer.write(" }");
-}
-
-fn formatStringField(
-    name: []const u8,
-    s: []const u8,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    _ = fmt;
-    _ = options;
-    try std.fmt.format(writer, "{s} = \"{s}\"", .{ name, s });
-}
