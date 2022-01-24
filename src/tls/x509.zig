@@ -343,8 +343,17 @@ pub const Certificate = struct {
     subject_key_id: []const u8 = &[_]u8{},
     authority_key_id: []const u8 = &[_]u8{},
 
+    // RFC 5280, 4.2.2.1 (Authority Information Access)
     ocsp_servers: []const []const u8 = &[_][]const u8{},
     issuing_certificate_urls: []const []const u8 = &[_][]const u8{},
+
+    // Subject Alternate Name values. (Note that these values may not be valid
+    // if invalid values were contained within a parsed certificate. For
+    // example, an element of DNSNames may not be a valid DNS domain name.)
+    dns_names: []const []const u8 = &[_][]const u8{},
+    email_addresses: []const []const u8 = &[_][]const u8{},
+    ip_addresses: []std.net.Address = &[_]std.net.Address{},
+    uris: []const []const u8 = &[_][]const u8{},
 
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
@@ -509,14 +518,14 @@ pub const Certificate = struct {
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.unknown_usages, allocator);
         if (self.subject_key_id.len > 0) allocator.free(self.subject_key_id);
         if (self.authority_key_id.len > 0) allocator.free(self.authority_key_id);
-        if (self.ocsp_servers.len > 0) {
-            for (self.ocsp_servers) |s| allocator.free(s);
-            allocator.free(self.ocsp_servers);
+        memx.freeElemsAndFreeSlice([]const u8, self.ocsp_servers, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.issuing_certificate_urls, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.dns_names, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.email_addresses, allocator);
+        if (self.ip_addresses.len > 0) {
+            allocator.free(self.ip_addresses);
         }
-        if (self.issuing_certificate_urls.len > 0) {
-            for (self.issuing_certificate_urls) |url| allocator.free(url);
-            allocator.free(self.issuing_certificate_urls);
-        }
+        memx.freeElemsAndFreeSlice([]const u8, self.uris, allocator);
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
         if (self.unhandled_critical_extensions.len > 0) {
@@ -568,6 +577,13 @@ pub const Certificate = struct {
         try fmtx.formatStringSlice(self.ocsp_servers, fmt, options, writer);
         _ = try writer.write(", issuing_certificate_urls = ");
         try fmtx.formatStringSlice(self.issuing_certificate_urls, fmt, options, writer);
+        _ = try writer.write(", dns_names = ");
+        try fmtx.formatStringSlice(self.dns_names, fmt, options, writer);
+        _ = try writer.write(", email_addresses = ");
+        try fmtx.formatStringSlice(self.email_addresses, fmt, options, writer);
+        try std.fmt.format(writer, ", ip_addresses = {any}", .{self.ip_addresses});
+        _ = try writer.write(", uris = ");
+        try fmtx.formatStringSlice(self.uris, fmt, options, writer);
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
@@ -585,7 +601,10 @@ pub const Certificate = struct {
                 switch (ext.id.components[3]) {
                     15 => self.key_usage = try parseKeyUsageExtension(allocator, ext.value),
                     19 => try self.parseBasicConstraintsExtension(ext.value),
-                    17 => {},
+                    17 => if (!try self.parseSANExtension(allocator, ext.value)) {
+                        // If we didn't parse anything then we do the critical check, below.
+                        unhandled = true;
+                    },
                     30 => {},
                     31 => {},
                     35 => self.authority_key_id = try parseAuthorityKeyIdExtension(
@@ -705,7 +724,95 @@ pub const Certificate = struct {
             self.issuing_certificate_urls = issuing_certificate_urls.toOwnedSlice(allocator);
         }
     }
+
+    const name_type_email = 1;
+    const name_type_dns = 2;
+    const name_type_uri = 6;
+    const name_type_ip = 7;
+
+    fn parseSANExtension(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        der: []const u8,
+    ) !bool {
+        var s = asn1.String.init(der);
+        s = s.readAsn1(.sequence) catch return error.InvaliSubjectAlternativeNames;
+        var email_addresses = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_addresses, allocator);
+        var dns_names = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &dns_names, allocator);
+        var uris = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &uris, allocator);
+        var ip_addresses = std.ArrayListUnmanaged(std.net.Address){};
+        errdefer if (ip_addresses.items.len > 0) ip_addresses.deinit(allocator);
+        while (!s.empty()) {
+            var tag: asn1.TagAndClass = undefined;
+            var san_der = s.readAnyAsn1(&tag) catch return error.InvaliSubjectAlternativeNames;
+            switch (@enumToInt(tag) ^ 0x80) {
+                name_type_email => {
+                    const email = san_der.bytes;
+                    if (!isValidIa5String(email)) {
+                        return error.InvaliSubjectAlternativeNames;
+                    }
+                    try email_addresses.append(allocator, try allocator.dupe(u8, email));
+                },
+                name_type_dns => {
+                    const name = san_der.bytes;
+                    if (!isValidIa5String(name)) {
+                        return error.InvaliSubjectAlternativeNames;
+                    }
+                    try dns_names.append(allocator, try allocator.dupe(u8, name));
+                },
+                name_type_uri => {
+                    const uri = san_der.bytes;
+                    if (!isValidIa5String(uri)) {
+                        return error.InvaliSubjectAlternativeNames;
+                    }
+                    // TODO: implement parse and validate URI
+                    try uris.append(allocator, try allocator.dupe(u8, uri));
+                },
+                name_type_ip => {
+                    const ip_data = san_der.bytes;
+                    const address = switch (ip_data.len) {
+                        4 => std.net.Address.initIp4(ip_data[0..4].*, 0),
+                        16 => std.net.Address.initIp6(ip_data[0..16].*, 0, 0, 0),
+                        else => return error.InvaliSubjectAlternativeNames,
+                    };
+                    try ip_addresses.append(allocator, address);
+                },
+                else => {},
+            }
+        }
+        var handled = false;
+        if (email_addresses.items.len > 0) {
+            self.email_addresses = email_addresses.toOwnedSlice(allocator);
+            handled = true;
+        }
+        if (dns_names.items.len > 0) {
+            self.dns_names = dns_names.toOwnedSlice(allocator);
+            handled = true;
+        }
+        if (uris.items.len > 0) {
+            self.uris = uris.toOwnedSlice(allocator);
+            handled = true;
+        }
+        if (ip_addresses.items.len > 0) {
+            self.ip_addresses = ip_addresses.toOwnedSlice(allocator);
+            handled = true;
+        }
+        return handled;
+    }
 };
+
+fn isValidIa5String(s: []const u8) bool {
+    for (s) |b| {
+        // Per RFC5280 "IA5String is limited to the set of ASCII characters"
+        if (!std.ascii.isASCII(b)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 fn parseKeyUsageExtension(allocator: mem.Allocator, der: []const u8) !KeyUsage {
     var s = asn1.String.init(der);

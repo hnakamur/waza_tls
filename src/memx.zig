@@ -38,6 +38,17 @@ pub fn freeElemsAndDeinitArrayList(
     list.deinit(allocator);
 }
 
+pub fn freeElemsAndFreeSlice(
+    comptime T: type,
+    slice: []const T,
+    allocator: mem.Allocator,
+) void {
+    if (slice.len > 0) {
+        for (slice) |elem| allocator.free(elem);
+        allocator.free(slice);
+    }
+}
+
 pub fn deinitSliceAndElems(
     comptime T: type,
     slice: []T,
