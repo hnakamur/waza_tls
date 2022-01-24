@@ -51,7 +51,7 @@ pub fn formatStringSlice(
 ) !void {
     _ = fmt;
     _ = options;
-    _ = try writer.write("{");
+    _ = try writer.write("{ ");
     for (slice) |s, i| {
         if (i > 0) {
             _ = try writer.write(", ");

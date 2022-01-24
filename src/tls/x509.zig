@@ -357,6 +357,8 @@ pub const Certificate = struct {
 
     policy_identifiers: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
 
+    crl_distribution_points: []const []const u8 = &[_][]const u8{},
+
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
     unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
@@ -529,6 +531,7 @@ pub const Certificate = struct {
         }
         memx.freeElemsAndFreeSlice([]const u8, self.uris, allocator);
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.policy_identifiers, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.crl_distribution_points, allocator);
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
         if (self.unhandled_critical_extensions.len > 0) {
@@ -588,6 +591,8 @@ pub const Certificate = struct {
         _ = try writer.write(", uris = ");
         try fmtx.formatStringSlice(self.uris, fmt, options, writer);
         try std.fmt.format(writer, ", policy_identifiers = {any}", .{self.policy_identifiers});
+        _ = try writer.write(", crl_distribution_points = ");
+        try fmtx.formatStringSlice(self.crl_distribution_points, fmt, options, writer);
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
@@ -610,7 +615,7 @@ pub const Certificate = struct {
                         unhandled = true;
                     },
                     30 => {},
-                    31 => {},
+                    31 => try self.parseCrlDistributionPointsExtension(allocator, ext.value),
                     35 => self.authority_key_id = try parseAuthorityKeyIdExtension(
                         allocator,
                         ext.value,
@@ -824,6 +829,52 @@ pub const Certificate = struct {
         }
         if (oids.items.len > 0) {
             self.policy_identifiers = oids.toOwnedSlice(allocator);
+        }
+    }
+
+    fn parseCrlDistributionPointsExtension(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        der: []const u8,
+    ) !void {
+        // RFC 5280, 4.2.1.13
+
+        // CRLDistributionPoints ::= SEQUENCE SIZE (1..MAX) OF DistributionPoint
+        //
+        // DistributionPoint ::= SEQUENCE {
+        //     distributionPoint       [0]     DistributionPointName OPTIONAL,
+        //     reasons                 [1]     ReasonFlags OPTIONAL,
+        //     cRLIssuer               [2]     GeneralNames OPTIONAL }
+        //
+        // DistributionPointName ::= CHOICE {
+        //     fullName                [0]     GeneralNames,
+        //     nameRelativeToCRLIssuer [1]     RelativeDistinguishedName }
+        var s = asn1.String.init(der);
+        s = s.readAsn1(.sequence) catch return error.InvaliCrlDistributionPoints;
+        var uris = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &uris, allocator);
+        while (!s.empty()) {
+            var dp_der = s.readAsn1(.sequence) catch return error.InvaliCrlDistributionPoints;
+            if (dp_der.readOptionalAsn1(asn1.TagAndClass.init(0).constructed().contextSpecific()) catch
+                return error.InvaliCrlDistributionPoints) |*dp_name_der|
+            {
+                var dp_name_der2 = dp_name_der.readAsn1(
+                    asn1.TagAndClass.init(0).constructed().contextSpecific(),
+                ) catch
+                    return error.InvaliCrlDistributionPoints;
+                while (!dp_name_der2.empty()) {
+                    if (dp_name_der2.readOptionalAsn1(asn1.TagAndClass.init(6).contextSpecific()) catch
+                        return error.InvaliCrlDistributionPoints) |uri_der|
+                    {
+                        try uris.append(allocator, try allocator.dupe(u8, uri_der.bytes));
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        if (uris.items.len > 0) {
+            self.crl_distribution_points = uris.toOwnedSlice(allocator);
         }
     }
 };
