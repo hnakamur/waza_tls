@@ -340,6 +340,7 @@ pub const Certificate = struct {
     unknown_usages: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
 
     subject_key_id: []const u8 = &[_]u8{},
+    authority_key_id: []const u8 = &[_]u8{},
 
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
@@ -503,6 +504,7 @@ pub const Certificate = struct {
         if (self.ext_key_usages.len > 0) allocator.free(self.ext_key_usages);
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.unknown_usages, allocator);
         if (self.subject_key_id.len > 0) allocator.free(self.subject_key_id);
+        if (self.authority_key_id.len > 0) allocator.free(self.authority_key_id);
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
         if (self.unhandled_critical_extensions.len > 0) {
@@ -545,6 +547,11 @@ pub const Certificate = struct {
             ", subject_key_id = {s}",
             .{std.fmt.fmtSliceHexLower(self.subject_key_id)},
         );
+        try std.fmt.format(
+            writer,
+            ", authority_key_id = {s}",
+            .{std.fmt.fmtSliceHexLower(self.authority_key_id)},
+        );
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
@@ -565,7 +572,10 @@ pub const Certificate = struct {
                     17 => {},
                     30 => {},
                     31 => {},
-                    35 => {},
+                    35 => self.authority_key_id = try parseAuthorityKeyIdExtension(
+                        allocator,
+                        ext.value,
+                    ),
                     37 => try self.parseExtKeyUsageExtension(allocator, ext.value),
                     14 => self.subject_key_id = try parseSubjectKeyIdExtension(
                         allocator,
@@ -663,11 +673,22 @@ fn parseKeyUsageExtension(allocator: mem.Allocator, der: []const u8) !KeyUsage {
 }
 
 fn parseSubjectKeyIdExtension(allocator: mem.Allocator, der: []const u8) ![]const u8 {
-    var s = asn1.String.init(der);
-
     // RFC 5280, 4.2.1.2
+    var s = asn1.String.init(der);
     var skid = s.readAsn1(.octet_string) catch return error.InvalidSubjectKeyId;
     return try allocator.dupe(u8, skid.bytes);
+}
+
+fn parseAuthorityKeyIdExtension(allocator: mem.Allocator, der: []const u8) ![]const u8 {
+    // RFC 5280, 4.2.1.1
+    var s = asn1.String.init(der);
+    s = s.readAsn1(.sequence) catch return error.InvalidAuthorityKeyId;
+    if (s.readOptionalAsn1(asn1.TagAndClass.init(0).contextSpecific()) catch
+        return error.InvalidAuthorityKeyId) |akid|
+    {
+        return try allocator.dupe(u8, akid.bytes);
+    }
+    return &[_]u8{};
 }
 
 fn parsePublicKey(
