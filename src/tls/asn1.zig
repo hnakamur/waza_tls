@@ -746,17 +746,8 @@ pub const ObjectIdentifier = struct {
 
     // parse decodes an ASN.1 OBJECT IDENTIFIER and advances.
     pub fn parse(allocator: mem.Allocator, s: *String) !ObjectIdentifier {
-        std.log.debug(
-            "asn1.ObjectIdentifier.parse start, s.bytes={}",
-            .{fmtx.fmtSliceHexEscapeLower(s.bytes)},
-        );
-
         var input = try s.readAsn1(.object_identifier);
         if (input.empty()) return error.InvalidObjectIdentifier;
-        std.log.debug(
-            "asn1.ObjectIdentifier.parse after read object_identifier, input.bytes={}",
-            .{fmtx.fmtSliceHexEscapeLower(input.bytes)},
-        );
 
         var components = try std.ArrayListUnmanaged(u32).initCapacity(
             allocator,
@@ -765,7 +756,6 @@ pub const ObjectIdentifier = struct {
         errdefer components.deinit(allocator);
 
         const v = try readBase128Int(&input);
-        std.log.debug("asn1.ObjectIdentifier.parse after read length, v={}", .{v});
         if (v < 80) {
             try components.append(allocator, v / 40);
             try components.append(allocator, v % 40);
@@ -776,7 +766,6 @@ pub const ObjectIdentifier = struct {
 
         while (!input.empty()) {
             try components.append(allocator, try readBase128Int(&input));
-            std.log.debug("asn1.ObjectIdentifier.parse after read trailing component", .{});
         }
 
         return ObjectIdentifier{ .components = components.toOwnedSlice(allocator) };

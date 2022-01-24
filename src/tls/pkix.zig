@@ -121,10 +121,6 @@ pub const Extension = struct {
     value: []const u8 = "",
 
     pub fn parse(der: *asn1.String, allocator: mem.Allocator) !Extension {
-        std.log.debug(
-            "pkix.Extension.parse start, der.bytes={}",
-            .{fmtx.fmtSliceHexEscapeLower(der.bytes)},
-        );
         var id = asn1.ObjectIdentifier.parse(allocator, der) catch
             return error.MalformedExtensionOidField;
         errdefer id.deinit(allocator);

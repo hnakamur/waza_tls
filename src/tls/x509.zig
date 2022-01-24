@@ -365,7 +365,6 @@ pub const Certificate = struct {
                                 return error.MalformedExtension;
                             var ext = try pkix.Extension.parse(&extension_str, allocator);
                             try extensions.append(allocator, ext);
-                            std.log.debug("extension appended, ext={}", .{ext});
                         }
                     }
                 }
