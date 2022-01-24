@@ -240,6 +240,81 @@ pub const KeyUsage = packed struct {
     decipher_only: u1 = 0,
 };
 
+pub const ExtKeyUsage = enum {
+    any,
+    server_auth,
+    client_auth,
+    code_signing,
+    email_protection,
+    ipsec_end_system,
+    ipsec_tunnel,
+    ipsec_user,
+    time_stamping,
+    ocsp_signing,
+    microsoft_server_gated_crypto,
+    netscape_server_gated_crypto,
+    microsoft_commercial_code_signing,
+    microsoft_kernel_code_signing,
+
+    fn fromOid(oid: asn1.ObjectIdentifier) ?ExtKeyUsage {
+        for (ext_key_usage_oids) |m| {
+            if (oid.eql(m.oid)) {
+                return m.usage;
+            }
+        }
+        return null;
+    }
+
+    // RFC 5280, 4.2.1.12  Extended Key Usage
+    //
+    // anyExtendedKeyUsage OBJECT IDENTIFIER ::= { id-ce-extKeyUsage 0 }
+    //
+    // id-kp OBJECT IDENTIFIER ::= { id-pkix 3 }
+    //
+    // id-kp-serverAuth             OBJECT IDENTIFIER ::= { id-kp 1 }
+    // id-kp-clientAuth             OBJECT IDENTIFIER ::= { id-kp 2 }
+    // id-kp-codeSigning            OBJECT IDENTIFIER ::= { id-kp 3 }
+    // id-kp-emailProtection        OBJECT IDENTIFIER ::= { id-kp 4 }
+    // id-kp-timeStamping           OBJECT IDENTIFIER ::= { id-kp 8 }
+    // id-kp-OCSPSigning            OBJECT IDENTIFIER ::= { id-kp 9 }
+    const oid_any = asn1.ObjectIdentifier.initConst(&.{ 2, 5, 29, 37, 0 });
+    const oid_server_auth = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 1 });
+    const oid_client_auth = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 2 });
+    const oid_code_signing = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 3 });
+    const oid_email_protection = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 4 });
+    const oid_ipsec_end_system = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 5 });
+    const oid_ipsec_tunnel = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 6 });
+    const oid_ipsec_user = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 7 });
+    const oid_time_stamping = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 8 });
+    const oid_ocsp_signing = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 5, 5, 7, 3, 9 });
+    const oid_microsoft_server_gated_crypto = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 4, 1, 311, 10, 3, 3 });
+    const oid_netscape_server_gated_crypto = asn1.ObjectIdentifier.initConst(&.{ 2, 16, 840, 1, 113730, 4, 1 });
+    const oid_microsoft_commercial_code_signing = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 4, 1, 311, 2, 1, 22 });
+    const oid_microsoft_kernel_code_signing = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 6, 1, 4, 1, 311, 61, 1, 1 });
+};
+
+const ExtKeyUsageOidMapping = struct {
+    usage: ExtKeyUsage,
+    oid: asn1.ObjectIdentifier,
+};
+
+const ext_key_usage_oids = [_]ExtKeyUsageOidMapping{
+    .{ .usage = .any, .oid = ExtKeyUsage.oid_any },
+    .{ .usage = .server_auth, .oid = ExtKeyUsage.oid_server_auth },
+    .{ .usage = .client_auth, .oid = ExtKeyUsage.oid_client_auth },
+    .{ .usage = .code_signing, .oid = ExtKeyUsage.oid_code_signing },
+    .{ .usage = .email_protection, .oid = ExtKeyUsage.oid_email_protection },
+    .{ .usage = .ipsec_end_system, .oid = ExtKeyUsage.oid_ipsec_end_system },
+    .{ .usage = .ipsec_tunnel, .oid = ExtKeyUsage.oid_ipsec_tunnel },
+    .{ .usage = .ipsec_user, .oid = ExtKeyUsage.oid_ipsec_user },
+    .{ .usage = .time_stamping, .oid = ExtKeyUsage.oid_time_stamping },
+    .{ .usage = .ocsp_signing, .oid = ExtKeyUsage.oid_ocsp_signing },
+    .{ .usage = .microsoft_server_gated_crypto, .oid = ExtKeyUsage.oid_microsoft_server_gated_crypto },
+    .{ .usage = .netscape_server_gated_crypto, .oid = ExtKeyUsage.oid_netscape_server_gated_crypto },
+    .{ .usage = .microsoft_commercial_code_signing, .oid = ExtKeyUsage.oid_microsoft_commercial_code_signing },
+    .{ .usage = .microsoft_kernel_code_signing, .oid = ExtKeyUsage.oid_microsoft_kernel_code_signing },
+};
+
 pub const Certificate = struct {
     raw: []const u8,
     raw_tbs_certificate: []const u8,
@@ -257,6 +332,8 @@ pub const Certificate = struct {
     public_key: crypto.PublicKey,
 
     key_usage: KeyUsage = .{},
+    ext_key_usages: []const ExtKeyUsage = &[_]ExtKeyUsage{},
+    unknown_usages: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
     unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
@@ -410,6 +487,21 @@ pub const Certificate = struct {
         return cert;
     }
 
+    pub fn deinit(self: *Certificate, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
+        allocator.free(self.serial_number.limbs);
+        self.issuer.deinit(allocator);
+        self.subject.deinit(allocator);
+        self.public_key.deinit(allocator);
+        if (self.ext_key_usages.len > 0) allocator.free(self.ext_key_usages);
+        memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.unknown_usages, allocator);
+        memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
+        if (self.signature.len > 0) allocator.free(self.signature);
+        if (self.unhandled_critical_extensions.len > 0) {
+            allocator.free(self.unhandled_critical_extensions);
+        }
+    }
+
     fn processExtensions(self: *Certificate, allocator: mem.Allocator) !void {
         var unhandled_critical_extensions = std.ArrayListUnmanaged(*const pkix.Extension){};
 
@@ -426,7 +518,7 @@ pub const Certificate = struct {
                     30 => {},
                     31 => {},
                     35 => {},
-                    37 => {},
+                    37 => try self.parseExtKeyUsageExtension(allocator, ext.value),
                     14 => {},
                     32 => {},
                     else => unhandled = true,
@@ -449,16 +541,34 @@ pub const Certificate = struct {
         }
     }
 
-    pub fn deinit(self: *Certificate, allocator: mem.Allocator) void {
-        allocator.free(self.raw);
-        allocator.free(self.serial_number.limbs);
-        self.issuer.deinit(allocator);
-        self.subject.deinit(allocator);
-        self.public_key.deinit(allocator);
-        memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
-        if (self.signature.len > 0) allocator.free(self.signature);
-        if (self.unhandled_critical_extensions.len > 0) {
-            allocator.free(self.unhandled_critical_extensions);
+    fn parseExtKeyUsageExtension(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        der: []const u8,
+    ) !void {
+        var s = asn1.String.init(der);
+        var ext_key_usages = std.ArrayListUnmanaged(ExtKeyUsage){};
+        errdefer ext_key_usages.deinit(allocator);
+        var unknown_usages = std.ArrayListUnmanaged(asn1.ObjectIdentifier){};
+        errdefer memx.deinitArrayListAndElems(asn1.ObjectIdentifier, &unknown_usages, allocator);
+
+        s = s.readAsn1(.sequence) catch return error.InvalidExtendedKeyUsages;
+        while (!s.empty()) {
+            var oid = asn1.ObjectIdentifier.parse(allocator, &s) catch
+                return error.InvalidExtendedKeyUsages;
+            if (ExtKeyUsage.fromOid(oid)) |eku| {
+                try ext_key_usages.append(allocator, eku);
+                oid.deinit(allocator);
+            } else {
+                try unknown_usages.append(allocator, oid);
+            }
+        }
+
+        if (ext_key_usages.items.len > 0) {
+            self.ext_key_usages = ext_key_usages.toOwnedSlice(allocator);
+        }
+        if (unknown_usages.items.len > 0) {
+            self.unknown_usages = unknown_usages.toOwnedSlice(allocator);
         }
     }
 
@@ -483,6 +593,8 @@ pub const Certificate = struct {
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
         try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
         try std.fmt.format(writer, ", key_usage = {}", .{self.key_usage});
+        try std.fmt.format(writer, ", ext_key_usages = {any}", .{self.ext_key_usages});
+        try std.fmt.format(writer, ", unknown_usages = {any}", .{self.unknown_usages});
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
