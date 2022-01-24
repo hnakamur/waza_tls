@@ -228,6 +228,18 @@ const PublicKeyInfo = struct {
     }
 };
 
+pub const KeyUsage = packed struct {
+    digital_signature: u1 = 0,
+    content_commitment: u1 = 0,
+    key_encipherment: u1 = 0,
+    data_encipherment: u1 = 0,
+    key_agreement: u1 = 0,
+    cert_sign: u1 = 0,
+    crl_sign: u1 = 0,
+    encipher_only: u1 = 0,
+    decipher_only: u1 = 0,
+};
+
 pub const Certificate = struct {
     raw: []const u8,
     raw_tbs_certificate: []const u8,
@@ -243,6 +255,8 @@ pub const Certificate = struct {
     raw_subject_public_key_info: []const u8,
     public_key_algorithm: crypto.PublicKeyAlgorithm,
     public_key: crypto.PublicKey,
+
+    key_usage: KeyUsage = .{},
     extensions: []pkix.Extension,
     signature: []const u8 = &[_]u8{},
     unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
@@ -406,7 +420,7 @@ pub const Certificate = struct {
                 mem.startsWith(u32, ext.id.components, &[_]u32{ 2, 5, 29 }))
             {
                 switch (ext.id.components[3]) {
-                    15 => {},
+                    15 => self.key_usage = try parseKeyUsageExtension(allocator, ext.value),
                     19 => {},
                     17 => {},
                     30 => {},
@@ -468,11 +482,30 @@ pub const Certificate = struct {
         try std.fmt.format(writer, ", subject = {}", .{self.subject});
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
         try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
+        try std.fmt.format(writer, ", key_usage = {}", .{self.key_usage});
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
     }
 };
+
+fn parseKeyUsageExtension(allocator: mem.Allocator, der: []const u8) !KeyUsage {
+    var s = asn1.String.init(der);
+    var usage_bits = asn1.BitString.read(&s, allocator) catch return error.InvalidKeyUsage;
+    defer usage_bits.deinit(allocator);
+
+    return KeyUsage{
+        .digital_signature = usage_bits.at(0),
+        .content_commitment = usage_bits.at(1),
+        .key_encipherment = usage_bits.at(2),
+        .data_encipherment = usage_bits.at(3),
+        .key_agreement = usage_bits.at(4),
+        .cert_sign = usage_bits.at(5),
+        .crl_sign = usage_bits.at(6),
+        .encipher_only = usage_bits.at(7),
+        .decipher_only = usage_bits.at(8),
+    };
+}
 
 fn parsePublicKey(
     allocator: mem.Allocator,

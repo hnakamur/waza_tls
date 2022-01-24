@@ -93,6 +93,17 @@ pub const BitString = struct {
         allocator.free(self.bytes);
     }
 
+    // At returns the bit at the given index. If the index is out of range it
+    // returns false.
+    pub fn at(self: *const BitString, i: usize) u1 {
+        if (i >= self.bit_length) {
+            return 0;
+        }
+        const x = i / 8;
+        const y = @intCast(u3, 7 - i % 8);
+        return @intCast(u1, (self.bytes[x] >> y) & 1);
+    }
+
     // rightAlign returns a slice where the padding bits are at the beginning.
     pub fn rightAlign(self: *const BitString, allocator: mem.Allocator) ![]const u8 {
         const shift_u4 = @intCast(u4, 8 - self.bit_length % 8);
