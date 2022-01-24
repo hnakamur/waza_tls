@@ -610,11 +610,13 @@ pub const Certificate = struct {
                 switch (ext.id.components[3]) {
                     15 => self.key_usage = try parseKeyUsageExtension(allocator, ext.value),
                     19 => try self.parseBasicConstraintsExtension(ext.value),
-                    17 => if (!try self.parseSANExtension(allocator, ext.value)) {
+                    17 => if (try self.parseSANExtension(allocator, ext.value)) {
                         // If we didn't parse anything then we do the critical check, below.
                         unhandled = true;
                     },
-                    30 => {},
+                    30 => if (try self.parseNameConstraintsExtension(allocator, ext)) {
+                        unhandled = true;
+                    },
                     31 => try self.parseCrlDistributionPointsExtension(allocator, ext.value),
                     35 => self.authority_key_id = try parseAuthorityKeyIdExtension(
                         allocator,
@@ -792,24 +794,24 @@ pub const Certificate = struct {
                 else => {},
             }
         }
-        var handled = false;
+        var unhandled = true;
         if (email_addresses.items.len > 0) {
             self.email_addresses = email_addresses.toOwnedSlice(allocator);
-            handled = true;
+            unhandled = false;
         }
         if (dns_names.items.len > 0) {
             self.dns_names = dns_names.toOwnedSlice(allocator);
-            handled = true;
+            unhandled = false;
         }
         if (uris.items.len > 0) {
             self.uris = uris.toOwnedSlice(allocator);
-            handled = true;
+            unhandled = false;
         }
         if (ip_addresses.items.len > 0) {
             self.ip_addresses = ip_addresses.toOwnedSlice(allocator);
-            handled = true;
+            unhandled = false;
         }
-        return handled;
+        return unhandled;
     }
 
     fn parseCertificatePoliciesExtension(
@@ -876,6 +878,35 @@ pub const Certificate = struct {
         if (uris.items.len > 0) {
             self.crl_distribution_points = uris.toOwnedSlice(allocator);
         }
+    }
+
+    fn parseNameConstraintsExtension(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        ext: *const pkix.Extension,
+    ) !bool {
+        // RFC 5280, 4.2.1.10
+
+        // NameConstraints ::= SEQUENCE {
+        //      permittedSubtrees       [0]     GeneralSubtrees OPTIONAL,
+        //      excludedSubtrees        [1]     GeneralSubtrees OPTIONAL }
+        //
+        // GeneralSubtrees ::= SEQUENCE SIZE (1..MAX) OF GeneralSubtree
+        //
+        // GeneralSubtree ::= SEQUENCE {
+        //      base                    GeneralName,
+        //      minimum         [0]     BaseDistance DEFAULT 0,
+        //      maximum         [1]     BaseDistance OPTIONAL }
+        //
+        // BaseDistance ::= INTEGER (0..MAX)
+
+        _ = self;
+        _ = allocator;
+        _ = ext;
+        // TODO: implement
+        // var unhandled = false;
+        // return unhandled;
+        @panic("not implemented yet");
     }
 };
 
