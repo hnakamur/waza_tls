@@ -331,6 +331,10 @@ pub const Certificate = struct {
     public_key_algorithm: crypto.PublicKeyAlgorithm,
     public_key: crypto.PublicKey,
 
+    basic_constraints_valid: bool = false,
+    is_ca: bool = false,
+    max_path_len: ?u64 = null,
+
     key_usage: KeyUsage = .{},
     ext_key_usages: []const ExtKeyUsage = &[_]ExtKeyUsage{},
     unknown_usages: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
@@ -502,6 +506,37 @@ pub const Certificate = struct {
         }
     }
 
+    pub fn format(
+        self: Certificate,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        _ = try writer.write("Certificate{ ");
+        try std.fmt.format(writer, "version = {}", .{self.version});
+        try std.fmt.format(writer, ", serial_number = {}", .{self.serial_number});
+        try std.fmt.format(writer, ", signature_algorithm = {}", .{self.signature_algorithm});
+        try std.fmt.format(writer, ", issuer = {}", .{self.issuer});
+        try std.fmt.format(writer, ", not_before = ", .{});
+        try writeUtcTime(&self.not_before, writer);
+        try std.fmt.format(writer, ", not_after = ", .{});
+        try writeUtcTime(&self.not_after, writer);
+        try std.fmt.format(writer, ", subject = {}", .{self.subject});
+        try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
+        try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
+        try std.fmt.format(writer, ", key_usage = {}", .{self.key_usage});
+        try std.fmt.format(writer, ", ext_key_usages = {any}", .{self.ext_key_usages});
+        try std.fmt.format(writer, ", unknown_usages = {any}", .{self.unknown_usages});
+        try std.fmt.format(writer, ", basic_constraints_valid = {}", .{self.basic_constraints_valid});
+        try std.fmt.format(writer, ", is_ca = {}", .{self.is_ca});
+        try std.fmt.format(writer, ", max_path_len = {}", .{self.max_path_len});
+        try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
+        try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
+        _ = try writer.write(" }");
+    }
+
     fn processExtensions(self: *Certificate, allocator: mem.Allocator) !void {
         var unhandled_critical_extensions = std.ArrayListUnmanaged(*const pkix.Extension){};
 
@@ -513,7 +548,7 @@ pub const Certificate = struct {
             {
                 switch (ext.id.components[3]) {
                     15 => self.key_usage = try parseKeyUsageExtension(allocator, ext.value),
-                    19 => {},
+                    19 => try self.parseBasicConstraintsExtension(ext.value),
                     17 => {},
                     30 => {},
                     31 => {},
@@ -572,32 +607,24 @@ pub const Certificate = struct {
         }
     }
 
-    pub fn format(
-        self: Certificate,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
+    fn parseBasicConstraintsExtension(
+        self: *Certificate,
+        der: []const u8,
     ) !void {
-        _ = fmt;
-        _ = options;
-        _ = try writer.write("Certificate{ ");
-        try std.fmt.format(writer, "version = {}", .{self.version});
-        try std.fmt.format(writer, ", serial_number = {}", .{self.serial_number});
-        try std.fmt.format(writer, ", signature_algorithm = {}", .{self.signature_algorithm});
-        try std.fmt.format(writer, ", issuer = {}", .{self.issuer});
-        try std.fmt.format(writer, ", not_before = ", .{});
-        try writeUtcTime(&self.not_before, writer);
-        try std.fmt.format(writer, ", not_after = ", .{});
-        try writeUtcTime(&self.not_after, writer);
-        try std.fmt.format(writer, ", subject = {}", .{self.subject});
-        try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
-        try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
-        try std.fmt.format(writer, ", key_usage = {}", .{self.key_usage});
-        try std.fmt.format(writer, ", ext_key_usages = {any}", .{self.ext_key_usages});
-        try std.fmt.format(writer, ", unknown_usages = {any}", .{self.unknown_usages});
-        try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
-        try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
-        _ = try writer.write(" }");
+        var s = asn1.String.init(der);
+        s = s.readAsn1(.sequence) catch return error.InvalidBasicConstraints;
+        var is_ca = false;
+        if (s.peekAsn1Tag(.boolean)) {
+            is_ca = s.readAsn1Boolean() catch return error.InvalidBasicConstraints;
+        }
+        var max_path_len: ?u64 = null;
+        if (!s.empty() and s.peekAsn1Tag(.integer)) {
+            max_path_len = s.readAsn1Uint64() catch return error.InvalidBasicConstraints;
+        }
+
+        self.basic_constraints_valid = true;
+        self.is_ca = is_ca;
+        self.max_path_len = max_path_len;
     }
 };
 
