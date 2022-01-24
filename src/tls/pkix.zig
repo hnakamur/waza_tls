@@ -3,6 +3,7 @@ const mem = std.mem;
 const asn1 = @import("asn1.zig");
 const x509 = @import("x509.zig");
 const memx = @import("../memx.zig");
+const fmtx = @import("../fmtx.zig");
 
 // AlgorithmIdentifier represents the ASN.1 structure of the same name. See RFC
 // 5280, section 4.1.1.2.
@@ -120,6 +121,10 @@ pub const Extension = struct {
     value: []const u8 = "",
 
     pub fn parse(der: *asn1.String, allocator: mem.Allocator) !Extension {
+        std.log.debug(
+            "pkix.Extension.parse start, der.bytes={}",
+            .{fmtx.fmtSliceHexEscapeLower(der.bytes)},
+        );
         var id = asn1.ObjectIdentifier.parse(allocator, der) catch
             return error.MalformedExtensionOidField;
         errdefer id.deinit(allocator);

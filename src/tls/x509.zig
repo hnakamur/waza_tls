@@ -356,13 +356,14 @@ pub const Certificate = struct {
                 _ = tbs.skipOptionalAsn1(asn1.TagAndClass.init(2).constructed().contextSpecific()) catch
                     return error.MalformedSubjectUniqueId;
                 if (version == 3) {
-                    if (tbs.readOptionalAsn1(asn1.TagAndClass.init(2).constructed().contextSpecific()) catch
-                        return error.MalformedExtensions) |*extensions_der|
+                    if (tbs.readOptionalAsn1(asn1.TagAndClass.init(3).constructed().contextSpecific()) catch
+                        return error.MalformedExtensions) |*extensions_str|
                     {
-                        while (!extensions_der.empty()) {
-                            var extension_der = extensions_der.readAsn1(.sequence) catch
+                        var extensions_str2 = try extensions_str.readAsn1(.sequence);
+                        while (!extensions_str2.empty()) {
+                            var extension_str = extensions_str2.readAsn1(.sequence) catch
                                 return error.MalformedExtension;
-                            var ext = try pkix.Extension.parse(&extension_der, allocator);
+                            var ext = try pkix.Extension.parse(&extension_str, allocator);
                             try extensions.append(allocator, ext);
                             std.log.debug("extension appended, ext={}", .{ext});
                         }
