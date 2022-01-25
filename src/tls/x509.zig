@@ -355,6 +355,18 @@ pub const Certificate = struct {
     ip_addresses: []std.net.Address = &[_]std.net.Address{},
     uris: []const []const u8 = &[_][]const u8{},
 
+    // Name constraints
+    // if true then the name constraints are marked critical.
+    permitted_dns_domains_critical: bool = false,
+    permitted_dns_domains: []const []const u8 = &[_][]const u8{},
+    excluded_dns_domains: []const []const u8 = &[_][]const u8{},
+    permitted_ip_ranges: []IpAddressNet = &[_]IpAddressNet{},
+    excluded_ip_ranges: []IpAddressNet = &[_]IpAddressNet{},
+    permitted_email_addresses: []const []const u8 = &[_][]const u8{},
+    excluded_email_addresses: []const []const u8 = &[_][]const u8{},
+    permitted_uri_domains: []const []const u8 = &[_][]const u8{},
+    excluded_uri_domains: []const []const u8 = &[_][]const u8{},
+
     policy_identifiers: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
 
     crl_distribution_points: []const []const u8 = &[_][]const u8{},
@@ -533,6 +545,20 @@ pub const Certificate = struct {
         memx.freeElemsAndFreeSlice([]const u8, self.uris, allocator);
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.policy_identifiers, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.crl_distribution_points, allocator);
+
+        memx.freeElemsAndFreeSlice([]const u8, self.permitted_dns_domains, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.excluded_dns_domains, allocator);
+        if (self.permitted_ip_ranges.len > 0) {
+            allocator.free(self.permitted_ip_ranges);
+        }
+        if (self.excluded_ip_ranges.len > 0) {
+            allocator.free(self.excluded_ip_ranges);
+        }
+        memx.freeElemsAndFreeSlice([]const u8, self.permitted_email_addresses, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.excluded_email_addresses, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.permitted_uri_domains, allocator);
+        memx.freeElemsAndFreeSlice([]const u8, self.excluded_uri_domains, allocator);
+
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
         if (self.signature.len > 0) allocator.free(self.signature);
         if (self.unhandled_critical_extensions.len > 0) {
@@ -559,7 +585,7 @@ pub const Certificate = struct {
         try writeUtcTime(&self.not_after, writer);
         try std.fmt.format(writer, ", subject = {}", .{self.subject});
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
-        try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
+        // try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
         try std.fmt.format(writer, ", key_usage = {}", .{self.key_usage});
         try std.fmt.format(writer, ", ext_key_usages = {any}", .{self.ext_key_usages});
         try std.fmt.format(writer, ", unknown_usages = {any}", .{self.unknown_usages});
@@ -594,6 +620,22 @@ pub const Certificate = struct {
         try std.fmt.format(writer, ", policy_identifiers = {any}", .{self.policy_identifiers});
         _ = try writer.write(", crl_distribution_points = ");
         try fmtx.formatStringSlice(self.crl_distribution_points, fmt, options, writer);
+
+        _ = try writer.write(", permitted_dns_domains = ");
+        try fmtx.formatStringSlice(self.permitted_dns_domains, fmt, options, writer);
+        _ = try writer.write(", excluded_dns_domains = ");
+        try fmtx.formatStringSlice(self.excluded_dns_domains, fmt, options, writer);
+        // TODO: print permitted_ip_ranges
+        // TODO: print excluded_ip_ranges
+        _ = try writer.write(", permitted_email_addresses = ");
+        try fmtx.formatStringSlice(self.permitted_email_addresses, fmt, options, writer);
+        _ = try writer.write(", excluded_email_addresses = ");
+        try fmtx.formatStringSlice(self.excluded_email_addresses, fmt, options, writer);
+        _ = try writer.write(", permitted_uri_domains = ");
+        try fmtx.formatStringSlice(self.permitted_uri_domains, fmt, options, writer);
+        _ = try writer.write(", excluded_uri_domains = ");
+        try fmtx.formatStringSlice(self.excluded_uri_domains, fmt, options, writer);
+
         try std.fmt.format(writer, ", extensions = {any}", .{self.extensions});
         try std.fmt.format(writer, ", signature = {}", .{std.fmt.fmtSliceHexLower(self.signature)});
         _ = try writer.write(" }");
@@ -603,7 +645,7 @@ pub const Certificate = struct {
         var unhandled_critical_extensions = std.ArrayListUnmanaged(*const pkix.Extension){};
 
         for (self.extensions) |*ext| {
-            std.log.debug("Certificate.processExtensions oid={}", .{ext.id});
+            // std.log.debug("Certificate.processExtensions oid={}", .{ext.id});
             var unhandled = false;
             if (ext.id.components.len == 4 and
                 mem.startsWith(u32, ext.id.components, &[_]u32{ 2, 5, 29 }))
@@ -825,8 +867,8 @@ pub const Certificate = struct {
         var oids = std.ArrayListUnmanaged(asn1.ObjectIdentifier){};
         errdefer memx.deinitArrayListAndElems(asn1.ObjectIdentifier, &oids, allocator);
         while (!s.empty()) {
-            s = s.readAsn1(.sequence) catch return error.InvaliCertificatePolicies;
-            var oid = asn1.ObjectIdentifier.parse(allocator, &s) catch
+            var cp = s.readAsn1(.sequence) catch return error.InvaliCertificatePolicies;
+            var oid = asn1.ObjectIdentifier.parse(allocator, &cp) catch
                 return error.InvaliCertificatePolicies;
             try oids.append(allocator, oid);
         }
@@ -901,15 +943,426 @@ pub const Certificate = struct {
         //
         // BaseDistance ::= INTEGER (0..MAX)
 
+        var outer = asn1.String.init(ext.value);
+        var toplevel = outer.readAsn1(.sequence) catch
+            return error.InvalidNameConstraintsExtension;
+        if (!outer.empty()) return error.InvalidNameConstraintsExtension;
+        var permitted = toplevel.readOptionalAsn1(
+            asn1.TagAndClass.init(0).contextSpecific().constructed(),
+        ) catch
+            return error.InvalidNameConstraintsExtension;
+        var excluded = toplevel.readOptionalAsn1(
+            asn1.TagAndClass.init(1).contextSpecific().constructed(),
+        ) catch
+            return error.InvalidNameConstraintsExtension;
+        if (!toplevel.empty()) return error.InvalidNameConstraintsExtension;
+
+        if ((permitted == null and excluded == null) or
+            ((permitted == null or permitted.?.empty()) and
+            (excluded == null or excluded.?.empty())))
+        {
+            return error.InvalidNameConstraintsExtension;
+        }
+
+        var unhandled = false;
+        if (permitted) |permitted2| {
+            var permitted3 = permitted2;
+            if (self.parseNameConstraintsExtensionSubtrees(
+                allocator,
+                &permitted3,
+                &self.permitted_dns_domains,
+                &self.permitted_ip_ranges,
+                &self.permitted_email_addresses,
+                &self.permitted_uri_domains,
+            ) catch return error.InvalidNameConstraintsExtension) {
+                unhandled = true;
+            }
+        }
+        if (excluded) |excluded2| {
+            var excluded3 = excluded2;
+            if (self.parseNameConstraintsExtensionSubtrees(
+                allocator,
+                &excluded3,
+                &self.excluded_dns_domains,
+                &self.excluded_ip_ranges,
+                &self.excluded_email_addresses,
+                &self.excluded_uri_domains,
+            ) catch return error.InvalidNameConstraintsExtension) {
+                unhandled = true;
+            }
+        }
+        self.permitted_dns_domains_critical = ext.critical;
+        return unhandled;
+    }
+
+    fn parseNameConstraintsExtensionSubtrees(
+        self: *Certificate,
+        allocator: mem.Allocator,
+        subtrees: *asn1.String,
+        dns_names: *[]const []const u8,
+        ips: *[]IpAddressNet,
+        emails: *[]const []const u8,
+        uri_domains: *[]const []const u8,
+    ) !bool {
         _ = self;
-        _ = allocator;
-        _ = ext;
-        // TODO: implement
-        // var unhandled = false;
-        // return unhandled;
-        @panic("not implemented yet");
+        var dns_name_list = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &dns_name_list, allocator);
+        var ip_list = std.ArrayListUnmanaged(IpAddressNet){};
+        errdefer ip_list.deinit(allocator);
+        var email_list = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_list, allocator);
+        var uri_domain_list = std.ArrayListUnmanaged([]const u8){};
+        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &uri_domain_list, allocator);
+
+        var unhandled = false;
+        while (!subtrees.empty()) {
+            var seq = subtrees.readAsn1(.sequence) catch
+                return error.InvalidNameConstraintsExtension;
+            var tag: asn1.TagAndClass = undefined;
+            var value = seq.readAnyAsn1(&tag) catch
+                return error.InvalidNameConstraintsExtension;
+
+            const dns_tag = @intToEnum(asn1.TagAndClass, 2 | asn1.TagAndClass.class_context_specific);
+            const email_tag = @intToEnum(asn1.TagAndClass, 1 | asn1.TagAndClass.class_context_specific);
+            const ip_tag = @intToEnum(asn1.TagAndClass, 7 | asn1.TagAndClass.class_context_specific);
+            const uri_tag = @intToEnum(asn1.TagAndClass, 6 | asn1.TagAndClass.class_context_specific);
+
+            switch (tag) {
+                dns_tag => {
+                    const domain = value.bytes;
+                    if (!isValidIa5String(domain)) {
+                        return error.InvalidNameConstraintsExtension;
+                    }
+                    const trimmed_domain = if (mem.startsWith(u8, domain, ".")) blk: {
+                        // constraints can have a leading
+                        // period to exclude the domain
+                        // itself, but that's not valid in a
+                        // normal domain name.
+                        break :blk domain[1..];
+                    } else domain;
+                    if (domainToReverseLabels(allocator, trimmed_domain) catch
+                        return error.InvalidNameConstraintsExtension) |reverse_labels|
+                    {
+                        memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
+                    } else {
+                        return error.InvalidNameConstraintsExtension;
+                    }
+                    try dns_name_list.append(allocator, try allocator.dupe(u8, domain));
+                },
+                ip_tag => {
+                    var mask: []const u8 = undefined;
+                    var ip_net: IpAddressNet = undefined;
+                    switch (value.bytes.len) {
+                        8 => {
+                            mask = value.bytes[4..8];
+                            ip_net = IpAddressNet{
+                                .in = Ip4AddressNet{
+                                    .ip = std.net.Ip4Address.init(value.bytes[0..4].*, 0),
+                                    .mask = mask[0..4].*,
+                                },
+                            };
+                        },
+                        32 => {
+                            mask = value.bytes[16..32];
+                            ip_net = IpAddressNet{
+                                .in6 = Ip6AddressNet{
+                                    .ip = std.net.Ip6Address.init(value.bytes[0..16].*, 0, 0, 0),
+                                    .mask = mask[0..16].*,
+                                },
+                            };
+                        },
+                        else => return error.InvalidNameConstraintsExtension,
+                    }
+                    if (!isValidIpMask(mask)) {
+                        return error.InvalidNameConstraintsExtension;
+                    }
+                    try ip_list.append(allocator, ip_net);
+                },
+                email_tag => {
+                    const constraint = value.bytes;
+                    if (!isValidIa5String(constraint)) {
+                        return error.InvalidNameConstraintsExtension;
+                    }
+                    // If the constraint contains an @ then
+                    // it specifies an exact mailbox name.
+                    if (memx.containsScalar(u8, constraint, '@')) {
+                        if (parseRfc2821Mailbox(allocator, constraint)) |*mailbox| {
+                            mailbox.deinit(allocator);
+                        } else |_| {
+                            return error.InvalidNameConstraintsExtension;
+                        }
+                    } else {
+                        // Otherwise it's a domain name.
+                        const domain = if (mem.startsWith(u8, constraint, "."))
+                            constraint[1..]
+                        else
+                            constraint;
+                        if (domainToReverseLabels(allocator, domain) catch
+                            return error.InvalidNameConstraintsExtension) |reverse_labels|
+                        {
+                            memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
+                        } else {
+                            return error.InvalidNameConstraintsExtension;
+                        }
+                    }
+                    try email_list.append(allocator, try allocator.dupe(u8, constraint));
+                },
+                uri_tag => {
+                    const domain = value.bytes;
+                    if (!isValidIa5String(domain)) {
+                        return error.InvalidNameConstraintsExtension;
+                    }
+                    if (std.net.Address.parseIp(domain, 0)) |_| {
+                        std.log.warn(
+                            "x509: failed to parse URI constraint {s}: cannot be IP address",
+                            .{domain},
+                        );
+                        return error.InvalidNameConstraintsExtension;
+                    } else |_| {}
+                    const trimmed_domain = if (mem.startsWith(u8, domain, ".")) blk: {
+                        // constraints can have a leading
+                        // period to exclude the domain
+                        // itself, but that's not valid in a
+                        // normal domain name.
+                        break :blk domain[1..];
+                    } else domain;
+                    if (domainToReverseLabels(allocator, trimmed_domain) catch
+                        return error.InvalidNameConstraintsExtension) |reverse_labels|
+                    {
+                        memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
+                    } else {
+                        return error.InvalidNameConstraintsExtension;
+                    }
+                    try uri_domain_list.append(allocator, try allocator.dupe(u8, domain));
+                },
+                else => unhandled = true,
+            }
+        }
+        if (dns_name_list.items.len > 0) {
+            dns_names.* = dns_name_list.toOwnedSlice(allocator);
+        }
+        if (ip_list.items.len > 0) {
+            ips.* = ip_list.toOwnedSlice(allocator);
+        }
+        if (email_list.items.len > 0) {
+            emails.* = email_list.toOwnedSlice(allocator);
+        }
+        if (uri_domain_list.items.len > 0) {
+            uri_domains.* = uri_domain_list.toOwnedSlice(allocator);
+        }
+        return unhandled;
     }
 };
+
+// rfc2821Mailbox represents a “mailbox” (which is an email address to most
+// people) by breaking it into the “local” (i.e. before the '@') and “domain”
+// parts.
+const rfc2821Mailbox = struct {
+    local: []const u8 = "",
+    domain: []const u8 = "",
+
+    pub fn deinit(self: *rfc2821Mailbox, allocator: mem.Allocator) void {
+        if (self.local.len > 0) allocator.free(self.local);
+        if (self.domain.len > 0) allocator.free(self.domain);
+    }
+};
+
+// parseRfc2821Mailbox parses an email address into local and domain parts,
+// based on the ABNF for a “Mailbox” from RFC 2821. According to RFC 5280,
+// Section 4.2.1.6 that's correct for an rfc822Name from a certificate: “The
+// format of an rfc822Name is a "Mailbox" as defined in RFC 2821, Section 4.1.2”.
+fn parseRfc2821Mailbox(allocator: mem.Allocator, input: []const u8) !rfc2821Mailbox {
+    var in = input;
+    if (in.len == 0) {
+        return error.InvalidMailbox;
+    }
+    var local_part = try std.ArrayListUnmanaged(u8).initCapacity(allocator, in.len / 2);
+    errdefer local_part.deinit(allocator);
+
+    if (in[0] == '"') {
+        // Quoted-string = DQUOTE *qcontent DQUOTE
+        // non-whitespace-control = %d1-8 / %d11 / %d12 / %d14-31 / %d127
+        // qcontent = qtext / quoted-pair
+        // qtext = non-whitespace-control /
+        //         %d33 / %d35-91 / %d93-126
+        // quoted-pair = ("\" text) / obs-qp
+        // text = %d1-9 / %d11 / %d12 / %d14-127 / obs-text
+        //
+        // (Names beginning with “obs-” are the obsolete syntax from RFC 2822,
+        // Section 4. Since it has been 16 years, we no longer accept that.)
+        in = in[1..];
+        while (true) {
+            if (in.len == 0) {
+                return error.InvalidMailbox;
+            }
+            const c = in[0];
+            in = in[1..];
+            if (c == '"') {
+                break;
+            } else if (c == '\\') {
+                // quoted-pair
+                if (in.len == 0) {
+                    return error.InvalidMailbox;
+                }
+                if (in[0] == 11 or in[0] == 12 or
+                    (1 <= in[0] and in[0] <= 9) or
+                    (14 <= in[0] and in[0] <= 127))
+                {
+                    try local_part.append(allocator, in[0]);
+                    in = in[1..];
+                } else {
+                    return error.InvalidMailbox;
+                }
+            } else if (c == 11 or c == 12 or
+                // Space (char 32) is not allowed based on the
+                // BNF, but RFC 3696 gives an example that
+                // assumes that it is. Several “verified”
+                // errata continue to argue about this point.
+                // We choose to accept it.
+                c == 32 or c == 33 or c == 127 or
+                (1 <= c and c <= 8) or
+                (14 <= c and c <= 31) or
+                (35 <= c and c <= 91) or
+                (93 <= c and c <= 126))
+            {
+                // qtext
+                try local_part.append(allocator, c);
+            } else {
+                return error.InvalidMailbox;
+            }
+        }
+    } else {
+        // Atom ("." Atom)*
+        while (in.len > 0) {
+            const c = in[0];
+            if (c == '\\') {
+                // Examples given in RFC 3696 suggest that
+                // escaped characters can appear outside of a
+                // quoted string. Several “verified” errata
+                // continue to argue the point. We choose to
+                // accept it.
+                in = in[1..];
+                if (in.len == 0) {
+                    return error.InvalidMailbox;
+                }
+            }
+            if (('0' <= c and c <= '9') or
+                ('a' <= c and c <= 'z') or
+                ('A' <= c and c <= 'Z') or
+                c == '!' or c == '#' or c == '$' or c == '%' or
+                c == '&' or c == '\'' or c == '*' or c == '+' or
+                c == '-' or c == '/' or c == '=' or c == '?' or
+                c == '^' or c == '_' or c == '`' or c == '{' or
+                c == '|' or c == '}' or c == '~' or c == '.')
+            {
+                try local_part.append(allocator, in[0]);
+                in = in[1..];
+            } else {
+                break;
+            }
+        }
+    }
+
+    if (in.len == 0 or in[0] != '@') {
+        return error.InvalidMailbox;
+    }
+    in = in[1..];
+
+    // The RFC species a format for domains, but that's known to be
+    // violated in practice so we accept that anything after an '@' is the
+    // domain part.
+    if (domainToReverseLabels(allocator, in) catch return error.InvalidMailbox) |reverse_labels| {
+        memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
+    } else {
+        return error.InvalidMailbox;
+    }
+
+    return rfc2821Mailbox{
+        .local = local_part.toOwnedSlice(allocator),
+        .domain = try allocator.dupe(u8, in),
+    };
+}
+
+// domainToReverseLabels converts a textual domain name like foo.example.com to
+// the list of labels in reverse order, e.g. ["com", "example", "foo"].
+fn domainToReverseLabels(allocator: mem.Allocator, domain: []const u8) !?[][]const u8 {
+    var reverse_labels = std.ArrayListUnmanaged([]const u8){};
+    errdefer memx.freeElemsAndDeinitArrayList([]const u8, &reverse_labels, allocator);
+    var rest = domain;
+    while (rest.len > 0) {
+        if (mem.lastIndexOfScalar(u8, rest, '.')) |i| {
+            try reverse_labels.append(allocator, try allocator.dupe(u8, rest[i + 1 ..]));
+            rest = rest[0..i];
+        } else {
+            try reverse_labels.append(allocator, try allocator.dupe(u8, rest));
+            break;
+        }
+    }
+
+    const valid = blk: {
+        if (reverse_labels.items.len > 0 and reverse_labels.items[0].len == 0) {
+            // An empty label at the end indicates an absolute value.
+            break :blk false;
+        }
+
+        for (reverse_labels.items) |label| {
+            if (label.len == 0) {
+                // Empty labels are otherwise invalid.
+                break :blk false;
+            }
+
+            for (label) |c| {
+                if (c < 33 or c > 126) {
+                    // Invalid character.
+                    break :blk false;
+                }
+            }
+        }
+        break :blk true;
+    };
+    if (!valid) {
+        memx.freeElemsAndDeinitArrayList([]const u8, &reverse_labels, allocator);
+        return null;
+    }
+
+    return reverse_labels.toOwnedSlice(allocator);
+}
+
+pub const IpAddressNet = union(enum) {
+    in: Ip4AddressNet,
+    in6: Ip6AddressNet,
+};
+
+pub const Ip4AddressNet = struct {
+    ip: std.net.Ip4Address,
+    mask: [4]u8,
+};
+
+pub const Ip6AddressNet = struct {
+    ip: std.net.Ip6Address,
+    mask: [16]u8,
+};
+
+// isValidIpMask reports whether mask consists of zero or more 1 bits, followed by zero bits.
+fn isValidIpMask(mask: []const u8) bool {
+    var seen_zero = false;
+    for (mask) |b| {
+        if (seen_zero) {
+            if (b != 0) {
+                return false;
+            }
+
+            continue;
+        }
+
+        switch (b) {
+            0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe => seen_zero = true,
+            0xff => {},
+            else => return false,
+        }
+    }
+    return true;
+}
 
 fn isValidIa5String(s: []const u8) bool {
     for (s) |b| {
@@ -1059,10 +1512,34 @@ fn parseTime(der: *asn1.String) !datetime.datetime.Datetime {
             &datetime.timezones.UTC,
         );
     } else if (der.peekAsn1Tag(.generalized_time)) {
-        @panic("not implemented yet");
+        return try readASN1GeneralizedTime(der);
     } else {
         return error.UnsupportedTimeFormat;
     }
+}
+
+fn readASN1GeneralizedTime(der: *asn1.String) !datetime.datetime.Datetime {
+    var t = try der.readAsn1(.generalized_time);
+    const value = t.bytes;
+    if (value.len < "20060102150405Z".len) return error.MalformedGeneralizedTime;
+
+    const year = std.fmt.parseInt(u16, value[0..4], 10) catch return error.MalformedGeneralizedTime;
+    const month = std.fmt.parseInt(u8, value[4..6], 10) catch return error.MalformedGeneralizedTime;
+    const day = std.fmt.parseInt(u8, value[6..8], 10) catch return error.MalformedGeneralizedTime;
+    const hour = std.fmt.parseInt(u8, value[8..10], 10) catch return error.MalformedGeneralizedTime;
+    const minute = std.fmt.parseInt(u8, value[10..12], 10) catch return error.MalformedGeneralizedTime;
+    const second = std.fmt.parseInt(u8, value[12..14], 10) catch return error.MalformedGeneralizedTime;
+    if (value[14] != 'Z') return error.MalformedGeneralizedTime;
+    return datetime.datetime.Datetime.create(
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        0,
+        &datetime.timezones.UTC,
+    );
 }
 
 fn formatUtcTime(dt: *const datetime.datetime.Datetime, allocator: mem.Allocator) ![]const u8 {
@@ -1108,6 +1585,12 @@ pub fn parseAsn1String(
             } else {
                 return error.InvalidUtf8String;
             }
+        },
+        .ia5_string => {
+            if (!isValidIa5String(value)) {
+                return error.InvalidIa5String;
+            }
+            return try allocator.dupe(u8, value);
         },
         // TODO: implement
         else => {

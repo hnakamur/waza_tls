@@ -12,8 +12,8 @@ const bigint = @import("big_int.zig");
 // a single identifier octet with bits 7-8 encoding the class and bits 1-6
 // encoding the tag number.
 pub const TagAndClass = enum(u8) {
-    const class_constructed = 0x20;
-    const class_context_specific = 0x80;
+    pub const class_constructed = 0x20;
+    pub const class_context_specific = 0x80;
 
     // The following is a list of standard tag and class combinations.
     boolean = 1,
