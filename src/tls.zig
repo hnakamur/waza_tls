@@ -35,6 +35,7 @@ const pem = @import("tls/pem.zig");
 const common = @import("tls/common.zig");
 const big_int = @import("tls/big_int.zig");
 const bits = @import("tls/bits.zig");
+const root_linux = @import("tls/root_linux.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

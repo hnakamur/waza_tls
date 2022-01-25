@@ -369,103 +369,103 @@ pub const Certificate = struct {
         // we can populate Certificate.raw, before unwrapping the
         // SEQUENCE so it can be operated on
         input = input.readAsn1Element(.sequence) catch return error.MalformedCertificate;
-        var raw = try allocator.dupe(u8, input.bytes);
-        errdefer allocator.free(raw);
-
-        input = asn1.String.init(raw);
-        input = input.readAsn1(.sequence) catch return error.MalformedCertificate;
-
-        var tbs = input.readAsn1Element(.sequence) catch return error.MalformedTbsCertificate;
-        const raw_tbs_certificate = tbs.bytes;
-
-        // do the same trick again as above to extract the raw
-        // bytes for Certificate.RawTBSCertificate
-        tbs = tbs.readAsn1(.sequence) catch return error.MalformedTbsCertificate;
-
-        var version = tbs.readOptionalAsn1Integer(
-            i64,
-            @intToEnum(asn1.TagAndClass, 0).constructed().contextSpecific(),
-            allocator,
-            0,
-        ) catch return error.MalformedVersion;
-        if (version < 0) {
-            return error.MalformedVersion;
-        }
-        // for backwards compat reasons Version is one-indexed,
-        // rather than zero-indexed as defined in 5280
-        version += 1;
-        if (version > 3) {
-            return error.InvalidVersion;
-        }
-
-        // we ignore the presence of negative serial numbers because
-        // of their prevalence, despite them being invalid
-        // TODO(rolandshoemaker): revist this decision, there are currently
-        // only 10 trusted certificates with negative serial numbers
-        // according to censys.io.
-        var serial_number = tbs.readAsn1Integer(
-            math.big.int.Const,
-            allocator,
-        ) catch return error.MalformedSerialNumber;
-        errdefer bigint.deinitConst(serial_number, allocator);
-
-        var sig_ai_seq = tbs.readAsn1(
-            .sequence,
-        ) catch return error.MalformedSignatureAlgorithmIdentifier;
-        // Before parsing the inner algorithm identifier, extract
-        // the outer algorithm identifier and make sure that they
-        // match.
-        var outer_sig_ai_seq = input.readAsn1(
-            .sequence,
-        ) catch return error.MalformedAlgorithmIdentifier;
-        if (!mem.eql(u8, outer_sig_ai_seq.bytes, sig_ai_seq.bytes)) {
-            return error.SignatureAlgorithmIdentifierMismatch;
-        }
-        var sig_ai = try pkix.AlgorithmIdentifier.parse(allocator, &sig_ai_seq);
-        defer sig_ai.deinit(allocator);
-        std.log.debug("sig_ai={}", .{sig_ai});
-        const signature_algorithm = try SignatureAlgorithm.fromAlgorithmIdentifier(&sig_ai);
-
-        var issuer_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedIssuer;
-        const raw_issuer = issuer_seq.bytes;
-        var issuer_rdns = try parseName(allocator, &issuer_seq);
-        defer issuer_rdns.deinit(allocator);
-        var issuer = try pkix.Name.fromRdnSequence(allocator, &issuer_rdns);
-        errdefer issuer.deinit(allocator);
-
-        var validity = tbs.readAsn1(.sequence) catch return error.MalformedValidity;
-        var not_before = try parseTime(&validity);
-        var not_after = try parseTime(&validity);
-
-        var subject_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedSubject;
-        const raw_subject = subject_seq.bytes;
-        var subject_rdns = try parseName(allocator, &subject_seq);
-        defer subject_rdns.deinit(allocator);
-        var subject = try pkix.Name.fromRdnSequence(allocator, &subject_rdns);
-        errdefer subject.deinit(allocator);
-
-        var raw_subject_public_key_info: []const u8 = undefined;
-        var public_key_algorithm: crypto.PublicKeyAlgorithm = undefined;
-        var pk_info = blk: {
-            var spki = tbs.readAsn1Element(.sequence) catch return error.MalformedSpki;
-            raw_subject_public_key_info = spki.bytes;
-            spki = spki.readAsn1(.sequence) catch return error.MalformedSpki;
-            var pk_ai_seq = spki.readAsn1(
-                .sequence,
-            ) catch return error.MalformedPublicKeyAlgorithmIdentifier;
-            var pk_ai = try pkix.AlgorithmIdentifier.parse(allocator, &pk_ai_seq);
-            errdefer pk_ai.deinit(allocator);
-            public_key_algorithm = crypto.PublicKeyAlgorithm.fromOid(pk_ai.algorithm);
-            var spk = try asn1.BitString.read(&spki, allocator);
-            break :blk PublicKeyInfo{ .algorithm = pk_ai, .public_key = spk };
-        };
-        defer pk_info.deinit(allocator);
-        var public_key = try parsePublicKey(allocator, public_key_algorithm, &pk_info);
-        errdefer public_key.deinit(allocator);
 
         var cert = blk: {
+            var raw = try allocator.dupe(u8, input.bytes);
+            errdefer allocator.free(raw);
+
+            input = asn1.String.init(raw);
+            input = input.readAsn1(.sequence) catch return error.MalformedCertificate;
+
+            var tbs = input.readAsn1Element(.sequence) catch return error.MalformedTbsCertificate;
+            const raw_tbs_certificate = tbs.bytes;
+
+            // do the same trick again as above to extract the raw
+            // bytes for Certificate.RawTBSCertificate
+            tbs = tbs.readAsn1(.sequence) catch return error.MalformedTbsCertificate;
+
+            var version = tbs.readOptionalAsn1Integer(
+                i64,
+                @intToEnum(asn1.TagAndClass, 0).constructed().contextSpecific(),
+                allocator,
+                0,
+            ) catch return error.MalformedVersion;
+            if (version < 0) {
+                return error.MalformedVersion;
+            }
+            // for backwards compat reasons Version is one-indexed,
+            // rather than zero-indexed as defined in 5280
+            version += 1;
+            if (version > 3) {
+                return error.InvalidVersion;
+            }
+
+            // we ignore the presence of negative serial numbers because
+            // of their prevalence, despite them being invalid
+            // TODO(rolandshoemaker): revist this decision, there are currently
+            // only 10 trusted certificates with negative serial numbers
+            // according to censys.io.
+            var serial_number = tbs.readAsn1Integer(
+                math.big.int.Const,
+                allocator,
+            ) catch return error.MalformedSerialNumber;
+            errdefer bigint.deinitConst(serial_number, allocator);
+
+            var sig_ai_seq = tbs.readAsn1(
+                .sequence,
+            ) catch return error.MalformedSignatureAlgorithmIdentifier;
+            // Before parsing the inner algorithm identifier, extract
+            // the outer algorithm identifier and make sure that they
+            // match.
+            var outer_sig_ai_seq = input.readAsn1(
+                .sequence,
+            ) catch return error.MalformedAlgorithmIdentifier;
+            if (!mem.eql(u8, outer_sig_ai_seq.bytes, sig_ai_seq.bytes)) {
+                return error.SignatureAlgorithmIdentifierMismatch;
+            }
+            var sig_ai = try pkix.AlgorithmIdentifier.parse(allocator, &sig_ai_seq);
+            defer sig_ai.deinit(allocator);
+            const signature_algorithm = try SignatureAlgorithm.fromAlgorithmIdentifier(&sig_ai);
+
+            var issuer_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedIssuer;
+            const raw_issuer = issuer_seq.bytes;
+            var issuer_rdns = try parseName(allocator, &issuer_seq);
+            defer issuer_rdns.deinit(allocator);
+            var issuer = try pkix.Name.fromRdnSequence(allocator, &issuer_rdns);
+            errdefer issuer.deinit(allocator);
+
+            var validity = tbs.readAsn1(.sequence) catch return error.MalformedValidity;
+            var not_before = try parseTime(&validity);
+            var not_after = try parseTime(&validity);
+
+            var subject_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedSubject;
+            const raw_subject = subject_seq.bytes;
+            var subject_rdns = try parseName(allocator, &subject_seq);
+            defer subject_rdns.deinit(allocator);
+            var subject = try pkix.Name.fromRdnSequence(allocator, &subject_rdns);
+            errdefer subject.deinit(allocator);
+
+            var raw_subject_public_key_info: []const u8 = undefined;
+            var public_key_algorithm: crypto.PublicKeyAlgorithm = undefined;
+            var pk_info = blk2: {
+                var spki = tbs.readAsn1Element(.sequence) catch return error.MalformedSpki;
+                raw_subject_public_key_info = spki.bytes;
+                spki = spki.readAsn1(.sequence) catch return error.MalformedSpki;
+                var pk_ai_seq = spki.readAsn1(
+                    .sequence,
+                ) catch return error.MalformedPublicKeyAlgorithmIdentifier;
+                var pk_ai = try pkix.AlgorithmIdentifier.parse(allocator, &pk_ai_seq);
+                errdefer pk_ai.deinit(allocator);
+                public_key_algorithm = crypto.PublicKeyAlgorithm.fromOid(pk_ai.algorithm);
+                var spk = try asn1.BitString.read(&spki, allocator);
+                break :blk2 PublicKeyInfo{ .algorithm = pk_ai, .public_key = spk };
+            };
+            defer pk_info.deinit(allocator);
+            var public_key = try parsePublicKey(allocator, public_key_algorithm, &pk_info);
+            errdefer public_key.deinit(allocator);
+
             var extensions = std.ArrayListUnmanaged(pkix.Extension){};
-            errdefer extensions.deinit(allocator);
+            errdefer memx.deinitArrayListAndElems(pkix.Extension, &extensions, allocator);
             if (version > 1) {
                 _ = tbs.skipOptionalAsn1(asn1.TagAndClass.init(1).constructed().contextSpecific()) catch
                     return error.MalformedIssuerUniqueId;
@@ -503,6 +503,7 @@ pub const Certificate = struct {
                 .extensions = extensions.toOwnedSlice(allocator),
             };
         };
+        errdefer cert.deinit(allocator);
         try cert.processExtensions(allocator);
 
         var signature = try asn1.BitString.read(&input, allocator);
