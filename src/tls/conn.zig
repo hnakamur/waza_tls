@@ -563,6 +563,7 @@ pub const Conn = struct {
         if (self.in.err) |err| {
             return err;
         }
+        const handshake_complete = self.handshake_complete;
         if (self.input.readableLength() != 0) {
             return error.InternalError;
         }
@@ -674,13 +675,15 @@ pub const Conn = struct {
             .change_cipher_spec => {
                 defer allocator.free(data);
                 if (data.len != 1 or data[0] != 1) {
-                    // TODO: send alert
-                    return error.AlertDecodeError;
+                    self.sendAlert(.decode_error) catch |err| {
+                        return self.in.setError(err);
+                    };
                 }
                 // Handshake messages are not allowed to fragment across the CCS.
                 if (self.handshake_bytes.len > 0) {
-                    // TODO: send alert
-                    return error.UnexpectedMessage;
+                    self.sendAlert(.unexpected_message) catch |err| {
+                        return self.in.setError(err);
+                    };
                 }
                 // In TLS 1.3, change_cipher_spec records are ignored until the
                 // Finished. See RFC 8446, Appendix D.4. Note that according to Section
@@ -693,16 +696,31 @@ pub const Conn = struct {
                 }
 
                 if (!expect_change_cipher_spec) {
-                    // TODO: send alert
-                    return error.UnexpectedMessage;
+                    self.sendAlert(.unexpected_message) catch |err| {
+                        return self.in.setError(err);
+                    };
                 }
                 std.log.debug(
                     "Conn.readRecordOrChangeCipherSpec calling changeCipherSpec, self=0x{x}, &self.in=0x{x}",
                     .{ @ptrToInt(self), @ptrToInt(&self.in) },
                 );
-                try self.in.changeCipherSpec();
+                self.in.changeCipherSpec() catch {
+                    self.sendAlert(.internal_error) catch |err| {
+                        return self.in.setError(err);
+                    };
+                };
             },
             .application_data => {
+                if (!handshake_complete or expect_change_cipher_spec) {
+                    self.sendAlert(.unexpected_message) catch |err| {
+                        return self.in.setError(err);
+                    };
+                }
+                // Some OpenSSL servers send empty records in order to randomize the
+                // CBC IV. Ignore a limited number of empty records.
+                if (data.len == 0) {
+                    return try self.retryReadRecord(expect_change_cipher_spec);
+                }
                 try self.input.write(data);
                 allocator.free(data);
             },
@@ -737,7 +755,7 @@ pub const Conn = struct {
         for (certificates) |cert_der, i| {
             var cert = x509.Certificate.parse(self.allocator, cert_der) catch {
                 self.sendAlert(.bad_certificate) catch {};
-                return error.BadServerSerfificate;
+                return error.BadServerCerfificate;
             };
             certs[i] = cert;
         }

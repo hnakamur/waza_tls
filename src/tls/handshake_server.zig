@@ -170,14 +170,6 @@ pub const ServerHandshakeStateTls12 = struct {
         self.hello = hello;
 
         self.cert_chain = self.conn.config.getCertificate();
-        // const certificate_chain = try allocator.dupe(
-        //     []const u8,
-        //     &[_][]const u8{try allocator.dupe(u8, testEd25519Certificate)},
-        // );
-        // self.cert_chain = CertificateChain{
-        //     .certificate_chain = certificate_chain,
-        //     .private_key = .{ .ed25519 = .{ .raw = testEd25519PrivateKey } },
-        // };
     }
 
     // checkForResumption reports whether we should perform resumption on this connection.
@@ -251,7 +243,7 @@ pub const ServerHandshakeStateTls12 = struct {
         {
             const certificates = try allocator.dupe(
                 []const u8,
-                &[_][]const u8{testEd25519Certificate},
+                self.cert_chain.?.certificate_chain,
             );
             var cert_msg = CertificateMsg{ .certificates = certificates };
             defer cert_msg.deinit(allocator);

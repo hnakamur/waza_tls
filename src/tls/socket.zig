@@ -130,7 +130,7 @@ test "Conn ClientServer" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
 
     try struct {
         fn testServer(server: *Server) !void {
