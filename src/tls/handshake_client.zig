@@ -328,8 +328,13 @@ pub const ClientHandshakeStateTls12 = struct {
         try self.pickCipherSuite();
         _ = allocator;
 
+        if (self.server_hello.compression_method != .none) {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.ServerSelectedUnsupportedCompressionFormat;
+        }
+
         // TODO: implement
-        
+
         return false;
     }
 
