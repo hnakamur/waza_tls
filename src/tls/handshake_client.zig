@@ -12,6 +12,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
 const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
+const mutualCipherSuite12 = @import("cipher_suites.zig").mutualCipherSuite12;
 const x509 = @import("x509.zig");
 const prfForVersion = @import("prf.zig").prfForVersion;
 const master_secret_length = @import("prf.zig").master_secret_length;
@@ -326,12 +327,18 @@ pub const ClientHandshakeStateTls12 = struct {
     fn processServerHello(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !bool {
         try self.pickCipherSuite();
         _ = allocator;
+
+        // TODO: implement
+        
         return false;
     }
 
     fn pickCipherSuite(self: *ClientHandshakeStateTls12) !void {
-        // TODO: stop hardcoding
-        var suite = cipherSuite12ById(.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).?;
-        self.suite = suite;
+        if (mutualCipherSuite12(self.hello.cipher_suites, self.server_hello.cipher_suite)) |suite| {
+            self.suite = suite;
+        } else {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.ServerChoseAnUnconfiguredCipherSuite;
+        }
     }
 };
