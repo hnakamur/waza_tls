@@ -585,7 +585,7 @@ pub const Certificate = struct {
         try writeUtcTime(&self.not_after, writer);
         try std.fmt.format(writer, ", subject = {}", .{self.subject});
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
-        // try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
+        try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
         try std.fmt.format(writer, ", key_usage = {}", .{self.key_usage});
         try std.fmt.format(writer, ", ext_key_usages = {any}", .{self.ext_key_usages});
         try std.fmt.format(writer, ", unknown_usages = {any}", .{self.unknown_usages});
@@ -1443,6 +1443,7 @@ fn parsePublicKey(
             return crypto.PublicKey{ .rsa = .{ .modulus = n, .exponent = @intCast(u64, e) } };
         },
         else => {
+            std.log.err("unsupported public_key type, algo={}", .{algo});
             return crypto.PublicKey{ .unknown = {} };
         },
     }

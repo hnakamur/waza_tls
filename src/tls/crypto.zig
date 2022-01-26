@@ -39,6 +39,17 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
             else => {},
         }
     }
+
+    pub fn format(
+        self: PublicKey,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try std.fmt.format(writer, "PublicKey{{ type = {s} }}", .{@tagName(self)});
+    }
 };
 
 pub const SignOpts = struct {
