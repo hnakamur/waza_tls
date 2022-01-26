@@ -123,13 +123,13 @@ pub const ClientHandshakeStateTls12 = struct {
         var cert_msg = switch (hs_msg) {
             .Certificate => |c| c,
             else => {
-                // TODO: send alert
+                self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         };
         defer cert_msg.deinit(allocator);
         if (cert_msg.certificates.len == 0) {
-            // TODO: send alert
+            self.conn.sendAlert(.unexpected_message) catch {};
             return error.UnexpectedMessage;
         }
 
@@ -138,7 +138,21 @@ pub const ClientHandshakeStateTls12 = struct {
         hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
             .CertificateStatus => |cs| {
+                // RFC4366 on Certificate Status Request:
+                // The server MAY return a "certificate_status" message.
+                if (!self.server_hello.ocsp_stapling) {
+                    // If a server returns a "CertificateStatus" message, then the
+                    // server MUST have included an extension of type "status_request"
+                    // with empty "extension_data" in the extended server hello.
+                    self.conn.sendAlert(.unexpected_message) catch {};
+                    return error.UnexpectedCertificateStatusMessage;
+                }
+
+                try self.finished_hash.?.write(try cert_msg.marshal(allocator));
+
+                // TODO: implement
                 _ = cs;
+
                 hs_msg = try self.conn.readHandshake(allocator);
             },
             else => {},
@@ -159,18 +173,23 @@ pub const ClientHandshakeStateTls12 = struct {
                 {
                     defer skx_msg.deinit(allocator);
                     try self.finished_hash.?.write(try skx_msg.marshal(allocator));
-                    try key_agreement.processServerKeyExchange(
+                    key_agreement.processServerKeyExchange(
                         allocator,
                         &self.hello,
                         &self.server_hello,
                         &self.conn.peer_certificates[0],
                         skx_msg,
-                    );
+                    ) catch |err| {
+                        self.conn.sendAlert(.unexpected_message) catch {};
+                        return err;
+                    };
                 }
                 hs_msg = try self.conn.readHandshake(allocator);
             },
             else => {},
         }
+
+        // TODO: implement handling of CertificateRequestMsg
 
         switch (hs_msg) {
             .ServerHelloDone => |*hello_done_msg| {
@@ -178,25 +197,33 @@ pub const ClientHandshakeStateTls12 = struct {
                 try self.finished_hash.?.write(try hello_done_msg.marshal(allocator));
             },
             else => {
-                // TODO: send alert
+                self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         }
 
+        // TODO: implement sending client certificate if requested.
+
         var pre_master_secret: []const u8 = undefined;
         var ckx_msg: ClientKeyExchangeMsg = undefined;
-        try key_agreement.generateClientKeyExchange(
+        key_agreement.generateClientKeyExchange(
             allocator,
             &self.hello,
             &self.conn.peer_certificates[0],
             &pre_master_secret,
             &ckx_msg,
-        );
+        ) catch |err| {
+            self.conn.sendAlert(.internal_error) catch {};
+            return err;
+        };
         defer ckx_msg.deinit(allocator);
         defer allocator.free(pre_master_secret);
+        // TODO: implement for case when cks_msg is not generated.
         const ckx_msg_bytes = try ckx_msg.marshal(allocator);
         try self.finished_hash.?.write(ckx_msg_bytes);
         try self.conn.writeRecord(allocator, .handshake, ckx_msg_bytes);
+
+        // TODO: implement sending CertVerifyMsg when needed
 
         self.master_secret = try masterFromPreMasterSecret(
             allocator,
@@ -210,6 +237,8 @@ pub const ClientHandshakeStateTls12 = struct {
             "ClientHandshakeStateTls12 master_secret={}",
             .{fmtx.fmtSliceHexEscapeLower(self.master_secret.?)},
         );
+
+        // TODO: implement write key log
 
         self.finished_hash.?.discardHandshakeBuffer();
     }
@@ -270,7 +299,7 @@ pub const ClientHandshakeStateTls12 = struct {
         var server_finished_msg = switch (hs_msg) {
             .Finished => |m| m,
             else => {
-                // TODO: send alert
+                self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         };
@@ -286,7 +315,7 @@ pub const ClientHandshakeStateTls12 = struct {
         );
 
         if (constantTimeEqlBytes(&verify_data, server_finished_msg.verify_data) != 1) {
-            // TODO: send alert
+            self.conn.sendAlert(.handshake_failure) catch {};
             return error.IncorrectServerFinishedMessage;
         }
 

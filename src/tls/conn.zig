@@ -755,7 +755,7 @@ pub const Conn = struct {
         for (certificates) |cert_der, i| {
             var cert = x509.Certificate.parse(self.allocator, cert_der) catch {
                 self.sendAlert(.bad_certificate) catch {};
-                return error.BadServerCerfificate;
+                return error.BadServerCertificate;
             };
             certs[i] = cert;
         }
