@@ -48,7 +48,16 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
     ) !void {
         _ = fmt;
         _ = options;
-        try std.fmt.format(writer, "PublicKey{{ type = {s} }}", .{@tagName(self)});
+        switch (self) {
+            .rsa => |k| {
+                _ = try writer.write("PublicKey{ .rsa = ");
+                try k.format(fmt, options, writer);
+                _ = try writer.write(" }");
+            },
+            else => {
+                try std.fmt.format(writer, "PublicKey{{ .{s} = ... }}", .{@tagName(self)});
+            },
+        }
     }
 };
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const math = std.math;
 const mem = std.mem;
 const memx = @import("../memx.zig");
+const fmtx = @import("../fmtx.zig");
 const HashType = @import("auth.zig").HashType;
 const SignOpts = @import("crypto.zig").SignOpts;
 const bigint = @import("big_int.zig");
@@ -18,6 +19,29 @@ pub const PublicKey = struct {
     // for or by this public key will have the same size.
     pub fn size(self: *const PublicKey) usize {
         return math.divCeil(usize, self.modulus.bitCountAbs(), 8) catch unreachable;
+    }
+
+    pub fn format(
+        self: PublicKey,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        _ = try writer.write("PublicKey{ modulus = ");
+        var limbs_bytes: []const u8 = undefined;
+        limbs_bytes.ptr = @intToPtr([*]const u8, @ptrToInt(self.modulus.limbs.ptr));
+        limbs_bytes.len = self.modulus.limbs.len * @sizeOf(math.big.Limb);
+        try std.fmt.format(
+            writer,
+            "{s}0x{}",
+            .{
+                @as([]const u8, if (self.modulus.positive) "" else "-"),
+                std.fmt.fmtSliceHexLower(limbs_bytes),
+            },
+        );
+        try std.fmt.format(writer, ", exponent = {} }}", .{self.exponent});
     }
 };
 
