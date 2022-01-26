@@ -33,6 +33,27 @@ pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
     return Const{ .limbs = limbs, .positive = true };
 }
 
+pub fn formatConst(
+    c: Const,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = fmt;
+    _ = options;
+    var limbs_bytes: []const u8 = undefined;
+    limbs_bytes.ptr = @intToPtr([*]const u8, @ptrToInt(c.limbs.ptr));
+    limbs_bytes.len = c.limbs.len * @sizeOf(Limb);
+    try std.fmt.format(
+        writer,
+        "{s}0x{}",
+        .{
+            @as([]const u8, if (c.positive) "" else "-"),
+            std.fmt.fmtSliceHexLower(limbs_bytes),
+        },
+    );
+}
+
 pub fn constFromDecimal(allocator: mem.Allocator, str: []const u8) !Const {
     return try strToManaged(allocator, str).toConst();
 }

@@ -32,6 +32,7 @@ const pkcs1 = @import("tls/pkcs1.zig");
 const crypto = @import("tls/crypto.zig");
 const rsa = @import("tls/rsa.zig");
 const ecdsa = @import("tls/ecdsa.zig");
+const elliptic = @import("tls/elliptic.zig");
 const pem = @import("tls/pem.zig");
 const common = @import("tls/common.zig");
 const big_int = @import("tls/big_int.zig");

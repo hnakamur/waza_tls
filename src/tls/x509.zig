@@ -11,6 +11,7 @@ const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const memx = @import("../memx.zig");
 const fmtx = @import("../fmtx.zig");
 const ecdsa = @import("ecdsa.zig");
+const elliptic = @import("elliptic.zig");
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -1450,9 +1451,29 @@ fn parsePublicKey(
                     return error.InvalidEcdsaParameters;
             } else return error.InvalidEcdsaParameters;
             defer named_curve_oid.deinit(allocator);
-            var curve = namedCurveFromOid(named_curve_oid);
-            _ = curve;
-            return crypto.PublicKey{ .unknown = {} };
+            if (namedCurveFromOid(named_curve_oid)) |curve| {
+                const byte_len = try math.divCeil(usize, curve.params.bit_size, @bitSizeOf(u8));
+                const data = der.bytes;
+                if (data.len != 1 + 2 * byte_len) {
+                    return error.InvalidCurvePoints;
+                }
+                if (data[0] != 4) { // uncompressed form
+                    return error.InvalidCurvePoints;
+                }
+                const x = try bigint.constFromBytes(allocator, data[1 .. 1 + byte_len]);
+                errdefer bigint.deinitConst(x, allocator);
+                const y = try bigint.constFromBytes(allocator, data[1 + byte_len ..]);
+                errdefer bigint.deinitConst(y, allocator);
+
+                // TODO: implement check whether point (x, y) is on the curve.
+
+                return crypto.PublicKey{ .ecdsa = ecdsa.PublicKey{
+                    .curve = curve,
+                    .x = x,
+                    .y = y,
+                } };
+            }
+            @panic("not implemented yet");
         },
         else => {
             std.log.err("unsupported public_key type, algo={}", .{algo});
@@ -1482,19 +1503,32 @@ const oid_named_curve_p256 = asn1.ObjectIdentifier.initConst(&.{ 1, 2, 840, 1004
 const oid_named_curve_p384 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 34 });
 const oid_named_curve_p521 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 35 });
 
-fn namedCurveFromOid(oid: asn1.ObjectIdentifier) ?ecdsa.EllipticCurve {
+fn namedCurveFromOid(oid: asn1.ObjectIdentifier) ?elliptic.Curve {
     if (oid.eql(oid_named_curve_p224)) {
         std.log.debug("namedCurveFromOid got p224r1", .{});
     } else if (oid.eql(oid_named_curve_p256)) {
         std.log.debug("namedCurveFromOid got p256r1", .{});
+        return elliptic.p256();
     } else if (oid.eql(oid_named_curve_p384)) {
         std.log.debug("namedCurveFromOid got p384r1", .{});
+        return elliptic.p384();
     } else if (oid.eql(oid_named_curve_p521)) {
         std.log.debug("namedCurveFromOid got p521r1", .{});
+        return elliptic.p521();
     } else {
         std.log.debug("namedCurveFromOid other curve, oid={}", .{oid});
     }
-    // @panic("not implemented yet");
+    return null;
+}
+
+fn curveIdFromOid(oid: asn1.ObjectIdentifier) ?CurveId {
+    if (oid.eql(oid_named_curve_p256)) {
+        return CurveId.secp256r1;
+    } else if (oid.eql(oid_named_curve_p384)) {
+        return CurveId.secp384r1;
+    } else if (oid.eql(oid_named_curve_p521)) {
+        return CurveId.secp521r1;
+    }
     return null;
 }
 

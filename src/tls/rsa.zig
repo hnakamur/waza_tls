@@ -27,20 +27,8 @@ pub const PublicKey = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        _ = fmt;
-        _ = options;
         _ = try writer.write("PublicKey{ modulus = ");
-        var limbs_bytes: []const u8 = undefined;
-        limbs_bytes.ptr = @intToPtr([*]const u8, @ptrToInt(self.modulus.limbs.ptr));
-        limbs_bytes.len = self.modulus.limbs.len * @sizeOf(math.big.Limb);
-        try std.fmt.format(
-            writer,
-            "{s}0x{}",
-            .{
-                @as([]const u8, if (self.modulus.positive) "" else "-"),
-                std.fmt.fmtSliceHexLower(limbs_bytes),
-            },
-        );
+        try bigint.formatConst(self.modulus, fmt, options, writer);
         try std.fmt.format(writer, ", exponent = {} }}", .{self.exponent});
     }
 };

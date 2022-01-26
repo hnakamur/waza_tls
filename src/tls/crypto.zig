@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const asn1 = @import("asn1.zig");
 const rsa = @import("rsa.zig");
+const ecdsa = @import("ecdsa.zig");
 const parsePkcs1PrivateKey = @import("pkcs1.zig").parsePkcs1PrivateKey;
 const HashType = @import("auth.zig").HashType;
 
@@ -30,12 +31,13 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
     unknown: void,
     rsa: rsa.PublicKey,
     dsa: void,
-    ecdsa: void,
+    ecdsa: ecdsa.PublicKey,
     ed25519: void,
 
     pub fn deinit(self: *PublicKey, allocator: mem.Allocator) void {
         switch (self.*) {
             .rsa => |*k| k.deinit(allocator),
+            .ecdsa => |*k| k.deinit(allocator),
             else => {},
         }
     }
@@ -51,6 +53,11 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
         switch (self) {
             .rsa => |k| {
                 _ = try writer.write("PublicKey{ .rsa = ");
+                try k.format(fmt, options, writer);
+                _ = try writer.write(" }");
+            },
+            .ecdsa => |k| {
+                _ = try writer.write("PublicKey{ .ecdsa = ");
                 try k.format(fmt, options, writer);
                 _ = try writer.write(" }");
             },
