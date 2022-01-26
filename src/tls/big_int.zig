@@ -33,6 +33,10 @@ pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
     return Const{ .limbs = limbs, .positive = true };
 }
 
+pub fn constFromDecimal(allocator: mem.Allocator, str: []const u8) !Const {
+    return try strToManaged(allocator, str).toConst();
+}
+
 // expConst returns x**y mod |m| (i.e. the sign of m is ignored).
 // If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
 // and x and m are not relatively prime, returns 0.

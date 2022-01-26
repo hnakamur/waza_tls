@@ -10,6 +10,7 @@ const bigint = @import("big_int.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const memx = @import("../memx.zig");
 const fmtx = @import("../fmtx.zig");
+const ecdsa = @import("ecdsa.zig");
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -1442,11 +1443,59 @@ fn parsePublicKey(
             }
             return crypto.PublicKey{ .rsa = .{ .modulus = n, .exponent = @intCast(u64, e) } };
         },
+        .ecdsa => {
+            var named_curve_oid = if (key_data.algorithm.parameters) |params| blk: {
+                var params_der = asn1.String.init(params.full_bytes);
+                break :blk asn1.ObjectIdentifier.parse(allocator, &params_der) catch
+                    return error.InvalidEcdsaParameters;
+            } else return error.InvalidEcdsaParameters;
+            defer named_curve_oid.deinit(allocator);
+            var curve = namedCurveFromOid(named_curve_oid);
+            _ = curve;
+            return crypto.PublicKey{ .unknown = {} };
+        },
         else => {
             std.log.err("unsupported public_key type, algo={}", .{algo});
             return crypto.PublicKey{ .unknown = {} };
         },
     }
+}
+
+// RFC 5480, 2.1.1.1. Named Curve
+//
+// secp224r1 OBJECT IDENTIFIER ::= {
+//   iso(1) identified-organization(3) certicom(132) curve(0) 33 }
+//
+// secp256r1 OBJECT IDENTIFIER ::= {
+//   iso(1) member-body(2) us(840) ansi-X9-62(10045) curves(3)
+//   prime(1) 7 }
+//
+// secp384r1 OBJECT IDENTIFIER ::= {
+//   iso(1) identified-organization(3) certicom(132) curve(0) 34 }
+//
+// secp521r1 OBJECT IDENTIFIER ::= {
+//   iso(1) identified-organization(3) certicom(132) curve(0) 35 }
+//
+// NB: secp256r1 is equivalent to prime256v1
+const oid_named_curve_p224 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 33 });
+const oid_named_curve_p256 = asn1.ObjectIdentifier.initConst(&.{ 1, 2, 840, 10045, 3, 1, 7 });
+const oid_named_curve_p384 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 34 });
+const oid_named_curve_p521 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 35 });
+
+fn namedCurveFromOid(oid: asn1.ObjectIdentifier) ?ecdsa.EllipticCurve {
+    if (oid.eql(oid_named_curve_p224)) {
+        std.log.debug("namedCurveFromOid got p224r1", .{});
+    } else if (oid.eql(oid_named_curve_p256)) {
+        std.log.debug("namedCurveFromOid got p256r1", .{});
+    } else if (oid.eql(oid_named_curve_p384)) {
+        std.log.debug("namedCurveFromOid got p384r1", .{});
+    } else if (oid.eql(oid_named_curve_p521)) {
+        std.log.debug("namedCurveFromOid got p521r1", .{});
+    } else {
+        std.log.debug("namedCurveFromOid other curve, oid={}", .{oid});
+    }
+    // @panic("not implemented yet");
+    return null;
 }
 
 const PrivateKey = struct {};
