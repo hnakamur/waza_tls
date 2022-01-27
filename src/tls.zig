@@ -37,6 +37,7 @@ const pem = @import("tls/pem.zig");
 const common = @import("tls/common.zig");
 const big_int = @import("tls/big_int.zig");
 const bits = @import("tls/bits.zig");
+const cert_pool = @import("tls/cert_pool.zig");
 const root_linux = @import("tls/root_linux.zig");
 
 comptime {
