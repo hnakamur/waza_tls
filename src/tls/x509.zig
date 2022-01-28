@@ -12,6 +12,7 @@ const memx = @import("../memx.zig");
 const fmtx = @import("../fmtx.zig");
 const ecdsa = @import("ecdsa.zig");
 const elliptic = @import("elliptic.zig");
+const CertPool = @import("cert_pool.zig").CertPool;
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -316,6 +317,12 @@ const ext_key_usage_oids = [_]ExtKeyUsageOidMapping{
     .{ .usage = .netscape_server_gated_crypto, .oid = ExtKeyUsage.oid_netscape_server_gated_crypto },
     .{ .usage = .microsoft_commercial_code_signing, .oid = ExtKeyUsage.oid_microsoft_commercial_code_signing },
     .{ .usage = .microsoft_kernel_code_signing, .oid = ExtKeyUsage.oid_microsoft_kernel_code_signing },
+};
+
+pub const CeritificateType = enum {
+    leaf,
+    intermidiate,
+    root,
 };
 
 pub const Certificate = struct {
@@ -1154,7 +1161,127 @@ pub const Certificate = struct {
         }
         return unhandled;
     }
+
+    pub const VerifyOptions = struct {
+        dns_name: []const u8 = "",
+        intermediates: ?*const CertPool = null,
+        roots: *const CertPool,
+        current_time: ?datetime.datetime.Datetime = null,
+        key_usages: []const ExtKeyUsage = &[_]ExtKeyUsage{},
+        max_constraint_comparisons: ?usize = null,
+    };
+
+    pub fn isValid(
+        self: *const Certificate,
+        allocator: mem.Allocator,
+        cert_type: CeritificateType,
+        current_chain: []const *Certificate,
+        opts: *const VerifyOptions,
+    ) !void {
+        if (self.unhandled_critical_extensions.len > 0) {
+            return error.UnhandledCriticalExtension;
+        }
+
+        if (current_chain.len > 0) {
+            const child = current_chain[current_chain.len - 1];
+            if (!mem.eql(u8, child.raw_issuer, self.raw_subject)) {
+                return error.InvalidCertificate;
+            }
+        }
+
+        var now = opts.current_time orelse datetime.datetime.Datetime.now();
+        if (now.lt(self.not_before)) {
+            return error.InvalidCertificate;
+        } else if (now.gt(self.not_aftter)) {
+            return error.InvalidCertificate;
+        }
+
+        const max_constraint_comparisons = opts.max_constraint_comparisons orelse 250000;
+        var comparison_count: usize = 0;
+
+        var leaf: ?*const Certificate = null;
+        if (cert_type == .leaf or cert_type == .root) {
+            if (current_chain.len == 0) {
+                return error.InternalError;
+            }
+        }
+
+        if ((cert_type == .leaf or cert_type == .root) and
+            self.hasNameConstraints() and self.hasSanExtension())
+        {
+            // TODO: implement
+            const der = self.getSanExtension().?;
+            var s = asn1.String.init(der);
+            s = s.readAsn1(.sequence) catch return error.InvaliSubjectAlternativeNames;
+            // var email_addresses = std.ArrayListUnmanaged([]const u8){};
+            // errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_addresses, allocator);
+            // var dns_names = std.ArrayListUnmanaged([]const u8){};
+            // errdefer memx.freeElemsAndDeinitArrayList([]const u8, &dns_names, allocator);
+            // var uris = std.ArrayListUnmanaged([]const u8){};
+            // errdefer memx.freeElemsAndDeinitArrayList([]const u8, &uris, allocator);
+            // var ip_addresses = std.ArrayListUnmanaged(std.net.Address){};
+            // errdefer if (ip_addresses.items.len > 0) ip_addresses.deinit(allocator);
+            while (!s.empty()) {
+                var tag: asn1.TagAndClass = undefined;
+                var san_der = s.readAnyAsn1(&tag) catch return error.InvaliSubjectAlternativeNames;
+                switch (@enumToInt(tag) ^ 0x80) {
+                    name_type_email => {
+                        const email = san_der.bytes;
+                        const mailbox = try parseRfc2821Mailbox(allocator, email);
+                        defer mailbox.deinit(allocator);
+
+                        // TODO: implement
+                    },
+                    name_type_dns => {
+                        const name = san_der.bytes;
+                        _ = name;
+                        // TODO: implement
+                    },
+                    name_type_uri => {
+                        const uri = san_der.bytes;
+                        _ = uri;
+                        // TODO: implement
+                    },
+                    name_type_ip => {
+                        const ip = san_der.bytes;
+                        _ = ip;
+                        // TODO: implement
+                    },
+                    else => {},
+                }
+            }
+        }
+        _ = max_constraint_comparisons;
+        _ = comparison_count;
+        _ = leaf;
+    }
+
+    pub fn hasNameConstraints(self: *const Certificate) bool {
+        return oidInExtensions(asn1.ObjectIdentifier.extension_name_constraints, self.extensions);
+    }
+
+    fn hasSanExtension(self: *const Certificate) bool {
+        return oidInExtensions(asn1.ObjectIdentifier.extension_subject_alt_name, self.extensions);
+    }
+
+    fn getSanExtension(self: *const Certificate) ?[]const u8 {
+        for (self.extensions) |*ext| {
+            if (ext.id.eql(asn1.ObjectIdentifier.extension_subject_alt_name)) {
+                return ext.value;
+            }
+        }
+        return null;
+    }
 };
+
+fn oidInExtensions(oid: asn1.ObjectIdentifier, extensions: []const pkix.Extension) bool {
+    for (extensions) |*ext| {
+        if (ext.id.eql(oid)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // rfc2821Mailbox represents a “mailbox” (which is an email address to most
 // people) by breaking it into the “local” (i.e. before the '@') and “domain”
@@ -1507,10 +1634,8 @@ fn namedCurveFromOid(oid: asn1.ObjectIdentifier) ?elliptic.Curve {
     if (oid.eql(oid_named_curve_p224)) {
         std.log.debug("namedCurveFromOid got p224r1", .{});
     } else if (oid.eql(oid_named_curve_p256)) {
-        std.log.debug("namedCurveFromOid got p256r1", .{});
         return elliptic.p256();
     } else if (oid.eql(oid_named_curve_p384)) {
-        std.log.debug("namedCurveFromOid got p384r1", .{});
         return elliptic.p384();
     } else if (oid.eql(oid_named_curve_p521)) {
         std.log.debug("namedCurveFromOid got p521r1", .{});
