@@ -29,6 +29,7 @@ const dns = @import("dns.zig");
 const tls = @import("tls.zig");
 const fmtx = @import("fmtx.zig");
 const memx = @import("memx.zig");
+const netx = @import("netx.zig");
 
 pub const config = @import("config.zig");
 

@@ -39,6 +39,7 @@ const big_int = @import("tls/big_int.zig");
 const bits = @import("tls/bits.zig");
 const cert_pool = @import("tls/cert_pool.zig");
 const root_linux = @import("tls/root_linux.zig");
+const verify = @import("tls/verify.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

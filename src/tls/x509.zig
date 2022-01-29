@@ -8,11 +8,13 @@ const pkix = @import("pkix.zig");
 const crypto = @import("crypto.zig");
 const bigint = @import("big_int.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
-const memx = @import("../memx.zig");
 const fmtx = @import("../fmtx.zig");
+const memx = @import("../memx.zig");
+const netx = @import("../netx.zig");
 const ecdsa = @import("ecdsa.zig");
 const elliptic = @import("elliptic.zig");
 const CertPool = @import("cert_pool.zig").CertPool;
+const domainToReverseLabels = @import("verify.zig").domainToReverseLabels;
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -369,8 +371,8 @@ pub const Certificate = struct {
     permitted_dns_domains_critical: bool = false,
     permitted_dns_domains: []const []const u8 = &[_][]const u8{},
     excluded_dns_domains: []const []const u8 = &[_][]const u8{},
-    permitted_ip_ranges: []IpAddressNet = &[_]IpAddressNet{},
-    excluded_ip_ranges: []IpAddressNet = &[_]IpAddressNet{},
+    permitted_ip_ranges: []netx.IpAddressNet = &[_]netx.IpAddressNet{},
+    excluded_ip_ranges: []netx.IpAddressNet = &[_]netx.IpAddressNet{},
     permitted_email_addresses: []const []const u8 = &[_][]const u8{},
     excluded_email_addresses: []const []const u8 = &[_][]const u8{},
     permitted_uri_domains: []const []const u8 = &[_][]const u8{},
@@ -1009,14 +1011,14 @@ pub const Certificate = struct {
         allocator: mem.Allocator,
         subtrees: *asn1.String,
         dns_names: *[]const []const u8,
-        ips: *[]IpAddressNet,
+        ips: *[]netx.IpAddressNet,
         emails: *[]const []const u8,
         uri_domains: *[]const []const u8,
     ) !bool {
         _ = self;
         var dns_name_list = std.ArrayListUnmanaged([]const u8){};
         errdefer memx.freeElemsAndDeinitArrayList([]const u8, &dns_name_list, allocator);
-        var ip_list = std.ArrayListUnmanaged(IpAddressNet){};
+        var ip_list = std.ArrayListUnmanaged(netx.IpAddressNet){};
         errdefer ip_list.deinit(allocator);
         var email_list = std.ArrayListUnmanaged([]const u8){};
         errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_list, allocator);
@@ -1049,23 +1051,21 @@ pub const Certificate = struct {
                         // normal domain name.
                         break :blk domain[1..];
                     } else domain;
-                    if (domainToReverseLabels(allocator, trimmed_domain) catch
-                        return error.InvalidNameConstraintsExtension) |reverse_labels|
-                    {
+                    if (domainToReverseLabels(allocator, trimmed_domain)) |reverse_labels| {
                         memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
-                    } else {
+                    } else |_| {
                         return error.InvalidNameConstraintsExtension;
                     }
                     try dns_name_list.append(allocator, try allocator.dupe(u8, domain));
                 },
                 ip_tag => {
                     var mask: []const u8 = undefined;
-                    var ip_net: IpAddressNet = undefined;
+                    var ip_net: netx.IpAddressNet = undefined;
                     switch (value.bytes.len) {
                         8 => {
                             mask = value.bytes[4..8];
-                            ip_net = IpAddressNet{
-                                .in = Ip4AddressNet{
+                            ip_net = netx.IpAddressNet{
+                                .in = netx.Ip4AddressNet{
                                     .ip = std.net.Ip4Address.init(value.bytes[0..4].*, 0),
                                     .mask = mask[0..4].*,
                                 },
@@ -1073,8 +1073,8 @@ pub const Certificate = struct {
                         },
                         32 => {
                             mask = value.bytes[16..32];
-                            ip_net = IpAddressNet{
-                                .in6 = Ip6AddressNet{
+                            ip_net = netx.IpAddressNet{
+                                .in6 = netx.Ip6AddressNet{
                                     .ip = std.net.Ip6Address.init(value.bytes[0..16].*, 0, 0, 0),
                                     .mask = mask[0..16].*,
                                 },
@@ -1106,11 +1106,9 @@ pub const Certificate = struct {
                             constraint[1..]
                         else
                             constraint;
-                        if (domainToReverseLabels(allocator, domain) catch
-                            return error.InvalidNameConstraintsExtension) |reverse_labels|
-                        {
+                        if (domainToReverseLabels(allocator, domain)) |reverse_labels| {
                             memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
-                        } else {
+                        } else |_| {
                             return error.InvalidNameConstraintsExtension;
                         }
                     }
@@ -1135,11 +1133,9 @@ pub const Certificate = struct {
                         // normal domain name.
                         break :blk domain[1..];
                     } else domain;
-                    if (domainToReverseLabels(allocator, trimmed_domain) catch
-                        return error.InvalidNameConstraintsExtension) |reverse_labels|
-                    {
+                    if (domainToReverseLabels(allocator, trimmed_domain)) |reverse_labels| {
                         memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
-                    } else {
+                    } else |_| {
                         return error.InvalidNameConstraintsExtension;
                     }
                     try uri_domain_list.append(allocator, try allocator.dupe(u8, domain));
@@ -1283,14 +1279,14 @@ fn oidInExtensions(oid: asn1.ObjectIdentifier, extensions: []const pkix.Extensio
     return false;
 }
 
-// rfc2821Mailbox represents a “mailbox” (which is an email address to most
+// Rfc2821Mailbox represents a “mailbox” (which is an email address to most
 // people) by breaking it into the “local” (i.e. before the '@') and “domain”
 // parts.
-const rfc2821Mailbox = struct {
+const Rfc2821Mailbox = struct {
     local: []const u8 = "",
     domain: []const u8 = "",
 
-    pub fn deinit(self: *rfc2821Mailbox, allocator: mem.Allocator) void {
+    pub fn deinit(self: *Rfc2821Mailbox, allocator: mem.Allocator) void {
         if (self.local.len > 0) allocator.free(self.local);
         if (self.domain.len > 0) allocator.free(self.domain);
     }
@@ -1300,7 +1296,7 @@ const rfc2821Mailbox = struct {
 // based on the ABNF for a “Mailbox” from RFC 2821. According to RFC 5280,
 // Section 4.2.1.6 that's correct for an rfc822Name from a certificate: “The
 // format of an rfc822Name is a "Mailbox" as defined in RFC 2821, Section 4.1.2”.
-fn parseRfc2821Mailbox(allocator: mem.Allocator, input: []const u8) !rfc2821Mailbox {
+fn parseRfc2821Mailbox(allocator: mem.Allocator, input: []const u8) !Rfc2821Mailbox {
     var in = input;
     if (in.len == 0) {
         return error.InvalidMailbox;
@@ -1400,77 +1396,17 @@ fn parseRfc2821Mailbox(allocator: mem.Allocator, input: []const u8) !rfc2821Mail
     // The RFC species a format for domains, but that's known to be
     // violated in practice so we accept that anything after an '@' is the
     // domain part.
-    if (domainToReverseLabels(allocator, in) catch return error.InvalidMailbox) |reverse_labels| {
+    if (domainToReverseLabels(allocator, in)) |reverse_labels| {
         memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
-    } else {
+    } else |_| {
         return error.InvalidMailbox;
     }
 
-    return rfc2821Mailbox{
+    return Rfc2821Mailbox{
         .local = local_part.toOwnedSlice(allocator),
         .domain = try allocator.dupe(u8, in),
     };
 }
-
-// domainToReverseLabels converts a textual domain name like foo.example.com to
-// the list of labels in reverse order, e.g. ["com", "example", "foo"].
-fn domainToReverseLabels(allocator: mem.Allocator, domain: []const u8) !?[][]const u8 {
-    var reverse_labels = std.ArrayListUnmanaged([]const u8){};
-    errdefer memx.freeElemsAndDeinitArrayList([]const u8, &reverse_labels, allocator);
-    var rest = domain;
-    while (rest.len > 0) {
-        if (mem.lastIndexOfScalar(u8, rest, '.')) |i| {
-            try reverse_labels.append(allocator, try allocator.dupe(u8, rest[i + 1 ..]));
-            rest = rest[0..i];
-        } else {
-            try reverse_labels.append(allocator, try allocator.dupe(u8, rest));
-            break;
-        }
-    }
-
-    const valid = blk: {
-        if (reverse_labels.items.len > 0 and reverse_labels.items[0].len == 0) {
-            // An empty label at the end indicates an absolute value.
-            break :blk false;
-        }
-
-        for (reverse_labels.items) |label| {
-            if (label.len == 0) {
-                // Empty labels are otherwise invalid.
-                break :blk false;
-            }
-
-            for (label) |c| {
-                if (c < 33 or c > 126) {
-                    // Invalid character.
-                    break :blk false;
-                }
-            }
-        }
-        break :blk true;
-    };
-    if (!valid) {
-        memx.freeElemsAndDeinitArrayList([]const u8, &reverse_labels, allocator);
-        return null;
-    }
-
-    return reverse_labels.toOwnedSlice(allocator);
-}
-
-pub const IpAddressNet = union(enum) {
-    in: Ip4AddressNet,
-    in6: Ip6AddressNet,
-};
-
-pub const Ip4AddressNet = struct {
-    ip: std.net.Ip4Address,
-    mask: [4]u8,
-};
-
-pub const Ip6AddressNet = struct {
-    ip: std.net.Ip6Address,
-    mask: [16]u8,
-};
 
 // isValidIpMask reports whether mask consists of zero or more 1 bits, followed by zero bits.
 fn isValidIpMask(mask: []const u8) bool {
