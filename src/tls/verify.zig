@@ -163,4 +163,14 @@ test "uri.parse" {
     try testing.expectEqualStrings("[2001:db8::1]", u.host.?);
     try testing.expectEqual(@as(u16, 8443), u.port.?);
     try testing.expectEqualStrings("/foo", u.path);
+
+    const host = u.host.?;
+    var ip = try std.net.Address.parseIp(mem.trim(u8, host, "[]"), u.port.?);
+    var want = std.net.Address.initIp6(
+        ("\x20\x01\x0d\xb8" ++ "\x00" ** 11 ++ "\x01")[0..16].*,
+        8443,
+        0,
+        0,
+    );
+    try testing.expectEqual(want.in6, ip.in6);
 }

@@ -30,6 +30,7 @@ const tls = @import("tls.zig");
 const fmtx = @import("fmtx.zig");
 const memx = @import("memx.zig");
 const netx = @import("netx.zig");
+const urix = @import("urix.zig");
 
 pub const config = @import("config.zig");
 
