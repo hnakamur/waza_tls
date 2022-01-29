@@ -5,6 +5,33 @@ const os = std.os;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 const netx = @import("../netx.zig");
+const Uri = @import("../urix.zig").Uri;
+
+fn matchUriConstraint(
+    allocator: mem.Allocator,
+    uri: Uri,
+    constraint: []const u8,
+) !bool {
+    // From RFC 5280, Section 4.2.1.10:
+    // “a uniformResourceIdentifier that does not include an authority
+    // component with a host name specified as a fully qualified domain
+    // name (e.g., if the URI either does not include an authority
+    // component or includes an authority component in which the host name
+    // is specified as an IP address), then the application MUST reject the
+    // certificate.”
+    if (uri.components.host) |host| {
+        if ((mem.startsWith(u8, host, "[") and mem.endsWith(u8, host, "]")) or
+            parsableAsIpAddress(host))
+        {
+            return error.CannotMatchUriConstraintForIpAddress;
+        }
+        return try matchDomainConstraint(allocator, host, constraint);
+    } else return error.CannotMatchUriConstraintForEmptyHostUri;
+}
+
+fn parsableAsIpAddress(address: []const u8) bool {
+    return if (std.net.Address.parseIp(address, 0)) |_| true else |_| false;
+}
 
 fn matchIpConstraint(ip: std.net.Address, constraint: netx.IpAddressNet) !bool {
     switch (ip.any.family) {
@@ -43,39 +70,6 @@ fn matchIpConstraint(ip: std.net.Address, constraint: netx.IpAddressNet) !bool {
         },
         else => return false,
     }
-}
-
-const testing = std.testing;
-
-test "matchIpConstraint" {
-    testing.log_level = .debug;
-
-    const f = struct {
-        fn f(
-            want: bool,
-            ip_str: []const u8,
-            constraint_ip_str: []const u8,
-            constraint_mask_bytes: []const u8,
-        ) !void {
-            const ip = try std.net.Address.parseIp(ip_str, 0);
-            const constraint_ip = try std.net.Address.parseIp(constraint_ip_str, 0);
-            const constraint = switch (constraint_ip.any.family) {
-                os.AF.INET => netx.IpAddressNet{
-                    .in = .{ .ip = constraint_ip.in, .mask = constraint_mask_bytes[0..4].* },
-                },
-                os.AF.INET6 => netx.IpAddressNet{
-                    .in6 = .{ .ip = constraint_ip.in6, .mask = constraint_mask_bytes[0..16].* },
-                },
-                else => unreachable,
-            };
-            try testing.expectEqual(want, try matchIpConstraint(ip, constraint));
-        }
-    }.f;
-
-    try f(true, "192.0.2.1", "192.0.2.0", "\xff\xff\xff\x80");
-    try f(false, "192.0.2.128", "192.0.2.0", "\xff\xff\xff\x80");
-    try f(true, "2001:db8::1", "2001:db8::0", "\xff" ** 8 ++ "\x80" ++ "\x00" ** 7);
-    try f(false, "2001:db8:0:0:8000::1", "2001:db8::0", "\xff" ** 8 ++ "\x80" ++ "\x00" ** 7);
 }
 
 fn matchDomainConstraint(
@@ -153,6 +147,39 @@ pub fn domainToReverseLabels(allocator: mem.Allocator, domain: []const u8) ![][]
     }
 
     return reverse_labels.toOwnedSlice(allocator);
+}
+
+const testing = std.testing;
+
+test "matchIpConstraint" {
+    testing.log_level = .debug;
+
+    const f = struct {
+        fn f(
+            want: bool,
+            ip_str: []const u8,
+            constraint_ip_str: []const u8,
+            constraint_mask_bytes: []const u8,
+        ) !void {
+            const ip = try std.net.Address.parseIp(ip_str, 0);
+            const constraint_ip = try std.net.Address.parseIp(constraint_ip_str, 0);
+            const constraint = switch (constraint_ip.any.family) {
+                os.AF.INET => netx.IpAddressNet{
+                    .in = .{ .ip = constraint_ip.in, .mask = constraint_mask_bytes[0..4].* },
+                },
+                os.AF.INET6 => netx.IpAddressNet{
+                    .in6 = .{ .ip = constraint_ip.in6, .mask = constraint_mask_bytes[0..16].* },
+                },
+                else => unreachable,
+            };
+            try testing.expectEqual(want, try matchIpConstraint(ip, constraint));
+        }
+    }.f;
+
+    try f(true, "192.0.2.1", "192.0.2.0", "\xff\xff\xff\x80");
+    try f(false, "192.0.2.128", "192.0.2.0", "\xff\xff\xff\x80");
+    try f(true, "2001:db8::1", "2001:db8::0", "\xff" ** 8 ++ "\x80" ++ "\x00" ** 7);
+    try f(false, "2001:db8:0:0:8000::1", "2001:db8::0", "\xff" ** 8 ++ "\x80" ++ "\x00" ** 7);
 }
 
 test "uri.parse" {
