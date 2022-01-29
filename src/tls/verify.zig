@@ -154,3 +154,13 @@ pub fn domainToReverseLabels(allocator: mem.Allocator, domain: []const u8) ![][]
 
     return reverse_labels.toOwnedSlice(allocator);
 }
+
+test "uri.parse" {
+    const uri = @import("uri");
+
+    var u = try uri.parse("https://[2001:db8::1]:8443/foo");
+    try testing.expectEqualStrings("https", u.scheme.?);
+    try testing.expectEqualStrings("[2001:db8::1]", u.host.?);
+    try testing.expectEqual(@as(u16, 8443), u.port.?);
+    try testing.expectEqualStrings("/foo", u.path);
+}

@@ -4,3 +4,6 @@
 [submodule "lib/zig-datetime"]
 	path = lib/zig-datetime
 	url = https://github.com/frmdstryr/zig-datetime
+[submodule "lib/zig-uri"]
+	path = lib/zig-uri
+	url = https://github.com/MasterQ32/zig-uri

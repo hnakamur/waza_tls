@@ -7,6 +7,7 @@ const pkgs = struct {
         .dependencies = &[_]std.build.Pkg{
             @"tigerbeetle-io",
             datetime,
+            uri,
         },
     };
 
@@ -18,6 +19,11 @@ const pkgs = struct {
     const datetime = std.build.Pkg{
         .name = "datetime",
         .path = .{ .path = "./lib/zig-datetime/src/main.zig" },
+    };
+
+    const uri = std.build.Pkg{
+        .name = "uri",
+        .path = .{ .path = "./lib/zig-uri/uri.zig" },
     };
 };
 
@@ -42,6 +48,7 @@ pub fn build(b: *std.build.Builder) void {
     var unit_tests = b.addTest("src/main.zig");
     unit_tests.addPackage(pkgs.@"tigerbeetle-io");
     unit_tests.addPackage(pkgs.datetime);
+    unit_tests.addPackage(pkgs.uri);
     unit_tests.setBuildMode(mode);
     unit_tests.filter = test_filter;
     if (coverage) {
