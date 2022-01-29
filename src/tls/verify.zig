@@ -6,17 +6,17 @@ const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 const netx = @import("../netx.zig");
 const Uri = @import("../urix.zig").Uri;
-const x509 = @import("x509.zig");
+const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
 
 fn matchEmailConstraint(
     allocator: mem.Allocator,
-    mailbox: x509.Rfc2821Mailbox,
+    mailbox: Rfc2821Mailbox,
     constraint: []const u8,
 ) !bool {
     // If the constraint contains an @, then it specifies an exact mailbox
     // name.
     if (memx.containsScalar(u8, constraint, '@')) {
-        if (x509.parseRfc2821Mailbox(allocator, constraint)) |*constraint_mailbox| {
+        if (Rfc2821Mailbox.parse(allocator, constraint)) |*constraint_mailbox| {
             defer mailbox.deinit(allocator);
             return mem.eql(u8, mailbox.local, constraint_mailbox.local) and
                 ascii.eqlIgnoreCase(mailbox.domain, constraint_mailbox.domain);
