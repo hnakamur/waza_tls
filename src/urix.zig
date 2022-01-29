@@ -19,6 +19,17 @@ pub const Uri = struct {
     pub fn deinit(self: *Uri, allocator: mem.Allocator) void {
         allocator.free(self.raw);
     }
+
+    pub fn format(
+        self: Uri,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        _ = try writer.write(self.raw);
+    }
 };
 
 const testing = std.testing;

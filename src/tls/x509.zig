@@ -11,6 +11,7 @@ const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 const netx = @import("../netx.zig");
+const Uri = @import("../urix.zig").Uri;
 const ecdsa = @import("ecdsa.zig");
 const elliptic = @import("elliptic.zig");
 const CertPool = @import("cert_pool.zig").CertPool;
@@ -364,7 +365,7 @@ pub const Certificate = struct {
     dns_names: []const []const u8 = &[_][]const u8{},
     email_addresses: []const []const u8 = &[_][]const u8{},
     ip_addresses: []std.net.Address = &[_]std.net.Address{},
-    uris: []const []const u8 = &[_][]const u8{},
+    uris: []Uri = &[_]Uri{},
 
     // Name constraints
     // if true then the name constraints are marked critical.
@@ -553,7 +554,7 @@ pub const Certificate = struct {
         if (self.ip_addresses.len > 0) {
             allocator.free(self.ip_addresses);
         }
-        memx.freeElemsAndFreeSlice([]const u8, self.uris, allocator);
+        memx.deinitSliceAndElems(Uri, self.uris, allocator);
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.policy_identifiers, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.crl_distribution_points, allocator);
 
@@ -626,8 +627,16 @@ pub const Certificate = struct {
         _ = try writer.write(", email_addresses = ");
         try fmtx.formatStringSlice(self.email_addresses, fmt, options, writer);
         try std.fmt.format(writer, ", ip_addresses = {any}", .{self.ip_addresses});
-        _ = try writer.write(", uris = ");
-        try fmtx.formatStringSlice(self.uris, fmt, options, writer);
+
+        _ = try writer.write(", uris = {");
+        for (self.uris) |uri, i| {
+            if (i > 0) {
+                _ = try writer.write(", ");
+            }
+            try std.fmt.format(writer, "\"{s}\"", .{uri});
+        }
+        _ = try writer.write("}");
+
         try std.fmt.format(writer, ", policy_identifiers = {any}", .{self.policy_identifiers});
         _ = try writer.write(", crl_distribution_points = ");
         try fmtx.formatStringSlice(self.crl_distribution_points, fmt, options, writer);
@@ -664,7 +673,7 @@ pub const Certificate = struct {
                 switch (ext.id.components[3]) {
                     15 => self.key_usage = try parseKeyUsageExtension(allocator, ext.value),
                     19 => try self.parseBasicConstraintsExtension(ext.value),
-                    17 => if (try self.parseSANExtension(allocator, ext.value)) {
+                    17 => if (try self.parseSanExtension(allocator, ext.value)) {
                         // If we didn't parse anything then we do the critical check, below.
                         unhandled = true;
                     },
@@ -795,7 +804,7 @@ pub const Certificate = struct {
     const name_type_uri = 6;
     const name_type_ip = 7;
 
-    fn parseSANExtension(
+    fn parseSanExtension(
         self: *Certificate,
         allocator: mem.Allocator,
         der: []const u8,
@@ -806,8 +815,8 @@ pub const Certificate = struct {
         errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_addresses, allocator);
         var dns_names = std.ArrayListUnmanaged([]const u8){};
         errdefer memx.freeElemsAndDeinitArrayList([]const u8, &dns_names, allocator);
-        var uris = std.ArrayListUnmanaged([]const u8){};
-        errdefer memx.freeElemsAndDeinitArrayList([]const u8, &uris, allocator);
+        var uris = std.ArrayListUnmanaged(Uri){};
+        errdefer memx.deinitArrayListAndElems(Uri, &uris, allocator);
         var ip_addresses = std.ArrayListUnmanaged(std.net.Address){};
         errdefer if (ip_addresses.items.len > 0) ip_addresses.deinit(allocator);
         while (!s.empty()) {
@@ -829,12 +838,9 @@ pub const Certificate = struct {
                     try dns_names.append(allocator, try allocator.dupe(u8, name));
                 },
                 name_type_uri => {
-                    const uri = san_der.bytes;
-                    if (!isValidIa5String(uri)) {
-                        return error.InvaliSubjectAlternativeNames;
-                    }
-                    // TODO: implement parse and validate URI
-                    try uris.append(allocator, try allocator.dupe(u8, uri));
+                    var uri = try parseSanExtensionUri(allocator, san_der.bytes);
+                    errdefer uri.deinit(allocator);
+                    try uris.append(allocator, uri);
                 },
                 name_type_ip => {
                     const ip_data = san_der.bytes;
@@ -1269,6 +1275,24 @@ pub const Certificate = struct {
         return null;
     }
 };
+
+fn parseSanExtensionUri(allocator: mem.Allocator, input: []const u8) !Uri {
+    if (!isValidIa5String(input)) {
+        return error.InvalidUri;
+    }
+    var uri = try Uri.parse(allocator, input);
+    errdefer uri.deinit(allocator);
+
+    if (uri.components.host) |host| {
+        if (domainToReverseLabels(allocator, host)) |reverse_labels| {
+            memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
+        } else |_| {
+            return error.InvalidNameConstraintsExtension;
+        }
+    }
+
+    return uri;
+}
 
 fn oidInExtensions(oid: asn1.ObjectIdentifier, extensions: []const pkix.Extension) bool {
     for (extensions) |*ext| {
