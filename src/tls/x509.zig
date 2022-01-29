@@ -16,6 +16,10 @@ const ecdsa = @import("ecdsa.zig");
 const elliptic = @import("elliptic.zig");
 const CertPool = @import("cert_pool.zig").CertPool;
 const domainToReverseLabels = @import("verify.zig").domainToReverseLabels;
+const verifyEmailSan = @import("verify.zig").verifyEmailSan;
+const verifyDnsSan = @import("verify.zig").verifyDnsSan;
+const verifyUriSan = @import("verify.zig").verifyUriSan;
+const verifyIpSan = @import("verify.zig").verifyIpSan;
 const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
 
 pub const SignatureAlgorithm = enum(u8) {
@@ -1210,7 +1214,7 @@ pub const Certificate = struct {
         }
 
         if ((cert_type == .leaf or cert_type == .root) and
-            self.hasNameConstraints() and self.hasSanExtension())
+            self.hasNameConstraints() and leaf.hasSanExtension())
         {
             // TODO: implement
             const der = self.getSanExtension().?;
@@ -1228,35 +1232,36 @@ pub const Certificate = struct {
                 var tag: asn1.TagAndClass = undefined;
                 var san_der = s.readAnyAsn1(&tag) catch return error.InvaliSubjectAlternativeNames;
                 switch (@enumToInt(tag) ^ 0x80) {
-                    name_type_email => {
-                        const email = san_der.bytes;
-                        const mailbox = try Rfc2821Mailbox.parse(allocator, email);
-                        defer mailbox.deinit(allocator);
-
-                        // TODO: implement
-                    },
-                    name_type_dns => {
-                        const name = san_der.bytes;
-                        _ = name;
-                        // TODO: implement
-                    },
-                    name_type_uri => {
-                        const uri = san_der.bytes;
-                        _ = uri;
-                        // TODO: implement
-                    },
-                    name_type_ip => {
-                        const ip = san_der.bytes;
-                        _ = ip;
-                        // TODO: implement
-                    },
+                    name_type_email => try verifyEmailSan(
+                        allocator,
+                        &comparison_count,
+                        max_constraint_comparisons,
+                        san_der,
+                    ),
+                    name_type_dns => try verifyDnsSan(
+                        allocator,
+                        &comparison_count,
+                        max_constraint_comparisons,
+                        san_der,
+                    ),
+                    name_type_uri => try verifyUriSan(
+                        allocator,
+                        &comparison_count,
+                        max_constraint_comparisons,
+                        san_der,
+                    ),
+                    name_type_ip => try verifyIpSan(
+                        allocator,
+                        &comparison_count,
+                        max_constraint_comparisons,
+                        san_der,
+                    ),
                     else => {},
                 }
             }
         }
         _ = max_constraint_comparisons;
         _ = comparison_count;
-        _ = leaf;
     }
 
     pub fn hasNameConstraints(self: *const Certificate) bool {

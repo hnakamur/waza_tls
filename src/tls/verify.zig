@@ -6,7 +6,113 @@ const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 const netx = @import("../netx.zig");
 const Uri = @import("../urix.zig").Uri;
+const asn1 = @import("asn1.zig").Uri;
 const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
+
+pub fn verifyEmailSan(
+    allocator: mem.Allocator,
+    count: *usize,
+    max_constraint_comparisons: usize,
+    san_der: []const u8,
+) !void {
+    const email = san_der.bytes;
+    const mailbox = try Rfc2821Mailbox.parse(allocator, email);
+    defer mailbox.deinit(allocator);
+    _ = count;
+    _ = max_constraint_comparisons;
+}
+
+pub fn verifyDnsSan(
+    allocator: mem.Allocator,
+    count: *usize,
+    max_constraint_comparisons: usize,
+    san_der: []const u8,
+) !void {
+    const name = san_der.bytes;
+    _ = name;
+    // TODO: implement
+    _ = allocator;
+    _ = count;
+    _ = max_constraint_comparisons;
+}
+
+pub fn verifyUriSan(
+    allocator: mem.Allocator,
+    count: *usize,
+    max_constraint_comparisons: usize,
+    san_der: []const u8,
+) !void {
+    const uri = san_der.bytes;
+    _ = uri;
+    // TODO: implement
+    _ = allocator;
+    _ = count;
+    _ = max_constraint_comparisons;
+}
+
+pub fn verifyIpSan(
+    allocator: mem.Allocator,
+    count: *usize,
+    max_constraint_comparisons: usize,
+    san_der: []const u8,
+) !void {
+    const ip = san_der.bytes;
+    _ = ip;
+    // TODO: implement
+    _ = allocator;
+    _ = count;
+    _ = max_constraint_comparisons;
+}
+
+// checkNameConstraints checks that c permits a child certificate to claim the
+// given name, of type nameType. The argument parsedName contains the parsed
+// form of name, suitable for passing to the match function. The total number
+// of comparisons is tracked in the given count and should not exceed the given
+// limit.
+fn checkNameConstraints(
+    allocator: mem.Allocator,
+    count: *usize,
+    max_constraint_comparisons: usize,
+    ParsedNameType: type,
+    parsed_name: ParsedNameType,
+    ConstraintType: type,
+    match: fn (
+        allocator: mem.Allocator,
+        parse_name: ParsedNameType,
+        constraint: ConstraintType,
+    ) anyerror!bool,
+    permitted: []ParsedNameType,
+    excluded: []ConstraintType,
+) !void {
+    count.* += excluded.len;
+    if (count.* > max_constraint_comparisons) {
+        return error.InvalidCertificate;
+    }
+    for (excluded) |constraint| {
+        if (match(allocator, parsed_name, constraint)) |matched| {
+            if (matched) {
+                return error.InvalidCertificate;
+            }
+        } else |_| {
+            return error.InvalidCertificate;
+        }
+    }
+
+    count.* += permitted.len;
+    if (count.* > max_constraint_comparisons) {
+        return error.InvalidCertificate;
+    }
+    for (permitted) |constraint| {
+        if (match(allocator, parsed_name, constraint)) |matched| {
+            if (matched) {
+                return;
+            }
+        } else |_| {
+            return error.InvalidCertificate;
+        }
+    }
+    return error.InvalidCertificate;
+}
 
 fn matchEmailConstraint(
     allocator: mem.Allocator,
@@ -56,7 +162,12 @@ fn parsableAsIpAddress(address: []const u8) bool {
     return if (std.net.Address.parseIp(address, 0)) |_| true else |_| false;
 }
 
-fn matchIpConstraint(ip: std.net.Address, constraint: netx.IpAddressNet) !bool {
+fn matchIpConstraint(
+    allocator: mem.Allocator,
+    ip: std.net.Address,
+    constraint: netx.IpAddressNet,
+) !bool {
+    _ = allocator;
     switch (ip.any.family) {
         os.AF.INET => {
             switch (constraint) {
@@ -195,7 +306,8 @@ test "matchIpConstraint" {
                 },
                 else => unreachable,
             };
-            try testing.expectEqual(want, try matchIpConstraint(ip, constraint));
+            const allocator = testing.allocator;
+            try testing.expectEqual(want, try matchIpConstraint(allocator, ip, constraint));
         }
     }.f;
 
