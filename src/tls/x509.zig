@@ -20,6 +20,7 @@ const verifyEmailSan = @import("verify.zig").verifyEmailSan;
 const verifyDnsSan = @import("verify.zig").verifyDnsSan;
 const verifyUriSan = @import("verify.zig").verifyUriSan;
 const verifyIpSan = @import("verify.zig").verifyIpSan;
+const VerifyOptions = @import("verify.zig").VerifyOptions;
 const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
 
 pub const SignatureAlgorithm = enum(u8) {
@@ -815,7 +816,7 @@ pub const Certificate = struct {
         der: []const u8,
     ) !bool {
         var s = asn1.String.init(der);
-        s = s.readAsn1(.sequence) catch return error.InvaliSubjectAlternativeNames;
+        s = s.readAsn1(.sequence) catch return error.InvalidSubjectAlternativeNames;
         var email_addresses = std.ArrayListUnmanaged([]const u8){};
         errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_addresses, allocator);
         var dns_names = std.ArrayListUnmanaged([]const u8){};
@@ -826,19 +827,19 @@ pub const Certificate = struct {
         errdefer if (ip_addresses.items.len > 0) ip_addresses.deinit(allocator);
         while (!s.empty()) {
             var tag: asn1.TagAndClass = undefined;
-            var san_der = s.readAnyAsn1(&tag) catch return error.InvaliSubjectAlternativeNames;
+            var san_der = s.readAnyAsn1(&tag) catch return error.InvalidSubjectAlternativeNames;
             switch (@enumToInt(tag) ^ 0x80) {
                 name_type_email => {
                     const email = san_der.bytes;
                     if (!isValidIa5String(email)) {
-                        return error.InvaliSubjectAlternativeNames;
+                        return error.InvalidSubjectAlternativeNames;
                     }
                     try email_addresses.append(allocator, try allocator.dupe(u8, email));
                 },
                 name_type_dns => {
                     const name = san_der.bytes;
                     if (!isValidIa5String(name)) {
-                        return error.InvaliSubjectAlternativeNames;
+                        return error.InvalidSubjectAlternativeNames;
                     }
                     try dns_names.append(allocator, try allocator.dupe(u8, name));
                 },
@@ -849,11 +850,8 @@ pub const Certificate = struct {
                 },
                 name_type_ip => {
                     const ip_data = san_der.bytes;
-                    const address = switch (ip_data.len) {
-                        4 => std.net.Address.initIp4(ip_data[0..4].*, 0),
-                        16 => std.net.Address.initIp6(ip_data[0..16].*, 0, 0, 0),
-                        else => return error.InvaliSubjectAlternativeNames,
-                    };
+                    const address = netx.addressFromBytes(ip_data) catch
+                        return error.InvalidSubjectAlternativeNames;
                     try ip_addresses.append(allocator, address);
                 },
                 else => {},
@@ -1169,15 +1167,6 @@ pub const Certificate = struct {
         return unhandled;
     }
 
-    pub const VerifyOptions = struct {
-        dns_name: []const u8 = "",
-        intermediates: ?*const CertPool = null,
-        roots: *const CertPool,
-        current_time: ?datetime.datetime.Datetime = null,
-        key_usages: []const ExtKeyUsage = &[_]ExtKeyUsage{},
-        max_constraint_comparisons: ?usize = null,
-    };
-
     pub fn isValid(
         self: *const Certificate,
         allocator: mem.Allocator,
@@ -1199,7 +1188,7 @@ pub const Certificate = struct {
         var now = opts.current_time orelse datetime.datetime.Datetime.now();
         if (now.lt(self.not_before)) {
             return error.InvalidCertificate;
-        } else if (now.gt(self.not_aftter)) {
+        } else if (now.gt(self.not_after)) {
             return error.InvalidCertificate;
         }
 
@@ -1211,15 +1200,16 @@ pub const Certificate = struct {
             if (current_chain.len == 0) {
                 return error.InternalError;
             }
+            leaf = current_chain[0];
         }
 
         if ((cert_type == .leaf or cert_type == .root) and
-            self.hasNameConstraints() and leaf.hasSanExtension())
+            self.hasNameConstraints() and leaf.?.hasSanExtension())
         {
             // TODO: implement
             const der = self.getSanExtension().?;
             var s = asn1.String.init(der);
-            s = s.readAsn1(.sequence) catch return error.InvaliSubjectAlternativeNames;
+            s = s.readAsn1(.sequence) catch return error.InvalidSubjectAlternativeNames;
             // var email_addresses = std.ArrayListUnmanaged([]const u8){};
             // errdefer memx.freeElemsAndDeinitArrayList([]const u8, &email_addresses, allocator);
             // var dns_names = std.ArrayListUnmanaged([]const u8){};
@@ -1230,38 +1220,40 @@ pub const Certificate = struct {
             // errdefer if (ip_addresses.items.len > 0) ip_addresses.deinit(allocator);
             while (!s.empty()) {
                 var tag: asn1.TagAndClass = undefined;
-                var san_der = s.readAnyAsn1(&tag) catch return error.InvaliSubjectAlternativeNames;
+                var san_der = s.readAnyAsn1(&tag) catch return error.InvalidSubjectAlternativeNames;
                 switch (@enumToInt(tag) ^ 0x80) {
                     name_type_email => try verifyEmailSan(
+                        self,
                         allocator,
                         &comparison_count,
                         max_constraint_comparisons,
-                        san_der,
+                        san_der.bytes,
                     ),
                     name_type_dns => try verifyDnsSan(
+                        self,
                         allocator,
                         &comparison_count,
                         max_constraint_comparisons,
-                        san_der,
+                        san_der.bytes,
                     ),
                     name_type_uri => try verifyUriSan(
+                        self,
                         allocator,
                         &comparison_count,
                         max_constraint_comparisons,
-                        san_der,
+                        san_der.bytes,
                     ),
                     name_type_ip => try verifyIpSan(
+                        self,
                         allocator,
                         &comparison_count,
                         max_constraint_comparisons,
-                        san_der,
+                        san_der.bytes,
                     ),
                     else => {},
                 }
             }
         }
-        _ = max_constraint_comparisons;
-        _ = comparison_count;
     }
 
     pub fn hasNameConstraints(self: *const Certificate) bool {
@@ -1703,4 +1695,34 @@ test "Certificate.parse" {
     defer allocator.free(serial_str);
     // try testing.expectEqualStrings("322468385791552616392937435680808374704", serial_str);
     std.log.debug("certificate={any}", .{cert});
+}
+
+test "Certificate.isValid" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    var pool = try CertPool.init(allocator, true);
+    defer pool.deinit();
+
+    const max_bytes = 1024 * 1024 * 1024;
+    const pem_certs = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "/etc/ssl/certs/ca-certificates.crt",
+        max_bytes,
+    );
+    defer allocator.free(pem_certs);
+
+    try pool.appendCertsFromPem(pem_certs);
+
+    const der = @embedFile("../../tests/google.com.crt.der");
+    var cert = try Certificate.parse(allocator, der);
+    defer cert.deinit(allocator);
+
+    const opts = VerifyOptions{.roots = &pool};
+    try cert.isValid(
+        allocator,
+        .leaf,
+        &[_]*Certificate{},
+        &opts,
+    );
 }

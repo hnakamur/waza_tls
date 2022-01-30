@@ -2,66 +2,120 @@ const std = @import("std");
 const ascii = std.ascii;
 const mem = std.mem;
 const os = std.os;
+const datetime = @import("datetime");
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 const netx = @import("../netx.zig");
 const Uri = @import("../urix.zig").Uri;
 const asn1 = @import("asn1.zig").Uri;
+const x509 = @import("x509.zig");
 const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
+const CertPool = @import("cert_pool.zig").CertPool;
+
+pub const VerifyOptions = struct {
+    dns_name: []const u8 = "",
+    intermediates: ?*const CertPool = null,
+    roots: *const CertPool,
+    current_time: ?datetime.datetime.Datetime = null,
+    key_usages: []const x509.ExtKeyUsage = &[_]x509.ExtKeyUsage{},
+    max_constraint_comparisons: ?usize = null,
+};
 
 pub fn verifyEmailSan(
+    c: *const x509.Certificate,
     allocator: mem.Allocator,
     count: *usize,
     max_constraint_comparisons: usize,
     san_der: []const u8,
 ) !void {
-    const email = san_der.bytes;
-    const mailbox = try Rfc2821Mailbox.parse(allocator, email);
+    const email = san_der;
+    var mailbox = try Rfc2821Mailbox.parse(allocator, email);
     defer mailbox.deinit(allocator);
-    _ = count;
-    _ = max_constraint_comparisons;
+
+    try checkNameConstraints(
+        allocator,
+        count,
+        max_constraint_comparisons,
+        Rfc2821Mailbox,
+        mailbox,
+        []const u8,
+        matchEmailConstraint,
+        c.permitted_email_addresses,
+        c.excluded_email_addresses,
+    );
 }
 
 pub fn verifyDnsSan(
+    c: *const x509.Certificate,
     allocator: mem.Allocator,
     count: *usize,
     max_constraint_comparisons: usize,
     san_der: []const u8,
 ) !void {
-    const name = san_der.bytes;
-    _ = name;
-    // TODO: implement
-    _ = allocator;
-    _ = count;
-    _ = max_constraint_comparisons;
+    const name = san_der;
+    if (domainToReverseLabels(allocator, name)) |reverse_labels| {
+        memx.freeElemsAndFreeSlice([]const u8, reverse_labels, allocator);
+    } else |_| {
+        return error.CannotParseDnsName;
+    }
+
+    try checkNameConstraints(
+        allocator,
+        count,
+        max_constraint_comparisons,
+        []const u8,
+        name,
+        []const u8,
+        matchDomainConstraint,
+        c.permitted_dns_domains,
+        c.excluded_dns_domains,
+    );
 }
 
 pub fn verifyUriSan(
+    c: *const x509.Certificate,
     allocator: mem.Allocator,
     count: *usize,
     max_constraint_comparisons: usize,
     san_der: []const u8,
 ) !void {
-    const uri = san_der.bytes;
-    _ = uri;
-    // TODO: implement
-    _ = allocator;
-    _ = count;
-    _ = max_constraint_comparisons;
+    const name = san_der;
+    var uri = try Uri.parse(allocator, name);
+    defer uri.deinit(allocator);
+
+    try checkNameConstraints(
+        allocator,
+        count,
+        max_constraint_comparisons,
+        Uri,
+        uri,
+        []const u8,
+        matchUriConstraint,
+        c.permitted_uri_domains,
+        c.excluded_uri_domains,
+    );
 }
 
 pub fn verifyIpSan(
+    c: *const x509.Certificate,
     allocator: mem.Allocator,
     count: *usize,
     max_constraint_comparisons: usize,
     san_der: []const u8,
 ) !void {
-    const ip = san_der.bytes;
-    _ = ip;
-    // TODO: implement
-    _ = allocator;
-    _ = count;
-    _ = max_constraint_comparisons;
+    const ip_data = san_der;
+    var ip = netx.addressFromBytes(ip_data) catch return error.InvalidIpSan;
+    try checkNameConstraints(
+        allocator,
+        count,
+        max_constraint_comparisons,
+        std.net.Address,
+        ip,
+        netx.IpAddressNet,
+        matchIpConstraint,
+        c.permitted_ip_ranges,
+        c.excluded_ip_ranges,
+    );
 }
 
 // checkNameConstraints checks that c permits a child certificate to claim the
@@ -73,16 +127,16 @@ fn checkNameConstraints(
     allocator: mem.Allocator,
     count: *usize,
     max_constraint_comparisons: usize,
-    ParsedNameType: type,
+    comptime ParsedNameType: type,
     parsed_name: ParsedNameType,
-    ConstraintType: type,
+    comptime ConstraintType: type,
     match: fn (
         allocator: mem.Allocator,
         parse_name: ParsedNameType,
         constraint: ConstraintType,
     ) anyerror!bool,
-    permitted: []ParsedNameType,
-    excluded: []ConstraintType,
+    permitted: []const ConstraintType,
+    excluded: []const ConstraintType,
 ) !void {
     count.* += excluded.len;
     if (count.* > max_constraint_comparisons) {
@@ -123,7 +177,7 @@ fn matchEmailConstraint(
     // name.
     if (memx.containsScalar(u8, constraint, '@')) {
         if (Rfc2821Mailbox.parse(allocator, constraint)) |*constraint_mailbox| {
-            defer mailbox.deinit(allocator);
+            defer constraint_mailbox.deinit(allocator);
             return mem.eql(u8, mailbox.local, constraint_mailbox.local) and
                 ascii.eqlIgnoreCase(mailbox.domain, constraint_mailbox.domain);
         } else |_| {
