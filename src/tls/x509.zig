@@ -21,6 +21,12 @@ const verifyDnsSan = @import("verify.zig").verifyDnsSan;
 const verifyUriSan = @import("verify.zig").verifyUriSan;
 const verifyIpSan = @import("verify.zig").verifyIpSan;
 const VerifyOptions = @import("verify.zig").VerifyOptions;
+const VerifiedCertChains = @import("verify.zig").VerifiedCertChains;
+const validHostnamePattern = @import("verify.zig").validHostnamePattern;
+const validHostnameInput = @import("verify.zig").validHostnameInput;
+const matchExactly = @import("verify.zig").matchExactly;
+const matchHostnames = @import("verify.zig").matchHostnames;
+const checkChainForKeyUsage = @import("verify.zig").checkChainForKeyUsage;
 const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
 
 pub const SignatureAlgorithm = enum(u8) {
@@ -330,7 +336,7 @@ const ext_key_usage_oids = [_]ExtKeyUsageOidMapping{
 
 pub const CeritificateType = enum {
     leaf,
-    intermidiate,
+    intermediate,
     root,
 };
 
@@ -1167,7 +1173,114 @@ pub const Certificate = struct {
         return unhandled;
     }
 
-    pub fn isValid(
+    pub fn verify(
+        self: *const Certificate,
+        allocator: mem.Allocator,
+        opts: *const VerifyOptions,
+    ) !VerifiedCertChains {
+        // Platform-specific verification needs the ASN.1 contents so
+        // this makes the behavior consistent across platforms.
+        if (self.raw.len == 0) {
+            return error.NotParsed;
+        }
+
+        try self.isValid(allocator, .leaf, &[_]*Certificate{}, opts);
+
+        if (opts.dns_name.len > 0) {
+            try self.verifyHostname(opts.dns_name);
+        }
+
+        var candidate_chains = std.ArrayListUnmanaged([]*const Certificate){};
+        errdefer {
+            for (candidate_chains.items) |chain| {
+                allocator.free(chain);
+            }
+            candidate_chains.deinit(allocator);
+        }
+        if (opts.roots.contains(self)) {
+            try candidate_chains.append(
+                allocator,
+                try allocator.dupe(*const Certificate, &[_]*const Certificate{self}),
+            );
+        } else {
+            @panic("not implemented yet");
+        }
+
+        const key_usages = if (opts.key_usages.len == 0)
+            &[_]ExtKeyUsage{.server_auth}
+        else
+            opts.key_usages;
+
+        // If any key usage is acceptable then we're done.
+        if (memx.containsScalar(ExtKeyUsage, key_usages, .any)) {
+            return VerifiedCertChains.init(candidate_chains.toOwnedSlice(allocator));
+        }
+
+        var ret_chains = std.ArrayListUnmanaged([]*const Certificate){};
+        errdefer ret_chains.deinit(allocator);
+        for (candidate_chains.items) |candidate| {
+            if (try checkChainForKeyUsage(allocator, candidate, key_usages)) {
+                try ret_chains.append(allocator, candidate);
+            }
+        }
+
+        if (ret_chains.items.len == 0) {
+            return error.CertificateIncompatibleUsage;
+        }
+
+        candidate_chains.deinit(allocator);
+        return VerifiedCertChains.init(ret_chains.toOwnedSlice(allocator));
+    }
+
+    // max_chain_signature_checks is the maximum number of checkSignatureFrom calls
+    // that an invocation of buildChains will (transitively) make. Most chains are
+    // less than 15 certificates long, so this leaves space for multiple chains and
+    // for failed checks due to different intermediates having the same Subject.
+    const max_chain_signature_checks = 100;
+
+    pub fn verifyHostname(
+        self: *const Certificate,
+        hostname: []const u8,
+    ) !void {
+        // IP addresses may be written in [ ].
+        const candidate_ip = if (hostname.len >= 3 and
+            hostname[0] == '[' and hostname[hostname.len - 1] == ']')
+            hostname[1 .. hostname.len - 1]
+        else
+            hostname;
+        if (std.net.Address.parseIp(candidate_ip, 0)) |ip| {
+            // We only match IP addresses against IP SANs.
+            // See RFC 6125, Appendix B.2.
+            for (self.ip_addresses) |candidate| {
+                if (ip.eql(candidate)) {
+                    return;
+                }
+            }
+            return error.CertificateHostname;
+        } else |_| {}
+
+        const candidate_name = hostname;
+        const valid_candidate_name = validHostnameInput(candidate_name);
+        for (self.dns_names) |match| {
+            // Ideally, we'd only match valid hostnames according to RFC 6125 like
+            // browsers (more or less) do, but in practice Go is used in a wider
+            // array of contexts and can't even assume DNS resolution. Instead,
+            // always allow perfect matches, and only apply wildcard and trailing
+            // dot processing to valid hostnames.
+            if (valid_candidate_name and validHostnamePattern(match)) {
+                if (matchHostnames(match, candidate_name)) {
+                    return;
+                }
+            } else {
+                if (matchExactly(match, candidate_name)) {
+                    return;
+                }
+            }
+        }
+        return error.CertificateHostname;
+    }
+
+    fn isValid(
         self: *const Certificate,
         allocator: mem.Allocator,
         cert_type: CeritificateType,
@@ -1196,14 +1309,14 @@ pub const Certificate = struct {
         var comparison_count: usize = 0;
 
         var leaf: ?*const Certificate = null;
-        if (cert_type == .leaf or cert_type == .root) {
+        if (cert_type == .intermediate or cert_type == .root) {
             if (current_chain.len == 0) {
                 return error.InternalError;
             }
             leaf = current_chain[0];
         }
 
-        if ((cert_type == .leaf or cert_type == .root) and
+        if ((cert_type == .intermediate or cert_type == .root) and
             self.hasNameConstraints() and leaf.?.hasSanExtension())
         {
             // TODO: implement
@@ -1256,7 +1369,7 @@ pub const Certificate = struct {
         }
     }
 
-    pub fn hasNameConstraints(self: *const Certificate) bool {
+    fn hasNameConstraints(self: *const Certificate) bool {
         return oidInExtensions(asn1.ObjectIdentifier.extension_name_constraints, self.extensions);
     }
 
@@ -1697,6 +1810,31 @@ test "Certificate.parse" {
     std.log.debug("certificate={any}", .{cert});
 }
 
+test "Certificate.verify" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    var pool = try CertPool.init(allocator, true);
+    defer pool.deinit();
+
+    const max_bytes = 1024 * 1024 * 1024;
+    const pem_certs = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "/etc/ssl/certs/ca-certificates.crt",
+        max_bytes,
+    );
+    defer allocator.free(pem_certs);
+
+    try pool.appendCertsFromPem(pem_certs);
+
+    const der = @embedFile("../../tests/google.com.crt.der");
+    var cert = try Certificate.parse(allocator, der);
+    defer cert.deinit(allocator);
+
+    const opts = VerifyOptions{ .roots = &pool };
+    _ = try cert.verify(allocator, &opts);
+}
+
 test "Certificate.isValid" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
@@ -1718,11 +1856,6 @@ test "Certificate.isValid" {
     var cert = try Certificate.parse(allocator, der);
     defer cert.deinit(allocator);
 
-    const opts = VerifyOptions{.roots = &pool};
-    try cert.isValid(
-        allocator,
-        .leaf,
-        &[_]*Certificate{},
-        &opts,
-    );
+    const opts = VerifyOptions{ .roots = &pool };
+    try cert.isValid(allocator, .leaf, &[_]*Certificate{}, &opts);
 }

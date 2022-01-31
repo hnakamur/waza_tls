@@ -29,9 +29,10 @@ pub const CertPool = struct {
     }
 
     pub fn deinit(self: *CertPool) void {
+        const allocator = self.allocator;
         while (true) {
             if (self.by_name.iterator().next()) |*entry| {
-                entry.value_ptr.deinit(self.allocator);
+                entry.value_ptr.deinit(allocator);
                 _ = self.by_name.remove(entry.key_ptr.*);
             } else {
                 break;
@@ -62,6 +63,7 @@ pub const CertPool = struct {
         }
     }
 
+    // ownership of cert is transferred to self.
     pub fn addCert(self: *CertPool, cert: *x509.Certificate) !void {
         var sum: [Sha224.digest_length]u8 = undefined;
         Sha224.hash(cert.raw, &sum, .{});
@@ -92,13 +94,19 @@ pub const CertPool = struct {
         }
         try gop.value_ptr.*.append(self.allocator, index);
     }
+
+    pub fn contains(self: *const CertPool, cert: *const x509.Certificate) bool {
+        var sum: [Sha224.digest_length]u8 = undefined;
+        Sha224.hash(cert.raw, &sum, .{});
+        return self.have_sum.contains(&sum);
+    }
 };
 
 const testing = std.testing;
 
 test "CertPool" {
     // testing.log_level = .debug;
-    
+
     const allocator = testing.allocator;
 
     var pool = try CertPool.init(allocator, true);

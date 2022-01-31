@@ -21,6 +21,22 @@ pub const VerifyOptions = struct {
     max_constraint_comparisons: ?usize = null,
 };
 
+pub const VerifiedCertChains = struct {
+    // `chains` does not have ownership of `Certificates`.
+    chains: []const []*const x509.Certificate,
+
+    pub fn init(chains: []const []*const x509.Certificate) VerifiedCertChains {
+        return .{ .chains = chains };
+    }
+
+    pub fn deinit(self: *VerifiedCertChains, allocator: mem.Allocator) void {
+        for (self.chains) |chain| {
+            allocator.free(chain);
+        }
+        allocator.free(self.chains);
+    }
+};
+
 pub fn verifyEmailSan(
     c: *const x509.Certificate,
     allocator: mem.Allocator,
@@ -337,7 +353,150 @@ pub fn domainToReverseLabels(allocator: mem.Allocator, domain: []const u8) ![][]
     return reverse_labels.toOwnedSlice(allocator);
 }
 
+pub fn validHostnamePattern(host: []const u8) bool {
+    return validHostname(host, true);
+}
+
+pub fn validHostnameInput(host: []const u8) bool {
+    return validHostname(host, false);
+}
+
+// validHostname reports whether host is a valid hostname that can be matched or
+// matched against according to RFC 6125 2.2, with some leniency to accommodate
+// legacy values.
+fn validHostname(host: []const u8, is_pattern: bool) bool {
+    const host2 = if (is_pattern) host else mem.trimRight(u8, host, ".");
+    if (host2.len == 0) {
+        return false;
+    }
+
+    var it = mem.split(u8, host2, ".");
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        const part = if (it.next()) |p| p else break;
+        if (part.len == 0) {
+            // Empty label.
+            return false;
+        }
+        if (is_pattern and i == 0 and mem.eql(u8, part, "*")) {
+            // Only allow full left-most wildcards, as those are the only ones
+            // we match, and matching literal '*' characters is probably never
+            // the expected behavior.
+            continue;
+        }
+        for (part) |c, j| {
+            switch (c) {
+                'a'...'z', '0'...'9', 'A'...'Z' => continue,
+                '-' => if (j != 0) continue,
+                '_' => {
+                    // Not a valid character in hostnames, but commonly
+                    // found in deployments outside the WebPKI.
+                    continue;
+                },
+                else => {},
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+pub fn matchExactly(host_a: []const u8, host_b: []const u8) bool {
+    if (host_a.len == 0 or mem.eql(u8, host_a, ".") or host_b.len == 0 or mem.eql(u8, host_b, ".")) {
+        return false;
+    }
+    return ascii.eqlIgnoreCase(host_a, host_b);
+}
+
+pub fn matchHostnames(pattern: []const u8, host: []const u8) bool {
+    if (pattern.len == 0 or host.len == 0) {
+        return false;
+    }
+
+    var pattern_it = mem.split(u8, pattern, ".");
+    var host_it = mem.split(u8, host, ".");
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        const pattern_part = pattern_it.next();
+        const host_part = host_it.next();
+        if (pattern_part == null and host_part == null) {
+            return true;
+        } else if (pattern_part == null or host_part == null) {
+            return false;
+        }
+
+        if (i == 0 and mem.eql(u8, pattern_part.?, "*")) {
+            continue;
+        }
+        if (!ascii.eqlIgnoreCase(pattern_part.?, host_part.?)) {
+            return false;
+        }
+    }
+}
+
+pub fn checkChainForKeyUsage(
+    allocator: mem.Allocator,
+    chain: []*const x509.Certificate,
+    key_usages: []const x509.ExtKeyUsage,
+) !bool {
+    if (chain.len == 0) {
+        return false;
+    }
+
+    var usages = try allocator.alloc(?x509.ExtKeyUsage, key_usages.len);
+    defer allocator.free(usages);
+    for (key_usages) |usage, i| {
+        usages[i] = usage;
+    }
+
+    // We walk down the list and cross out any usages that aren't supported
+    // by each certificate. If we cross out all the usages, then the chain
+    // is unacceptable.
+
+    var usages_remaining = key_usages.len;
+    var i: usize = 0;
+    while (i < chain.len) : (i += 1) {
+        const cert = chain[chain.len - 1 - i];
+        if (cert.ext_key_usages.len == 0 and cert.unknown_usages.len == 0) {
+            // The certificate doesn't have any extended key usage specified.
+            continue;
+        }
+
+        if (memx.containsScalar(x509.ExtKeyUsage, cert.ext_key_usages, .any)) {
+            // The certificate is explicitly good for any usage.
+            continue;
+        }
+
+        for (usages) |requested_usage, j| {
+            if (requested_usage) |req_usage| {
+                if (memx.containsScalar(x509.ExtKeyUsage, cert.ext_key_usages, req_usage)) {
+                    continue;
+                }
+
+                usages[j] = null;
+                usages_remaining -= 1;
+                if (usages_remaining == 0) {
+                    return false;
+                }
+            } else {
+                continue;
+            }
+        }
+    }
+    return true;
+}
+
 const testing = std.testing;
+
+test "mem.split" {
+    var it = mem.split(u8, "abc|def||ghi", "|");
+    try testing.expect(mem.eql(u8, it.next().?, "abc"));
+    try testing.expect(mem.eql(u8, it.next().?, "def"));
+    try testing.expect(mem.eql(u8, it.next().?, ""));
+    try testing.expect(mem.eql(u8, it.next().?, "ghi"));
+    try testing.expect(it.next() == null);
+    try testing.expect(it.rest().len == 0);
+}
 
 test "matchIpConstraint" {
     testing.log_level = .debug;
