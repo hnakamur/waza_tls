@@ -28,6 +28,7 @@ const matchExactly = @import("verify.zig").matchExactly;
 const matchHostnames = @import("verify.zig").matchHostnames;
 const checkChainForKeyUsage = @import("verify.zig").checkChainForKeyUsage;
 const Rfc2821Mailbox = @import("mailbox.zig").Rfc2821Mailbox;
+const HashType = @import("auth.zig").HashType;
 
 pub const SignatureAlgorithm = enum(u8) {
     unknown,
@@ -110,111 +111,128 @@ pub const SignatureAlgorithmDetail = struct {
     name: []const u8,
     oid: asn1.ObjectIdentifier,
     pub_key_algo: crypto.PublicKeyAlgorithm,
-    // hash: Hash,
+    hash_type: HashType,
 };
 
 const signature_algorithm_details = [_]SignatureAlgorithmDetail{
-    .{
-        .algo = .md2_with_rsa,
-        .name = "MD2-RSA",
-        .oid = asn1.ObjectIdentifier.signature_md2_with_rsa,
-        .pub_key_algo = .rsa,
-    },
-    .{
-        .algo = .md5_with_rsa,
-        .name = "MD5-RSA",
-        .oid = asn1.ObjectIdentifier.signature_md5_with_rsa,
-        .pub_key_algo = .rsa,
-    },
+    // .{
+    //     .algo = .md2_with_rsa,
+    //     .name = "MD2-RSA",
+    //     .oid = asn1.ObjectIdentifier.signature_md2_with_rsa,
+    //     .pub_key_algo = .rsa,
+    //     // .hash_type = null,
+    // },
+    // .{
+    //     .algo = .md5_with_rsa,
+    //     .name = "MD5-RSA",
+    //     .oid = asn1.ObjectIdentifier.signature_md5_with_rsa,
+    //     .pub_key_algo = .rsa,
+    //     // .hash_type = .md5,
+    // },
     .{
         .algo = .sha1_with_rsa,
         .name = "SHA1-RSA",
         .oid = asn1.ObjectIdentifier.signature_sha1_with_rsa,
         .pub_key_algo = .rsa,
+        .hash_type = .sha1,
     },
     .{
         .algo = .sha1_with_rsa,
         .name = "SHA1-RSA",
         .oid = asn1.ObjectIdentifier.iso_signature_sha1_with_rsa,
         .pub_key_algo = .rsa,
+        .hash_type = .sha1,
     },
     .{
         .algo = .sha256_with_rsa,
         .name = "SHA256-RSA",
         .oid = asn1.ObjectIdentifier.signature_sha256_with_rsa,
         .pub_key_algo = .rsa,
+        .hash_type = .sha256,
     },
     .{
         .algo = .sha384_with_rsa,
         .name = "SHA384-RSA",
         .oid = asn1.ObjectIdentifier.signature_sha384_with_rsa,
         .pub_key_algo = .rsa,
+        .hash_type = .sha384,
     },
     .{
         .algo = .sha512_with_rsa,
         .name = "SHA512-RSA",
         .oid = asn1.ObjectIdentifier.signature_sha512_with_rsa,
         .pub_key_algo = .rsa,
+        .hash_type = .sha512,
     },
     .{
         .algo = .sha256_with_rsa_pss,
         .name = "SHA256-RSAPSS",
         .oid = asn1.ObjectIdentifier.signature_rsa_pss,
         .pub_key_algo = .rsa,
+        .hash_type = .sha256,
     },
     .{
         .algo = .sha384_with_rsa_pss,
         .name = "SHA384-RSAPSS",
         .oid = asn1.ObjectIdentifier.signature_rsa_pss,
         .pub_key_algo = .rsa,
+        .hash_type = .sha384,
     },
     .{
         .algo = .sha512_with_rsa_pss,
         .name = "SHA512-RSAPSS",
         .oid = asn1.ObjectIdentifier.signature_rsa_pss,
         .pub_key_algo = .rsa,
+        .hash_type = .sha512,
     },
     .{
         .algo = .dsa_with_sha1,
         .name = "DSA-SHA1",
         .oid = asn1.ObjectIdentifier.signature_dsa_with_sha1,
         .pub_key_algo = .dsa,
+        .hash_type = .sha1,
     },
     .{
         .algo = .dsa_with_sha256,
         .name = "DSA-SHA256",
         .oid = asn1.ObjectIdentifier.signature_dsa_with_sha256,
         .pub_key_algo = .dsa,
+        .hash_type = .sha256,
     },
     .{
         .algo = .ecdsa_with_sha1,
         .name = "ECDSA-SHA1",
         .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha1,
         .pub_key_algo = .ecdsa,
+        .hash_type = .sha1,
     },
     .{
         .algo = .ecdsa_with_sha256,
         .name = "ECDSA-SHA256",
         .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha256,
         .pub_key_algo = .ecdsa,
+        .hash_type = .sha256,
     },
     .{
         .algo = .ecdsa_with_sha384,
         .name = "ECDSA-SHA384",
         .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha384,
         .pub_key_algo = .ecdsa,
+        .hash_type = .sha384,
     },
     .{
         .algo = .ecdsa_with_sha512,
         .name = "ECDSA-SHA512",
         .oid = asn1.ObjectIdentifier.signature_ecdsa_with_sha512,
         .pub_key_algo = .ecdsa,
+        .hash_type = .sha512,
     },
     .{
         .algo = .pure_ed25519,
         .name = "Ed25519",
         .oid = asn1.ObjectIdentifier.signature_ed25519,
         .pub_key_algo = .ed25519,
+        .hash_type = .direct_signing,
     },
 };
 
