@@ -4,9 +4,9 @@ const fifo = std.fifo;
 const math = std.math;
 const mem = std.mem;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
-const Hash = @import("hash.zig").Hash;
-const Sha256Hash = @import("hash.zig").Sha256Hash;
-const Sha384Hash = @import("hash.zig").Sha384Hash;
+const crypto = @import("crypto.zig");
+const Sha256Hash = @import("crypto.zig").Sha256Hash;
+const Sha384Hash = @import("crypto.zig").Sha384Hash;
 const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
 const Prf12 = @import("prf.zig").Prf12;
 const finished_verify_length = @import("prf.zig").finished_verify_length;
@@ -14,13 +14,13 @@ const client_finished_label = @import("prf.zig").client_finished_label;
 const server_finished_label = @import("prf.zig").server_finished_label;
 
 pub const FinishedHash = struct {
-    client: Hash,
-    server: Hash,
+    client: crypto.Hash,
+    server: crypto.Hash,
 
     // Not implemented for prior to TLS 1.2.
     // // Prior to TLS 1.2, an additional MD5 hash is required.
-    // client_md5: Hash,
-    // server_md5: Hash,
+    // client_md5: crypto.Hash,
+    // server_md5: crypto.Hash,
 
     // In TLS 1.2, a full buffer is sadly required.
     buffer: ?fifo.LinearFifo(u8, .Dynamic) = null,

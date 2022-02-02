@@ -55,7 +55,7 @@ pub fn formatConst(
 }
 
 pub fn constFromDecimal(allocator: mem.Allocator, str: []const u8) !Const {
-    return try strToManaged(allocator, str).toConst();
+    return (try strToManaged(allocator, str)).toConst();
 }
 
 // expConst returns x**y mod |m| (i.e. the sign of m is ignored).

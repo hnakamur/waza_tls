@@ -1,5 +1,4 @@
 const std = @import("std");
-const crypto = std.crypto;
 const mem = std.mem;
 const SignatureType = @import("auth.zig").SignatureType;
 const HashType = @import("auth.zig").HashType;
@@ -15,7 +14,7 @@ const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const BytesView = @import("../BytesView.zig");
 const x509 = @import("x509.zig");
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
-const Hash = @import("hash.zig").Hash;
+const crypto = @import("crypto.zig");
 const SignOpts = @import("crypto.zig").SignOpts;
 
 pub const KeyAgreement = union(enum) {
@@ -307,7 +306,7 @@ fn hashForServerKeyExchange(
         return signed;
     }
     if (@enumToInt(version) >= @enumToInt(ProtocolVersion.v1_2)) {
-        var h = Hash.init(sig_hash_type);
+        var h = crypto.Hash.init(sig_hash_type);
         for (slices) |s| {
             h.update(s);
         }

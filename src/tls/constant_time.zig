@@ -17,7 +17,7 @@ pub fn constantTimeEqlBytes(x: []const u8, y: []const u8) u32 {
 }
 
 // constantTimeByteEq returns 1 if x == y and 0 otherwise.
-fn constantTimeEqlByte(x: u8, y: u8) u32 {
+pub fn constantTimeEqlByte(x: u8, y: u8) u32 {
     return (@intCast(u32, x ^ y) -% 1) >> 31;
 }
 

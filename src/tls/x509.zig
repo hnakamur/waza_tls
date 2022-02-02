@@ -6,6 +6,7 @@ const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
 const pkix = @import("pkix.zig");
 const crypto = @import("crypto.zig");
+const rsa = @import("rsa.zig");
 const bigint = @import("big_int.zig");
 const makeStaticCharBitSet = @import("../parser/lex.zig").makeStaticCharBitSet;
 const fmtx = @import("../fmtx.zig");
@@ -73,6 +74,13 @@ pub const SignatureAlgorithm = enum(u8) {
         // in the Parameters.
 
         @panic("not implemented yet");
+    }
+
+    fn is_rsa_pss(self: SignatureAlgorithm) bool {
+        return switch (self) {
+            .sha256_with_rsa_pss, .sha384_with_rsa_pss, .sha512_with_rsa_pss => true,
+            else => false,
+        };
     }
 };
 
@@ -275,6 +283,18 @@ pub const KeyUsage = packed struct {
     crl_sign: u1 = 0,
     encipher_only: u1 = 0,
     decipher_only: u1 = 0,
+
+    fn is_none(self: KeyUsage) bool {
+        return self.digital_signature == 0 and
+            self.content_commitment == 0 and
+            self.key_encipherment == 0 and
+            self.data_encipherment == 0 and
+            self.key_agreement == 0 and
+            self.cert_sign == 0 and
+            self.crl_sign == 0 and
+            self.encipher_only == 0 and
+            self.decipher_only == 0;
+    }
 };
 
 pub const ExtKeyUsage = enum {
@@ -352,7 +372,7 @@ const ext_key_usage_oids = [_]ExtKeyUsageOidMapping{
     .{ .usage = .microsoft_kernel_code_signing, .oid = ExtKeyUsage.oid_microsoft_kernel_code_signing },
 };
 
-pub const CeritificateType = enum {
+pub const CertificateType = enum {
     leaf,
     intermediate,
     root,
@@ -374,6 +394,8 @@ pub const Certificate = struct {
     public_key_algorithm: crypto.PublicKeyAlgorithm,
     public_key: crypto.PublicKey,
 
+    // basic_constraints_valid indicates whether is_ca is true and max_path_len
+    // is not null.
     basic_constraints_valid: bool = false,
     is_ca: bool = false,
     max_path_len: ?u64 = null,
@@ -1208,20 +1230,24 @@ pub const Certificate = struct {
             try self.verifyHostname(opts.dns_name);
         }
 
-        var candidate_chains = std.ArrayListUnmanaged([]*const Certificate){};
+        var candidate_chains = if (opts.roots.contains(self)) blk: {
+            var chains = try allocator.alloc([]*const Certificate, 1);
+            errdefer allocator.free(chains);
+            chains[0] = try allocator.dupe(*const Certificate, &[_]*const Certificate{self});
+            break :blk chains;
+        } else blk: {
+            var cache = CertChainCache.init(allocator);
+            defer cache.deinit();
+            var current_chain = &[_]*const Certificate{};
+            var sig_checks: usize = 0;
+            var chains = try self.buildChains(allocator, &cache, current_chain, &sig_checks);
+            break :blk chains;
+        };
         errdefer {
-            for (candidate_chains.items) |chain| {
+            for (candidate_chains) |chain| {
                 allocator.free(chain);
             }
-            candidate_chains.deinit(allocator);
-        }
-        if (opts.roots.contains(self)) {
-            try candidate_chains.append(
-                allocator,
-                try allocator.dupe(*const Certificate, &[_]*const Certificate{self}),
-            );
-        } else {
-            @panic("not implemented yet");
+            allocator.free(candidate_chains);
         }
 
         const key_usages = if (opts.key_usages.len == 0)
@@ -1231,12 +1257,12 @@ pub const Certificate = struct {
 
         // If any key usage is acceptable then we're done.
         if (memx.containsScalar(ExtKeyUsage, key_usages, .any)) {
-            return VerifiedCertChains.init(candidate_chains.toOwnedSlice(allocator));
+            return VerifiedCertChains.init(candidate_chains);
         }
 
         var ret_chains = std.ArrayListUnmanaged([]*const Certificate){};
         errdefer ret_chains.deinit(allocator);
-        for (candidate_chains.items) |candidate| {
+        for (candidate_chains) |candidate| {
             if (try checkChainForKeyUsage(allocator, candidate, key_usages)) {
                 try ret_chains.append(allocator, candidate);
             }
@@ -1246,8 +1272,84 @@ pub const Certificate = struct {
             return error.CertificateIncompatibleUsage;
         }
 
-        candidate_chains.deinit(allocator);
+        allocator.free(candidate_chains);
         return VerifiedCertChains.init(ret_chains.toOwnedSlice(allocator));
+    }
+
+    fn buildChains(
+        self: *const Certificate,
+        allocator: mem.Allocator,
+        cache: *CertChainCache,
+        current_chain: []*const Certificate,
+        sig_checks: *usize,
+    ) ![]const []*const Certificate {
+        _ = self;
+        _ = cache;
+        _ = sig_checks;
+        var chains2 = std.ArrayListUnmanaged([]*const Certificate){};
+        try considerCandidate(
+            self,
+            allocator,
+            .intermediate,
+            self,
+            cache,
+            current_chain,
+            sig_checks,
+            &chains2,
+        );
+
+        var chains = try allocator.alloc([]*const Certificate, 1);
+        errdefer allocator.free(chains);
+        chains[0] = try allocator.dupe(*const Certificate, current_chain);
+        return chains;
+    }
+
+    // CheckSignatureFrom verifies that the signature on c is a valid signature
+    // from parent.
+    pub fn checkSignatureFrom(
+        self: *const Certificate,
+        allocator: mem.Allocator,
+        parent: *const Certificate,
+    ) !void {
+        // RFC 5280, 4.2.1.9:
+        // "If the basic constraints extension is not present in a version 3
+        // certificate, or the extension is present but the cA boolean is not
+        // asserted, then the certified public key MUST NOT be used to verify
+        // certificate signatures."
+        if ((parent.version == 3 and !parent.basic_constraints_valid) or
+            (parent.basic_constraints_valid and !parent.is_ca))
+        {
+            return error.ConstraintViolation;
+        }
+
+        if (!parent.key_usage.is_none() and parent.key_usage.cert_sign == 0) {
+            return error.ConstraintViolation;
+        }
+
+        if (parent.public_key_algorithm == .unknown) {
+            return error.UnsupportedAlgorithm;
+        }
+
+        // TODO: don't ignore the path length constraint.
+
+        try parent.checkSignature(
+            allocator,
+            self.signature_algorithm,
+            self.raw_tbs_certificate,
+            self.signature,
+        );
+    }
+
+    // CheckSignature verifies that signature is a valid signature over signed from
+    // self's public key.
+    fn checkSignature(
+        self: *const Certificate,
+        allocator: mem.Allocator,
+        algo: SignatureAlgorithm,
+        signed: []const u8,
+        signature: []const u8,
+    ) !void {
+        try checkSignaturePublicKey(allocator, algo, signed, signature, self.public_key);
     }
 
     // max_chain_signature_checks is the maximum number of checkSignatureFrom calls
@@ -1301,7 +1403,7 @@ pub const Certificate = struct {
     fn isValid(
         self: *const Certificate,
         allocator: mem.Allocator,
-        cert_type: CeritificateType,
+        cert_type: CertificateType,
         current_chain: []const *Certificate,
         opts: *const VerifyOptions,
     ) !void {
@@ -1404,6 +1506,99 @@ pub const Certificate = struct {
         return null;
     }
 };
+
+// checkSignaturePublicKey verifies that signature is a valid signature over signed from
+// a crypto.PublicKey.
+fn checkSignaturePublicKey(
+    allocator: mem.Allocator,
+    algo: SignatureAlgorithm,
+    signed: []const u8,
+    signature: []const u8,
+    public_key: crypto.PublicKey,
+) !void {
+    var hash_type: ?HashType = null;
+    var pub_key_algo: ?crypto.PublicKeyAlgorithm = null;
+    for (signature_algorithm_details) |detail| {
+        if (detail.algo == algo) {
+            hash_type = detail.hash_type;
+            pub_key_algo = detail.pub_key_algo;
+        }
+    }
+    if (hash_type == null) {
+        return error.UnsupportedAlgorithm;
+    }
+
+    const signed2 = if (hash_type.? == .direct_signing) blk: {
+        break :blk try allocator.dupe(u8, signed);
+    } else blk: {
+        var h = crypto.Hash.init(hash_type.?);
+        h.update(signed);
+        break :blk try h.allocFinal(allocator);
+    };
+    defer allocator.free(signed2);
+
+    switch (public_key) {
+        .rsa => |*k| {
+            if (pub_key_algo.? != .rsa) {
+                return error.SignaturePublicKeyAlgoMismatch;
+            }
+            if (algo.is_rsa_pss()) {
+                @panic("not implemented yet");
+            } else {
+                try rsa.verifyPkcs1v15(allocator, k, hash_type.?, signed2, signature);
+            }
+        },
+        .ecdsa => |k| {
+            if (pub_key_algo.? != .ecdsa) {
+                return error.SignaturePublicKeyAlgoMismatch;
+            }
+            _ = k;
+            @panic("not implemented yet");
+        },
+        .ed25519 => |k| {
+            if (pub_key_algo.? != .ed25519) {
+                return error.SignaturePublicKeyAlgoMismatch;
+            }
+            _ = k;
+            @panic("not implemented yet");
+        },
+        else => return error.UnsupportedAlgorithm,
+    }
+    _ = signature;
+}
+
+const CertChainCache = std.AutoHashMap(*const Certificate, []const []*const Certificate);
+
+fn considerCandidate(
+    c: *const Certificate,
+    allocator: mem.Allocator,
+    cert_type: CertificateType,
+    candidate: *const Certificate,
+    cache: *CertChainCache,
+    current_chain: []*const Certificate,
+    sig_checks: *usize,
+    chains: *std.ArrayListUnmanaged([]*const Certificate),
+) !void {
+    _ = allocator;
+    _ = cert_type;
+    _ = candidate;
+    _ = cache;
+    _ = current_chain;
+    _ = sig_checks;
+    _ = chains;
+    try c.checkSignatureFrom(allocator, candidate);
+}
+
+fn appendToFreshChain(
+    allocator: mem.Allocator,
+    chain: []*const Certificate,
+    cert: *const Certificate,
+) ![]*const Certificate {
+    var new_chain = try allocator.alloc(*const Certificate, chain.len + 1);
+    mem.copy(*const Certificate, new_chain, chain);
+    new_chain[chain.len] = cert;
+    return new_chain;
+}
 
 fn parseSanExtensionUri(allocator: mem.Allocator, input: []const u8) !Uri {
     if (!isValidIa5String(input)) {

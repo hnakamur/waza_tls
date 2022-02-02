@@ -6,6 +6,9 @@ const fmtx = @import("../fmtx.zig");
 const HashType = @import("auth.zig").HashType;
 const SignOpts = @import("crypto.zig").SignOpts;
 const bigint = @import("big_int.zig");
+const crypto = @import("crypto.zig");
+const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
+const constantTimeEqlByte = @import("constant_time.zig").constantTimeEqlByte;
 
 pub const PublicKey = struct {
     modulus: math.big.int.Const,
@@ -245,14 +248,71 @@ const hash_prefixes = [_]HashPrefix{
     },
 };
 
-pub fn pcks1v15HashInfo(hash_type: HashType, in_len: usize, hash_len: *usize) ![]const u8 {
+// verifyPkcs1v15 verifies an RSA PKCS #1 v1.5 signature.
+// hashed is the result of hashing the input message using the given hash
+// function and sig is the signature. A valid signature is indicated by
+// returning a nil error. If hash is zero then hashed is used directly. This
+// isn't advisable except for interoperability.
+pub fn verifyPkcs1v15(
+    allocator: mem.Allocator,
+    pub_key: *const PublicKey,
+    hash_type: HashType,
+    hashed: []const u8,
+    sig: []const u8,
+) !void {
+    var hash_len: usize = undefined;
+    const prefix = try pcks1v15HashInfo(hash_type, hashed.len, &hash_len);
+
+    const t_len = prefix.len + hash_len;
+    const k = pub_key.size();
+    if (k < t_len + 11) {
+        return error.Verification;
+    }
+
+    // RFC 8017 Section 8.2.2: If the length of the signature S is not k
+    // octets (where k is the length in octets of the RSA modulus n), output
+    // "invalid signature" and stop.
+    if (k != sig.len) {
+        return error.Verification;
+    }
+
+    var c = try bigint.constFromBytes(allocator, sig);
+    defer bigint.deinitConst(c, allocator);
+
+    var m = try encrypt(allocator, pub_key, c);
+    defer bigint.deinitConst(m, allocator);
+
+    var em = try allocator.alloc(u8, k);
+    defer allocator.free(em);
+
+    bigint.fillBytes(m, em);
+
+    // EM = 0x00 || 0x01 || PS || 0x00 || T
+
+    var ok = constantTimeEqlByte(em[0], 0);
+    ok &= constantTimeEqlByte(em[1], 1);
+    ok &= constantTimeEqlBytes(em[k - hash_len .. k], hashed);
+    ok &= constantTimeEqlBytes(em[k - t_len .. k - hash_len], prefix);
+    ok &= constantTimeEqlByte(em[k - t_len - 1], 0);
+
+    var i: usize = 2;
+    while (i < k - t_len - 1) : (i += 1) {
+        ok &= constantTimeEqlByte(em[i], 0xff);
+    }
+
+    if (ok != 1) {
+        return error.Verification;
+    }
+}
+
+pub fn pcks1v15HashInfo(hash_type: HashType, in_len: usize, out_hash_len: *usize) ![]const u8 {
     if (hash_type == .direct_signing) {
-        hash_len.* = in_len;
+        out_hash_len.* = in_len;
         return &[_]u8{};
     }
 
-    hash_len.* = hash_type.digestLength();
-    if (in_len != hash_len.*) {
+    out_hash_len.* = hash_type.digestLength();
+    if (in_len != out_hash_len.*) {
         return error.InputMustBeHashedMessage;
     }
 
@@ -271,4 +331,27 @@ test "divCeil" {
     try testing.expectEqual(@as(usize, 1), try math.divCeil(usize, 1, 8));
     try testing.expectEqual(@as(usize, 1), try math.divCeil(usize, 8, 8));
     try testing.expectEqual(@as(usize, 2), try math.divCeil(usize, 9, 8));
+}
+
+test "verifyPkcs1v15" {
+    const in = "Test.\n";
+    const out = "\xa4\xf3\xfa\x6e\xa9\x3b\xcd\xd0\xc5\x7b\xe0\x20\xc1\x19\x3e\xcb\xfd\x6f\x20\x0a\x3d\x95\xc4\x09\x76\x9b\x02\x95\x78\xfa\x0e\x33\x6a\xd9\xa3\x47\x60\x0e\x40\xd3\xae\x82\x3b\x8c\x7e\x6b\xad\x88\xcc\x07\xc1\xd5\x4c\x3a\x15\x23\xcb\xbb\x6d\x58\xef\xc3\x62\xae";
+
+    const allocator = testing.allocator;
+
+    var pub_key = PublicKey{
+        .modulus = try bigint.constFromDecimal(
+            allocator,
+            "9353930466774385905609975137998169297361893554149986716853295022578535724979677252958524466350471210367835187480748268864277464700638583474144061408845077",
+        ),
+        .exponent = 65537,
+    };
+    defer pub_key.deinit(allocator);
+
+    var h = crypto.Sha1Hash.init(.{});
+    h.update(in);
+    var digest = try h.allocFinal(allocator);
+    defer allocator.free(digest);
+
+    try verifyPkcs1v15(allocator, &pub_key, .sha1, digest, out);
 }
