@@ -16,10 +16,13 @@ const bits = @import("bits.zig");
 const big_zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
 const big_one = Const{ .limbs = &[_]Limb{1}, .positive = true };
 
+pub const ConstFromBytesError = std.mem.Allocator.Error;
+
 // constFromBytes interprets buf as the bytes of a big-endian unsigned
 // integer, sets z to that value, and returns z.
-pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) !Const {
-    var limbs = try allocator.alloc(Limb, try math.divCeil(usize, buf.len, @sizeOf(Limb)));
+pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) ConstFromBytesError!Const {
+    const limbs_len = math.divCeil(usize, buf.len, @sizeOf(Limb)) catch unreachable;
+    var limbs = try allocator.alloc(Limb, limbs_len);
     errdefer allocator.free(limbs);
 
     var limbs_bytes = @ptrCast([*]u8, limbs.ptr);

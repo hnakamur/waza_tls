@@ -248,6 +248,12 @@ const hash_prefixes = [_]HashPrefix{
     },
 };
 
+pub const VerifyPkcs1v15Error = error{
+    Verification,
+    InputMustBeHashedMessage,
+    UnsupportedHashType,
+} || bigint.ConstFromBytesError;
+
 // verifyPkcs1v15 verifies an RSA PKCS #1 v1.5 signature.
 // hashed is the result of hashing the input message using the given hash
 // function and sig is the signature. A valid signature is indicated by
@@ -259,7 +265,7 @@ pub fn verifyPkcs1v15(
     hash_type: HashType,
     hashed: []const u8,
     sig: []const u8,
-) !void {
+) VerifyPkcs1v15Error!void {
     var hash_len: usize = undefined;
     const prefix = try pcks1v15HashInfo(hash_type, hashed.len, &hash_len);
 

@@ -6,7 +6,9 @@ pub const Uri = struct {
     raw: []const u8 = "",
     components: uri.UriComponents,
 
-    pub fn parse(allocator: mem.Allocator, input: []const u8) !Uri {
+    pub const ParseError = mem.Allocator.Error || uri.ParseError;
+
+    pub fn parse(allocator: mem.Allocator, input: []const u8) ParseError!Uri {
         const raw = try allocator.dupe(u8, input);
         errdefer allocator.free(raw);
         const components = try uri.parse(raw);

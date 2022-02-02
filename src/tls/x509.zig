@@ -589,6 +589,10 @@ pub const Certificate = struct {
         return cert;
     }
 
+    pub fn eql(self: *const Certificate, other: *const Certificate) bool {
+        return mem.eql(u8, self.raw, other.raw);
+    }
+
     pub fn deinit(self: *Certificate, allocator: mem.Allocator) void {
         allocator.free(self.raw);
         allocator.free(self.serial_number.limbs);
@@ -1240,7 +1244,7 @@ pub const Certificate = struct {
             defer cache.deinit();
             var current_chain = &[_]*const Certificate{};
             var sig_checks: usize = 0;
-            var chains = try self.buildChains(allocator, &cache, current_chain, &sig_checks);
+            var chains = try self.buildChains(allocator, &cache, current_chain, opts, &sig_checks);
             break :blk chains;
         };
         errdefer {
@@ -1276,24 +1280,31 @@ pub const Certificate = struct {
         return VerifiedCertChains.init(ret_chains.toOwnedSlice(allocator));
     }
 
+    const BuildChainsError = error{
+        ConstraintViolation,
+        InvalidCertificate,
+        SignatureCheckAttemptsExceedsLimit,
+    } || CheckSignatureError || IsValidError;
+
     fn buildChains(
         self: *const Certificate,
         allocator: mem.Allocator,
         cache: *CertChainCache,
         current_chain: []*const Certificate,
+        opts: *const VerifyOptions,
         sig_checks: *usize,
-    ) ![]const []*const Certificate {
-        _ = self;
-        _ = cache;
-        _ = sig_checks;
+    ) BuildChainsError![]const []*const Certificate {
+        // TODO: implement
+
         var chains2 = std.ArrayListUnmanaged([]*const Certificate){};
         try considerCandidate(
             self,
             allocator,
             .intermediate,
             self,
-            cache,
             current_chain,
+            opts,
+            cache,
             sig_checks,
             &chains2,
         );
@@ -1304,13 +1315,18 @@ pub const Certificate = struct {
         return chains;
     }
 
+    pub const CheckSignatureFromError = error{
+        ConstraintViolation,
+        UnsupportedAlgorithm,
+    } || CheckSignatureError;
+
     // CheckSignatureFrom verifies that the signature on c is a valid signature
     // from parent.
     pub fn checkSignatureFrom(
         self: *const Certificate,
         allocator: mem.Allocator,
         parent: *const Certificate,
-    ) !void {
+    ) CheckSignatureFromError!void {
         // RFC 5280, 4.2.1.9:
         // "If the basic constraints extension is not present in a version 3
         // certificate, or the extension is present but the cA boolean is not
@@ -1348,7 +1364,7 @@ pub const Certificate = struct {
         algo: SignatureAlgorithm,
         signed: []const u8,
         signature: []const u8,
-    ) !void {
+    ) CheckSignatureError!void {
         try checkSignaturePublicKey(allocator, algo, signed, signature, self.public_key);
     }
 
@@ -1400,13 +1416,24 @@ pub const Certificate = struct {
         return error.CertificateHostname;
     }
 
+    const IsValidError = error{
+        CannotParseDnsName,
+        InternalError,
+        InvalidCertificate,
+        InvalidIpSan,
+        InvalidMailbox,
+        InvalidSubjectAlternativeNames,
+        OutOfMemory,
+        UnhandledCriticalExtension,
+    } || Uri.ParseError;
+
     fn isValid(
         self: *const Certificate,
         allocator: mem.Allocator,
         cert_type: CertificateType,
-        current_chain: []const *Certificate,
+        current_chain: []*const Certificate,
         opts: *const VerifyOptions,
-    ) !void {
+    ) IsValidError!void {
         if (self.unhandled_critical_extensions.len > 0) {
             return error.UnhandledCriticalExtension;
         }
@@ -1507,6 +1534,11 @@ pub const Certificate = struct {
     }
 };
 
+const CheckSignatureError = error{
+    UnsupportedAlgorithm,
+    SignaturePublicKeyAlgoMismatch,
+} || rsa.VerifyPkcs1v15Error;
+
 // checkSignaturePublicKey verifies that signature is a valid signature over signed from
 // a crypto.PublicKey.
 fn checkSignaturePublicKey(
@@ -1515,7 +1547,7 @@ fn checkSignaturePublicKey(
     signed: []const u8,
     signature: []const u8,
     public_key: crypto.PublicKey,
-) !void {
+) CheckSignatureError!void {
     var hash_type: ?HashType = null;
     var pub_key_algo: ?crypto.PublicKeyAlgorithm = null;
     for (signature_algorithm_details) |detail| {
@@ -1574,19 +1606,47 @@ fn considerCandidate(
     allocator: mem.Allocator,
     cert_type: CertificateType,
     candidate: *const Certificate,
-    cache: *CertChainCache,
     current_chain: []*const Certificate,
+    opts: *const VerifyOptions,
+    cache: *CertChainCache,
     sig_checks: *usize,
     chains: *std.ArrayListUnmanaged([]*const Certificate),
-) !void {
-    _ = allocator;
-    _ = cert_type;
-    _ = candidate;
-    _ = cache;
-    _ = current_chain;
-    _ = sig_checks;
-    _ = chains;
+) Certificate.BuildChainsError!void {
+    for (current_chain) |cert| {
+        if (cert.eql(candidate)) {
+            return;
+        }
+    }
+
+    sig_checks.* += 1;
+    if (sig_checks.* >= Certificate.max_chain_signature_checks) {
+        return error.SignatureCheckAttemptsExceedsLimit;
+    }
+
     try c.checkSignatureFrom(allocator, candidate);
+
+    try candidate.isValid(allocator, cert_type, current_chain, opts);
+
+    switch (cert_type) {
+        .root => {
+            var chain = try appendToFreshChain(allocator, current_chain, candidate);
+            errdefer allocator.free(chain);
+            try chains.append(allocator, chain);
+        },
+        .intermediate => {
+            var child_chains = if (cache.get(candidate)) |child_chains2|
+                child_chains2
+            else blk: {
+                var chain = try appendToFreshChain(allocator, current_chain, candidate);
+                errdefer allocator.free(chain);
+                var child_chains2 = try candidate.buildChains(allocator, cache, chain, opts, sig_checks);
+                try cache.put(candidate, child_chains2);
+                break :blk child_chains2;
+            };
+            try chains.appendSlice(allocator, child_chains);
+        },
+        else => {},
+    }
 }
 
 fn appendToFreshChain(
