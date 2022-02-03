@@ -1240,13 +1240,20 @@ pub const Certificate = struct {
             chains[0] = try allocator.dupe(*const Certificate, &[_]*const Certificate{self});
             break :blk chains;
         } else blk: {
-            var cache = CertChainCache.init(allocator);
-            defer cache.deinit();
-            var current_chain = try allocator.dupe(*const Certificate, &[_]*const Certificate{self});
-            defer allocator.free(current_chain);
+            var arena_allocator = std.heap.ArenaAllocator.init(allocator);
+            defer arena_allocator.deinit();
+            var allocator2 = arena_allocator.allocator();
+
+            var cache = CertChainCache.init(allocator2);
+            defer {
+                deinitCertChainCache(&cache, allocator2);
+                cache.deinit();
+            }
+            var current_chain = try allocator2.dupe(*const Certificate, &[_]*const Certificate{self});
+            defer allocator2.free(current_chain);
             var sig_checks: usize = 0;
-            var chains = try self.buildChains(allocator, &cache, current_chain, opts, &sig_checks);
-            break :blk chains;
+            var chains = try self.buildChains(allocator2, &cache, current_chain, opts, &sig_checks);
+            break :blk try dupeChains(allocator, chains);
         };
         errdefer {
             for (candidate_chains) |chain| {
@@ -1296,18 +1303,20 @@ pub const Certificate = struct {
         opts: *const VerifyOptions,
         sig_checks: *usize,
     ) BuildChainsError![]const []*const Certificate {
+        // TODO: Fix memory leaks. Currently workarounded with ArenaAllocator.
         std.log.debug(
             "buildChains start, c=0x{x} {s}",
             .{ @ptrToInt(self), self.subject.common_name },
         );
+
         for (current_chain) |c, i| {
             std.log.debug(
                 "buildChains start, chain #{}=0x{x} {s}",
                 .{ i, @ptrToInt(c), c.subject.common_name },
             );
         }
-        var chains = std.ArrayListUnmanaged([]*const Certificate){};
-        errdefer chains.deinit(allocator);
+        var chain_list = std.ArrayListUnmanaged([]*const Certificate){};
+        errdefer chain_list.deinit(allocator);
 
         var roots = try opts.roots.findPotentialParents(self, allocator);
         defer if (roots.len > 0) allocator.free(roots);
@@ -1326,7 +1335,7 @@ pub const Certificate = struct {
                 opts,
                 cache,
                 sig_checks,
-                &chains,
+                &chain_list,
             );
         }
 
@@ -1347,16 +1356,16 @@ pub const Certificate = struct {
                     opts,
                     cache,
                     sig_checks,
-                    &chains,
+                    &chain_list,
                 );
             }
         }
 
-        if (chains.items.len == 0) {
+        if (chain_list.items.len == 0) {
             return error.UnknownAuthority;
         }
 
-        return chains.toOwnedSlice(allocator);
+        return chain_list.toOwnedSlice(allocator);
     }
 
     pub const CheckSignatureFromError = error{
@@ -1578,6 +1587,17 @@ pub const Certificate = struct {
     }
 };
 
+fn dupeChains(
+    allocator: mem.Allocator,
+    chains: []const []*const Certificate,
+) error{OutOfMemory}![]const []*const Certificate {
+    var chains2 = try allocator.alloc([]*const Certificate, chains.len);
+    for (chains) |chain, i| {
+        chains2[i] = try allocator.dupe(*const Certificate, chain);
+    }
+    return chains2;
+}
+
 const CheckSignatureError = error{
     UnsupportedAlgorithm,
     SignaturePublicKeyAlgoMismatch,
@@ -1644,6 +1664,21 @@ fn checkSignaturePublicKey(
 }
 
 const CertChainCache = std.AutoHashMap(*const Certificate, []const []*const Certificate);
+
+fn deinitCertChainCache(cache: *CertChainCache, allocator: mem.Allocator) void {
+    while (true) {
+        if (cache.iterator().next()) |*entry| {
+            var chains = entry.value_ptr.*;
+            for (chains) |chain| {
+                allocator.free(chain);
+            }
+            allocator.free(chains);
+            _ = cache.remove(entry.key_ptr.*);
+        } else {
+            break;
+        }
+    }
+}
 
 fn considerCandidate(
     c: *const Certificate,
@@ -2165,7 +2200,8 @@ test "Certificate.verify" {
         .roots = &root_pool,
         .intermediates = &intermediate_pool,
     };
-    _ = try cert.verify(allocator, &opts);
+    var chains = try cert.verify(allocator, &opts);
+    defer chains.deinit(allocator);
 }
 
 test "Certificate.isValid" {
