@@ -1242,7 +1242,8 @@ pub const Certificate = struct {
         } else blk: {
             var cache = CertChainCache.init(allocator);
             defer cache.deinit();
-            var current_chain = &[_]*const Certificate{};
+            var current_chain = try allocator.dupe(*const Certificate, &[_]*const Certificate{self});
+            defer allocator.free(current_chain);
             var sig_checks: usize = 0;
             var chains = try self.buildChains(allocator, &cache, current_chain, opts, &sig_checks);
             break :blk chains;
@@ -1295,12 +1296,27 @@ pub const Certificate = struct {
         opts: *const VerifyOptions,
         sig_checks: *usize,
     ) BuildChainsError![]const []*const Certificate {
+        std.log.debug(
+            "buildChains start, c=0x{x} {s}",
+            .{ @ptrToInt(self), self.subject.common_name },
+        );
+        for (current_chain) |c, i| {
+            std.log.debug(
+                "buildChains start, chain #{}=0x{x} {s}",
+                .{ i, @ptrToInt(c), c.subject.common_name },
+            );
+        }
         var chains = std.ArrayListUnmanaged([]*const Certificate){};
         errdefer chains.deinit(allocator);
 
         var roots = try opts.roots.findPotentialParents(self, allocator);
         defer if (roots.len > 0) allocator.free(roots);
         for (roots) |root| {
+            std.log.debug(
+                "buildChains before considerCandidate, root=0x{x} {s}",
+                .{ @ptrToInt(root), root.subject.common_name },
+            );
+
             try considerCandidate(
                 self,
                 allocator,
@@ -1318,6 +1334,10 @@ pub const Certificate = struct {
             var intermediates2 = try intermediates.findPotentialParents(self, allocator);
             defer if (intermediates2.len > 0) allocator.free(intermediates2);
             for (intermediates2) |intermediate| {
+                std.log.debug(
+                    "buildChains before considerCandidate, intermediate=0x{x} {s}",
+                    .{ @ptrToInt(intermediate), intermediate.subject.common_name },
+                );
                 try considerCandidate(
                     self,
                     allocator,
@@ -2108,11 +2128,14 @@ test "Certificate.parse" {
 }
 
 test "Certificate.verify" {
+    const pem = @import("pem.zig");
+    const assert = std.debug.assert;
+
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
-    var pool = try CertPool.init(allocator, true);
-    defer pool.deinit();
+    var root_pool = try CertPool.init(allocator, true);
+    defer root_pool.deinit();
 
     const max_bytes = 1024 * 1024 * 1024;
     const pem_certs = try std.fs.cwd().readFileAlloc(
@@ -2122,22 +2145,38 @@ test "Certificate.verify" {
     );
     defer allocator.free(pem_certs);
 
-    try pool.appendCertsFromPem(pem_certs);
+    try root_pool.appendCertsFromPem(pem_certs);
 
-    const der = @embedFile("../../tests/google.com.crt.der");
-    var cert = try Certificate.parse(allocator, der);
+    const leaf_pem = @embedFile("../../tests/google.com.crt.pem");
+    var offset: usize = 0;
+    var leaf_block = try pem.Block.decode(allocator, leaf_pem, &offset);
+    defer leaf_block.deinit(allocator);
+    assert(mem.eql(u8, leaf_block.label, pem.Block.certificate_label));
+    var leaf_der = leaf_block.bytes;
+    var cert = try Certificate.parse(allocator, leaf_der);
     defer cert.deinit(allocator);
 
-    const opts = VerifyOptions{ .roots = &pool };
+    const giag2_intermediate = @embedFile("../../tests/google.intermediate.crt.pem");
+    var intermediate_pool = try CertPool.init(allocator, true);
+    defer intermediate_pool.deinit();
+    try intermediate_pool.appendCertsFromPem(giag2_intermediate);
+
+    const opts = VerifyOptions{
+        .roots = &root_pool,
+        .intermediates = &intermediate_pool,
+    };
     _ = try cert.verify(allocator, &opts);
 }
 
 test "Certificate.isValid" {
+    const pem = @import("pem.zig");
+    const assert = std.debug.assert;
+
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
-    var pool = try CertPool.init(allocator, true);
-    defer pool.deinit();
+    var root_pool = try CertPool.init(allocator, true);
+    defer root_pool.deinit();
 
     const max_bytes = 1024 * 1024 * 1024;
     const pem_certs = try std.fs.cwd().readFileAlloc(
@@ -2147,12 +2186,25 @@ test "Certificate.isValid" {
     );
     defer allocator.free(pem_certs);
 
-    try pool.appendCertsFromPem(pem_certs);
+    try root_pool.appendCertsFromPem(pem_certs);
 
-    const der = @embedFile("../../tests/google.com.crt.der");
-    var cert = try Certificate.parse(allocator, der);
+    const leaf_pem = @embedFile("../../tests/google.com.crt.pem");
+    var offset: usize = 0;
+    var leaf_block = try pem.Block.decode(allocator, leaf_pem, &offset);
+    defer leaf_block.deinit(allocator);
+    assert(mem.eql(u8, leaf_block.label, pem.Block.certificate_label));
+    var leaf_der = leaf_block.bytes;
+    var cert = try Certificate.parse(allocator, leaf_der);
     defer cert.deinit(allocator);
 
-    const opts = VerifyOptions{ .roots = &pool };
+    const giag2_intermediate = @embedFile("../../tests/google.intermediate.crt.pem");
+    var intermediate_pool = try CertPool.init(allocator, true);
+    defer intermediate_pool.deinit();
+    try intermediate_pool.appendCertsFromPem(giag2_intermediate);
+
+    const opts = VerifyOptions{
+        .roots = &root_pool,
+        .intermediates = &intermediate_pool,
+    };
     try cert.isValid(allocator, .leaf, &[_]*Certificate{}, &opts);
 }
