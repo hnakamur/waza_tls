@@ -100,6 +100,57 @@ pub const CertPool = struct {
         Sha224.hash(cert.raw, &sum, .{});
         return self.have_sum.contains(&sum);
     }
+
+    pub const FindPotentialParentsError = error{
+        OutOfMemory,
+    };
+
+    // findPotentialParents returns the indexes of certificates in self which might
+    // have signed cert.
+    pub fn findPotentialParents(
+        self: *const CertPool,
+        cert: *const x509.Certificate,
+        allocator: mem.Allocator,
+    ) FindPotentialParentsError![]*const x509.Certificate {
+        // consider all candidates where cert.Issuer matches cert.Subject.
+        // when picking possible candidates the list is built in the order
+        // of match plausibility as to save cycles in buildChains:
+        //   AKID and SKID match
+        //   AKID present, SKID missing / AKID missing, SKID present
+        //   AKID and SKID don't match
+        var matching_key_id = std.ArrayListUnmanaged(*const x509.Certificate){};
+        defer matching_key_id.deinit(allocator);
+        var one_key_id = std.ArrayListUnmanaged(*const x509.Certificate){};
+        defer one_key_id.deinit(allocator);
+        var mismatch_key_id = std.ArrayListUnmanaged(*const x509.Certificate){};
+        defer mismatch_key_id.deinit(allocator);
+        if (self.by_name.get(cert.raw_issuer)) |index_list| {
+            for (index_list.items) |i| {
+                const candidate = &self.certs.items[i];
+                if (mem.eql(u8, candidate.subject_key_id, cert.authority_key_id)) {
+                    try matching_key_id.append(allocator, candidate);
+                } else if ((candidate.subject_key_id.len == 0 and cert.authority_key_id.len > 0) or
+                    (candidate.subject_key_id.len > 0 and cert.authority_key_id.len == 0))
+                {
+                    try one_key_id.append(allocator, candidate);
+                } else {
+                    try mismatch_key_id.append(allocator, candidate);
+                }
+            }
+        }
+        const found = matching_key_id.items.len + one_key_id.items.len + mismatch_key_id.items.len;
+        if (found == 0) {
+            return &[_]*const x509.Certificate{};
+        }
+        var candidates = try std.ArrayListUnmanaged(*const x509.Certificate).initCapacity(
+            allocator,
+            found,
+        );
+        try candidates.appendSlice(allocator, matching_key_id.items);
+        try candidates.appendSlice(allocator, one_key_id.items);
+        try candidates.appendSlice(allocator, mismatch_key_id.items);
+        return candidates.toOwnedSlice(allocator);
+    }
 };
 
 const testing = std.testing;

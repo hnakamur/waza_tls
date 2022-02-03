@@ -1284,6 +1284,7 @@ pub const Certificate = struct {
         ConstraintViolation,
         InvalidCertificate,
         SignatureCheckAttemptsExceedsLimit,
+        UnknownAuthority,
     } || CheckSignatureError || IsValidError;
 
     fn buildChains(
@@ -1294,25 +1295,48 @@ pub const Certificate = struct {
         opts: *const VerifyOptions,
         sig_checks: *usize,
     ) BuildChainsError![]const []*const Certificate {
-        // TODO: implement
+        var chains = std.ArrayListUnmanaged([]*const Certificate){};
+        errdefer chains.deinit(allocator);
 
-        var chains2 = std.ArrayListUnmanaged([]*const Certificate){};
-        try considerCandidate(
-            self,
-            allocator,
-            .intermediate,
-            self,
-            current_chain,
-            opts,
-            cache,
-            sig_checks,
-            &chains2,
-        );
+        var roots = try opts.roots.findPotentialParents(self, allocator);
+        defer if (roots.len > 0) allocator.free(roots);
+        for (roots) |root| {
+            try considerCandidate(
+                self,
+                allocator,
+                .root,
+                root,
+                current_chain,
+                opts,
+                cache,
+                sig_checks,
+                &chains,
+            );
+        }
 
-        var chains = try allocator.alloc([]*const Certificate, 1);
-        errdefer allocator.free(chains);
-        chains[0] = try allocator.dupe(*const Certificate, current_chain);
-        return chains;
+        if (opts.intermediates) |intermediates| {
+            var intermediates2 = try intermediates.findPotentialParents(self, allocator);
+            defer if (intermediates2.len > 0) allocator.free(intermediates2);
+            for (intermediates2) |intermediate| {
+                try considerCandidate(
+                    self,
+                    allocator,
+                    .intermediate,
+                    intermediate,
+                    current_chain,
+                    opts,
+                    cache,
+                    sig_checks,
+                    &chains,
+                );
+            }
+        }
+
+        if (chains.items.len == 0) {
+            return error.UnknownAuthority;
+        }
+
+        return chains.toOwnedSlice(allocator);
     }
 
     pub const CheckSignatureFromError = error{
