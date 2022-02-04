@@ -130,7 +130,7 @@ test "Conn ClientServer" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    // testing.log_level = .debug;
+    testing.log_level = .debug;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -146,6 +146,8 @@ test "Conn ClientServer" {
             const n = try client.conn.read(&buffer);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
+
+            _ = try client.conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -161,6 +163,11 @@ test "Conn ClientServer" {
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
             _ = try client.conn.write("hello");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
         }
 
         fn runTest() !void {
