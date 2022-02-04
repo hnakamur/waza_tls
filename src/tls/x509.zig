@@ -1431,6 +1431,7 @@ pub const Certificate = struct {
         self: *const Certificate,
         hostname: []const u8,
     ) !void {
+        std.log.debug("Certificate.verifyHostname start, hostname={s}", .{hostname});
         // IP addresses may be written in [ ].
         const candidate_ip = if (hostname.len >= 3 and
             hostname[0] == '[' and hostname[hostname.len - 1] == ']')
@@ -1442,6 +1443,7 @@ pub const Certificate = struct {
             // See RFC 6125, Appendix B.2.
             for (self.ip_addresses) |candidate| {
                 if (ip.eql(candidate)) {
+                    std.log.debug("Certificate.verifyHostname IP matched", .{});
                     return;
                 }
             }
@@ -1458,14 +1460,17 @@ pub const Certificate = struct {
             // dot processing to valid hostnames.
             if (valid_candidate_name and validHostnamePattern(match)) {
                 if (matchHostnames(match, candidate_name)) {
+                    std.log.debug("Certificate.verifyHostname wildcard hostname matched", .{});
                     return;
                 }
             } else {
                 if (matchExactly(match, candidate_name)) {
+                    std.log.debug("Certificate.verifyHostname exact hostname matched", .{});
                     return;
                 }
             }
         }
+        std.log.debug("Certificate.verifyHostname not matched", .{});
         return error.CertificateHostname;
     }
 
@@ -2198,6 +2203,7 @@ test "Certificate.verify" {
 
     const opts = VerifyOptions{
         .roots = &root_pool,
+        .dns_name = "www.google.com",
         .intermediates = &intermediate_pool,
     };
     var chains = try cert.verify(allocator, &opts);

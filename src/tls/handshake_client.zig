@@ -137,6 +137,7 @@ pub const ClientHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(try cert_msg.marshal(allocator));
 
         hs_msg = try self.conn.readHandshake(allocator);
+        errdefer hs_msg.deinit(allocator);
         switch (hs_msg) {
             .CertificateStatus => |cs| {
                 // RFC4366 on Certificate Status Request:

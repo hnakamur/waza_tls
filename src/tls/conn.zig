@@ -5,7 +5,9 @@ const io = std.io;
 const math = std.math;
 const mem = std.mem;
 const net = std.net;
+const datetime = @import("datetime");
 const memx = @import("../memx.zig");
+const CertPool = @import("cert_pool.zig").CertPool;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
 const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
@@ -34,6 +36,7 @@ const AlertLevel = @import("alert.zig").AlertLevel;
 const AlertDescription = @import("alert.zig").AlertDescription;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const x509 = @import("x509.zig");
+const VerifyOptions = @import("verify.zig").VerifyOptions;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 
 const max_plain_text = 16384; // maximum plaintext payload length
@@ -83,6 +86,9 @@ pub const Conn = struct {
         cipher_suites: []const CipherSuiteId = &default_cipher_suites,
         curve_preferences: []const CurveId = &default_curve_preferences,
         next_protos: []const []const u8 = &[_][]u8{},
+
+        insecure_skip_verify: bool = false,
+        server_name: []const u8 = "",
 
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
@@ -295,26 +301,35 @@ pub const Conn = struct {
     }
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
-        var client_hello = try self.makeClientHello(allocator);
+        self.handshake_state = blk: {
+            var client_hello = try self.makeClientHello(allocator);
 
-        const client_hello_bytes = try client_hello.marshal(allocator);
-        errdefer client_hello.deinit(allocator);
-        try self.writeRecord(allocator, .handshake, client_hello_bytes);
+            const client_hello_bytes = try client_hello.marshal(allocator);
+            errdefer client_hello.deinit(allocator);
+            try self.writeRecord(allocator, .handshake, client_hello_bytes);
 
-        var hs_msg = try self.readHandshake(allocator);
-        var server_hello = switch (hs_msg) {
-            .ServerHello => |sh| sh,
-            else => {
-                // TODO: send alert
-                return error.UnexpectedMessage;
-            },
+            var hs_msg = try self.readHandshake(allocator);
+            var server_hello = switch (hs_msg) {
+                .ServerHello => |sh| sh,
+                else => {
+                    // TODO: send alert
+                    return error.UnexpectedMessage;
+                },
+            };
+            errdefer server_hello.deinit(allocator);
+
+            try self.pickTlsVersion(&server_hello);
+
+            break :blk HandshakeState{
+                .client = ClientHandshakeState.init(
+                    self.version.?,
+                    self,
+                    client_hello,
+                    server_hello,
+                ),
+            };
         };
 
-        try self.pickTlsVersion(&server_hello);
-
-        self.handshake_state = HandshakeState{
-            .client = ClientHandshakeState.init(self.version.?, self, client_hello, server_hello),
-        };
         try self.handshake_state.?.client.handshake(allocator);
     }
 
@@ -750,17 +765,54 @@ pub const Conn = struct {
     // verifyServerCertificate parses and verifies the provided chain, setting
     // c.verifiedChains and c.peerCertificates or sending the appropriate alert.
     pub fn verifyServerCertificate(self: *Conn, certificates: []const []const u8) !void {
-        var certs = try self.allocator.alloc(x509.Certificate, certificates.len);
-        errdefer self.allocator.free(certs);
+        const allocator = self.allocator;
+        var certs = try allocator.alloc(x509.Certificate, certificates.len);
+        errdefer {
+            for (certs) |*cert| cert.deinit(allocator);
+            allocator.free(certs);
+        }
         for (certificates) |cert_der, i| {
-            var cert = x509.Certificate.parse(self.allocator, cert_der) catch {
+            var cert = x509.Certificate.parse(allocator, cert_der) catch {
                 self.sendAlert(.bad_certificate) catch {};
                 return error.BadServerCertificate;
             };
             certs[i] = cert;
         }
 
-        // TODO: implement verify
+        if (!self.config.insecure_skip_verify) {
+            var root_pool = try CertPool.init(allocator, true);
+            defer root_pool.deinit();
+
+            const max_bytes = 1024 * 1024 * 1024;
+            // TODO: read pem file for OS distribution.
+            const pem_certs = try std.fs.cwd().readFileAlloc(
+                allocator,
+                "/etc/ssl/certs/ca-certificates.crt",
+                max_bytes,
+            );
+            defer allocator.free(pem_certs);
+
+            try root_pool.appendCertsFromPem(pem_certs);
+
+            var intermediate_pool = try CertPool.init(allocator, true);
+            defer intermediate_pool.deinit();
+            for (certs[1..]) |*cert| {
+                try intermediate_pool.addCert(cert);
+            }
+
+            const opts = VerifyOptions{
+                .roots = &root_pool,
+                .current_time = datetime.datetime.Datetime.now(),
+                .dns_name = self.config.server_name,
+                .intermediates = &intermediate_pool,
+            };
+            if (certs[0].verify(allocator, &opts)) |*chains| {
+                chains.deinit(allocator);
+            } else |_| {
+                self.sendAlert(.bad_certificate) catch {};
+                return error.BadServerCertificate;
+            }
+        }
 
         self.peer_certificates = certs;
     }
