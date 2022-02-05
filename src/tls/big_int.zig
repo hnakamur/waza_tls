@@ -13,8 +13,8 @@ const Managed = std.math.big.int.Managed;
 
 const bits = @import("bits.zig");
 
-const big_zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
-const big_one = Const{ .limbs = &[_]Limb{1}, .positive = true };
+pub const zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
+pub const one = Const{ .limbs = &[_]Limb{1}, .positive = true };
 
 pub const ConstFromBytesError = std.mem.Allocator.Error;
 
@@ -79,13 +79,13 @@ pub fn expConst(
     defer if (x3) |xx3| deinitConst(xx3, allocator);
     if (!y.positive) {
         if (m.eqZero()) {
-            return try cloneConst(allocator, big_one);
+            return try cloneConst(allocator, one);
         }
         // for y < 0: x**y mod m == (x**(-1))**|y| mod m
         x3 = try modInverseConst(allocator, x, m);
         x2 = x3.?;
         if (x2.eqZero()) {
-            return try cloneConst(allocator, big_zero);
+            return try cloneConst(allocator, zero);
         }
     }
     const m_abs = m.abs();
@@ -132,8 +132,8 @@ fn modInverseConst(
     try gcdManaged(&d, &x, null, g2, n2);
 
     // if and only if d==1, g and n are relatively prime
-    if (!d.toConst().eq(big_one)) {
-        return try cloneConst(allocator, big_zero);
+    if (!d.toConst().eq(one)) {
+        return try cloneConst(allocator, zero);
     }
 
     // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
@@ -161,7 +161,7 @@ test "modInverseConst" {
             defer inverse_m.deinit();
             try inverse_m.mul(inverse_c, element_m.toConst());
             try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
-            if (!inverse_m.toConst().eq(big_one)) {
+            if (!inverse_m.toConst().eq(one)) {
                 var inverse_s = try inverse_m.toString(allocator, 10, .lower);
                 defer allocator.free(inverse_s);
                 std.debug.print(
@@ -708,19 +708,19 @@ fn expNn(
     m_abs: Const,
 ) !Managed {
     // x**y mod 1 == 0
-    if (m_abs.eq(big_one)) {
-        return try big_zero.toManaged(allocator);
+    if (m_abs.eq(one)) {
+        return try zero.toManaged(allocator);
     }
     // m == 0 || m > 1
 
     // x**0 == 1
-    if (y_abs.eq(big_zero)) {
-        return try big_one.toManaged(allocator);
+    if (y_abs.eq(zero)) {
+        return try one.toManaged(allocator);
     }
     // y > 0
 
     // x**1 mod m == x mod m
-    if (y_abs.eq(big_one) and !m_abs.eqZero()) {
+    if (y_abs.eq(one) and !m_abs.eqZero()) {
         var q = try Managed.init(allocator);
         defer q.deinit();
         var r = try Managed.init(allocator);
@@ -742,7 +742,7 @@ fn expNn(
     // operations. Uses Montgomery method for odd moduli.
     // const y_abs_limbs_len = normalizedLimbsLen(y_abs);
     const y_abs_limbs_len = y_abs.limbs.len;
-    if (x_abs.order(big_one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
+    if (x_abs.order(one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
         if (m_abs.limbs[0] & 1 == 1) {
             return try expNnMontgomery(allocator, x_abs, y_abs, m_abs);
         }
@@ -950,9 +950,9 @@ fn expNnMontgomery(
     }
 
     // one = 1, with equal length to that of m
-    var one = try initManagedCapacityZero(allocator, m_len);
-    defer one.deinit();
-    try one.set(1);
+    var long_one = try initManagedCapacityZero(allocator, m_len);
+    defer long_one.deinit();
+    try long_one.set(1);
 
     var m_abs_m = try initManagedCapacityZero(allocator, m_len);
     defer m_abs_m.deinit();
@@ -970,7 +970,7 @@ fn expNnMontgomery(
     try montgomery(
         allocator,
         &powers[0],
-        one.limbs[0..m_len],
+        long_one.limbs[0..m_len],
         rr.limbs[0..m_len],
         m_abs_m.limbs[0..m_len],
         k0,
@@ -1208,16 +1208,24 @@ pub fn fillBytes(
 const testing = std.testing;
 
 test "bigint.Const const" {
-    try testing.expectEqual(@as(u64, 0), try big_zero.to(u64));
-    try testing.expectEqual(@as(u64, 1), try big_one.to(u64));
+    try testing.expectEqual(@as(u64, 0), try zero.to(u64));
+    try testing.expectEqual(@as(u64, 1), try one.to(u64));
 }
 
 test "std.Const zero" {
     const allocator = testing.allocator;
-    var zero = (try Managed.initSet(allocator, 0)).toConst();
-    defer deinitConst(zero, allocator);
-    try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero.limbs);
-    try testing.expect(zero.positive);
+    var zero_want = (try Managed.initSet(allocator, 0)).toConst();
+    defer deinitConst(zero_want, allocator);
+    try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero_want.limbs);
+    try testing.expect(zero_want.positive);
+}
+
+test "std.Const one" {
+    const allocator = testing.allocator;
+    var one_want = (try Managed.initSet(allocator, 1)).toConst();
+    defer deinitConst(one_want, allocator);
+    try testing.expectEqualSlices(Limb, &[_]Limb{1}, one_want.limbs);
+    try testing.expect(one_want.positive);
 }
 
 test "constFromBytes" {

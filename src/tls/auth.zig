@@ -155,8 +155,6 @@ fn signatureSchemesForCertificate(
     ver: ProtocolVersion,
     cert: *const CertificateChain,
 ) ![]SignatureScheme {
-    _ = allocator;
-    _ = ver;
     const priv_key = cert.private_key.?;
     var sig_algs = blk: {
         switch (priv_key.public()) {
@@ -175,6 +173,17 @@ fn signatureSchemesForCertificate(
                     }
                 }
                 break :blk algs.toOwnedSlice(allocator);
+            },
+            .ecdsa => {
+                if (ver != .v1_3) {
+                    break :blk try allocator.dupe(SignatureScheme, &[_]SignatureScheme{
+                        .ecdsa_with_p256_and_sha256,
+                        .ecdsa_with_p384_and_sha384,
+                        .ecdsa_with_p521_and_sha512,
+                        .ecdsa_with_sha1,
+                    });
+                }
+                @panic("not implmented yet");
             },
             else => @panic("not implmented yet"),
         }

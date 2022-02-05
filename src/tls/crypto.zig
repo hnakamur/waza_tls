@@ -189,7 +189,7 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
     unknown: void,
     rsa: rsa.PrivateKey,
     dsa: void,
-    ecdsa: void,
+    ecdsa: ecdsa.PrivateKey,
     ed25519: Ed25519PrivateKey,
 
     pub fn parse(allocator: mem.Allocator, der: []const u8) !PrivateKey {
@@ -197,7 +197,9 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
             return PrivateKey{ .rsa = rsa_key };
         } else |_| {}
 
-        @panic("not implemented yet");
+        // TODO: implement parsePkcs8PrivateKey
+
+        return PrivateKey{ .ecdsa = try ecdsa.PrivateKey.parseAsn1(allocator, der, null) };
     }
 
     pub fn deinit(self: *PrivateKey, allocator: mem.Allocator) void {
@@ -210,6 +212,7 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
     pub fn public(self: *const PrivateKey) PublicKey {
         return switch (self.*) {
             .rsa => |*k| PublicKey{ .rsa = k.public_key },
+            .ecdsa => |*k| PublicKey{ .ecdsa = k.publicKey() },
             else => @panic("not implemented yet"),
         };
     }
@@ -222,6 +225,7 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
     ) ![]const u8 {
         return switch (self.*) {
             .rsa => |*k| try k.sign(allocator, digest, opts),
+            .ecdsa => |*k| try k.sign(allocator, digest, opts),
             .ed25519 => |*k| try k.sign(allocator, digest, opts),
             else => @panic("not implemented yet"),
         };

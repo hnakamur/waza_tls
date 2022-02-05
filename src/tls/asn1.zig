@@ -1530,6 +1530,224 @@ fn debugFormatBigIntManaged(
     );
 }
 
+fn writeAsn1(
+    tag: TagAndClass,
+    comptime Context: type,
+    comptime writeToFn: fn (context: Context, writer: anytype) anyerror!void,
+    context: Context,
+    writer: anytype,
+) !void {
+    const tag_int = @enumToInt(tag);
+    // Identifiers with the low five bits set indicate high-tag-number format
+    // (two or more octets), which we don't support.
+    if (tag_int & 0x1f == 0x1f) {
+        return error.Asn1HighTagNotSupported;
+    }
+    try writeInt(u8, tag_int, writer);
+
+    const len = try countLength(Context, writeToFn, context);
+    if (len > 0xfffffffe) {
+        return error.Asn1TooLong;
+    } else if (len > 0xffffff) {
+        try writer.writeByte(0x80 | 4);
+        try writer.writeIntBig(u32, @intCast(u32, len));
+    } else if (len > 0xffff) {
+        try writer.writeByte(0x80 | 3);
+        try writer.writeIntBig(u24, @intCast(u24, len));
+    } else if (len > 0xff) {
+        try writer.writeByte(0x80 | 2);
+        try writer.writeIntBig(u16, @intCast(u16, len));
+    } else if (len > 0x7f) {
+        try writer.writeByte(0x80 | 1);
+        try writer.writeIntBig(u8, @intCast(u8, len));
+    } else {
+        try writer.writeIntBig(u8, @intCast(u8, len));
+    }
+
+    try writeToFn(context, writer);
+}
+
+fn writeAsn1BigInt(
+    allocator: mem.Allocator,
+    n: std.math.big.int.Const,
+    out_stream: anytype,
+) !void {
+    const Context = struct {
+        const Self = @This();
+
+        allocator: mem.Allocator,
+        n: std.math.big.int.Const,
+
+        fn write(context: Self, writer: anytype) !void {
+            if (context.n.eqZero()) {
+                try writer.writeByte(0);
+            } else if (context.n.positive) {
+                const b = @ptrCast([*]const u8, context.n.limbs.ptr);
+                var i: usize = context.n.limbs.len * @sizeOf(math.big.Limb) - 1;
+                while (b[i] == 0) : (i -= 1) {}
+                if (b[i] & 0x80 != 0) {
+                    try writer.writeByte(0);
+                }
+                while (true) : (i -= 1) {
+                    try writer.writeByte(b[i]);
+                    if (i == 0) break;
+                }
+            } else {
+                // A negative number has to be converted to two's-complement form. So we
+                // invert and subtract 1. If the most-significant-bit isn't set then
+                // we'll need to pad the beginning with 0xff in order to keep the number
+                // negative.
+                // const n_neg_minus_one = blk: {
+                //     var n_neg_minus_one_m = try context.n.negate().toManaged(context.allocator);
+                //     errdefer n_neg_minus_one_m.deinit();
+                //     try n_neg_minus_one_m.sub(n_neg_minus_one_m.toConst(), bigint.one);
+                //     break :blk n_neg_minus_one_m.toConst();
+                // };
+                // defer bigint.deinitConst(n_neg_minus_one, context.allocator);
+
+                var n_neg_minus_one_m = try context.n.negate().toManaged(context.allocator);
+                defer n_neg_minus_one_m.deinit();
+                try n_neg_minus_one_m.sub(n_neg_minus_one_m.toConst(), bigint.one);
+
+                const b = @ptrCast([*]u8, n_neg_minus_one_m.limbs.ptr);
+                var bytes: []u8 = undefined;
+                bytes.ptr = b;
+                bytes.len = n_neg_minus_one_m.len() * @sizeOf(math.big.Limb);
+                std.log.debug("n={}, n_neg_minus_one={}, len={}, bytes={}", .{ context.n, n_neg_minus_one_m, n_neg_minus_one_m.len(), fmtx.fmtSliceHexColonLower(bytes) });
+
+                var i: usize = n_neg_minus_one_m.len() * @sizeOf(math.big.Limb) - 1;
+                while (true) : (i -= 1) {
+                    if (i == 0 or b[i - 1] != 0) break;
+                }
+                const len = i;
+                std.log.debug("len={}", .{len});
+                if (len > 0) {
+                    i = len - 1;
+                    while (true) : (i -= 1) {
+                        b[i] ^= 0xff;
+                        if (i == 0) break;
+                    }
+                }
+                std.log.debug("bytes#2={}", .{fmtx.fmtSliceHexColonLower(bytes)});
+
+                if (len == 0 or b[len - 1] & 0x80 == 0) {
+                    try writer.writeByte(0xff);
+                }
+                if (len > 0) {
+                    i = len - 1;
+                    while (true) : (i -= 1) {
+                        try writer.writeByte(b[i]);
+                        if (i == 0) break;
+                    }
+                }
+            }
+        }
+    };
+
+    const context = Context{ .allocator = allocator, .n = n };
+    try writeAsn1(.integer, Context, Context.write, context, out_stream);
+}
+
+test "writeAsn1BigInt" {
+    // testing.log_level = .debug;
+
+    // const allocator = testing.allocator;
+    // var buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
+    // defer buf.deinit();
+    // var writer = buf.writer();
+    // try writeAsn1BigInt(allocator, bigint.zero, writer);
+    // std.log.debug("buf={}", .{fmtx.fmtSliceHexColonLower(buf.readableSlice(0))});
+
+    // var s = String.init(buf.readableSlice(0));
+    // var n = try s.readAsn1BigInt(allocator);
+    // defer bigint.deinitConst(n, allocator);
+    // try testing.expect(n.eqZero());
+
+    const f = struct {
+        fn f(input: i64) !void {
+            std.log.debug("f start, input={}", .{input});
+            const allocator = testing.allocator;
+            var buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
+            defer buf.deinit();
+            var writer = buf.writer();
+
+            var input_big = try std.math.big.int.Managed.initSet(allocator, input);
+            defer input_big.deinit();
+
+            try writeAsn1BigInt(allocator, input_big.toConst(), writer);
+            std.log.debug("writeAsn1BigInt result, input={}, buf={}", .{ input, fmtx.fmtSliceHexColonLower(buf.readableSlice(0)) });
+
+            var s = String.init(buf.readableSlice(0));
+            var got = s.readAsn1BigInt(allocator) catch |err| {
+                std.log.err("input={}, buf={}", .{ input, fmtx.fmtSliceHexColonLower(buf.readableSlice(0)) });
+                return err;
+            };
+            defer bigint.deinitConst(got, allocator);
+            if (!got.eq(input_big.toConst())) {
+                std.debug.print("result mismatch, input={}, got={}\n", .{ input, got });
+            }
+            try testing.expect(got.eq(input_big.toConst()));
+        }
+    }.f;
+
+    // Go results for -32768
+    // bytes=7fff
+    // bytes#2=8000
+    // dest=8000
+    // result=02028000
+
+    // Go results for -256
+    // bytes=ff
+    // bytes#2=00
+    // dest=ff00
+    // result=0202ff0
+
+    try f(-32768);
+    try f(-32767);
+    try f(-257);
+    try f(-256);
+    try f(-255);
+    try f(-2);
+    try f(-1);
+    try f(0);
+    try f(1);
+    try f(2);
+    try f(127);
+    try f(128);
+    try f(255);
+    try f(256);
+    try f(32767);
+    try f(32768);
+
+    // var i: i64 = std.math.minInt(i16);
+    // std.log.debug("i start={}", .{i});
+    // while (i <= std.math.maxInt(i16)) : (i += 1) {
+    //     try f(i);
+    // }
+}
+
+fn countLength(
+    comptime Context: type,
+    comptime writeToFn: fn (context: Context, writer: anytype) anyerror!void,
+    context: Context,
+) !usize {
+    var cnt_writer = std.io.countingWriter(std.io.null_writer);
+    try writeToFn(context, cnt_writer.writer());
+    return cnt_writer.bytes_written;
+}
+
+fn writeInt(comptime T: type, val: anytype, writer: anytype) !void {
+    try writer.writeIntBig(T, toInt(T, val));
+}
+
+fn toInt(comptime T: type, val: anytype) T {
+    return switch (@typeInfo(@TypeOf(val))) {
+        .ComptimeInt, .Int => @intCast(T, val),
+        .Enum => @intCast(T, @enumToInt(val)),
+        else => @panic("invalid type for writeIntBig"),
+    };
+}
+
 test "readOptionalAsn1Integer" {
     testing.log_level = .debug;
     const f = struct {

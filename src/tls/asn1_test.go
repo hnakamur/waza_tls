@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/asn1"
+	"fmt"
 	"log"
 	"math"
 	"math/big"
@@ -89,6 +90,43 @@ func TestReadASN1Integer(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAddASN1BigInt(t *testing.T) {
+	// n := new(big.Int).SetInt64(-32768)
+	n := new(big.Int).SetInt64(-256)
+	nMinus1 := new(big.Int).Neg(n)
+	bigOne := new(big.Int).SetInt64(1)
+	nMinus1.Sub(nMinus1, bigOne)
+	bytes := nMinus1.Bytes()
+	fmt.Printf("bytes=%x\n", bytes)
+	for i := range bytes {
+		bytes[i] ^= 0xff
+	}
+	fmt.Printf("bytes#2=%x\n", bytes)
+	var dest []byte
+	if len(bytes) == 0 || bytes[0]&0x80 == 0 {
+		dest = append(dest, 0xff)
+	}
+	dest = append(dest, bytes...)
+	fmt.Printf("dest=%x\n", dest)
+
+	var b cryptobyte.Builder
+	b.AddASN1BigInt(n)
+	bytes, err := b.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("result=%x\n", bytes)
+
+	var out big.Int
+	s := cryptobyte.String(bytes)
+	if !s.ReadASN1Integer(&out) {
+		t.Error("cannot read ASN1 integer")
+	}
+	if out.Cmp(n) != 0 {
+		t.Errorf("read value mismatch, got=%v, want=%v", out, n)
+	}
 }
 
 func TestAsn1Signed(t *testing.T) {

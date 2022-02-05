@@ -4,6 +4,7 @@ const P256 = std.crypto.ecc.P256;
 
 const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
+const crypto = @import("crypto.zig");
 const pem = @import("pem.zig");
 const fmtx = @import("../fmtx.zig");
 
@@ -35,7 +36,7 @@ pub const PrivateKey = union(CurveId) {
     pub fn parseAsn1(
         allocator: mem.Allocator,
         der: []const u8,
-        oid: ?asn1.ObjectIdnetifier,
+        oid: ?asn1.ObjectIdentifier,
     ) !PrivateKey {
         var input = asn1.String.init(der);
         var s = try input.readAsn1(.sequence);
@@ -78,6 +79,25 @@ pub const PrivateKey = union(CurveId) {
             else => @panic("not implemented yet"),
         }
     }
+
+    pub fn publicKey(self: *const PrivateKey) PublicKey {
+        return switch (self.*) {
+            .secp256r1 => |*k| PublicKey{ .secp256r1 = k.public_key },
+            else => @panic("not implemented yet"),
+        };
+    }
+
+    pub fn sign(
+        self: *const PrivateKey,
+        allocator: mem.Allocator,
+        digest: []const u8,
+        opts: crypto.SignOpts,
+    ) ![]const u8 {
+        return switch (self.*) {
+            .secp256r1 => |*k| k.sign(allocator, digest, opts),
+            else => @panic("not implemented yet"),
+        };
+    }
 };
 
 const PublicKeyP256 = struct {
@@ -117,6 +137,19 @@ const PrivateKeyP256 = struct {
     pub fn init(d: [P256.Fe.encoded_length]u8) !PrivateKeyP256 {
         const pub_key_point = try P256.basePoint.mulPublic(d, .Big);
         return PrivateKeyP256{ .public_key = .{ .point = pub_key_point }, .d = d };
+    }
+
+    pub fn sign(
+        self: *const PrivateKeyP256,
+        allocator: mem.Allocator,
+        digest: []const u8,
+        opts: crypto.SignOpts,
+    ) ![]const u8 {
+        _ = self;
+        _ = allocator;
+        _ = digest;
+        _ = opts;
+        @panic("not implemented yet");
     }
 
     pub fn format(
