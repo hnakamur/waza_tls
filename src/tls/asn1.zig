@@ -1597,14 +1597,6 @@ fn writeAsn1BigInt(
                 // invert and subtract 1. If the most-significant-bit isn't set then
                 // we'll need to pad the beginning with 0xff in order to keep the number
                 // negative.
-                // const n_neg_minus_one = blk: {
-                //     var n_neg_minus_one_m = try context.n.negate().toManaged(context.allocator);
-                //     errdefer n_neg_minus_one_m.deinit();
-                //     try n_neg_minus_one_m.sub(n_neg_minus_one_m.toConst(), bigint.one);
-                //     break :blk n_neg_minus_one_m.toConst();
-                // };
-                // defer bigint.deinitConst(n_neg_minus_one, context.allocator);
-
                 var n_neg_minus_one_m = try context.n.negate().toManaged(context.allocator);
                 defer n_neg_minus_one_m.deinit();
                 try n_neg_minus_one_m.sub(n_neg_minus_one_m.toConst(), bigint.one);
@@ -1613,30 +1605,19 @@ fn writeAsn1BigInt(
                 var bytes: []u8 = undefined;
                 bytes.ptr = b;
                 bytes.len = n_neg_minus_one_m.len() * @sizeOf(math.big.Limb);
-                std.log.debug("n={}, n_neg_minus_one={}, len={}, bytes={}", .{ context.n, n_neg_minus_one_m, n_neg_minus_one_m.len(), fmtx.fmtSliceHexColonLower(bytes) });
 
-                var i: usize = n_neg_minus_one_m.len() * @sizeOf(math.big.Limb) - 1;
+                var i: usize = bytes.len - 1;
                 while (true) : (i -= 1) {
                     if (i == 0 or b[i - 1] != 0) break;
                 }
                 const len = i;
-                std.log.debug("len={}", .{len});
-                if (len > 0) {
-                    i = len - 1;
-                    while (true) : (i -= 1) {
-                        b[i] ^= 0xff;
-                        if (i == 0) break;
-                    }
-                }
-                std.log.debug("bytes#2={}", .{fmtx.fmtSliceHexColonLower(bytes)});
-
-                if (len == 0 or b[len - 1] & 0x80 == 0) {
+                if (len == 0 or ~b[len - 1] & 0x80 == 0) {
                     try writer.writeByte(0xff);
                 }
                 if (len > 0) {
                     i = len - 1;
                     while (true) : (i -= 1) {
-                        try writer.writeByte(b[i]);
+                        try writer.writeByte(~b[i]);
                         if (i == 0) break;
                     }
                 }
@@ -1649,23 +1630,8 @@ fn writeAsn1BigInt(
 }
 
 test "writeAsn1BigInt" {
-    // testing.log_level = .debug;
-
-    // const allocator = testing.allocator;
-    // var buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
-    // defer buf.deinit();
-    // var writer = buf.writer();
-    // try writeAsn1BigInt(allocator, bigint.zero, writer);
-    // std.log.debug("buf={}", .{fmtx.fmtSliceHexColonLower(buf.readableSlice(0))});
-
-    // var s = String.init(buf.readableSlice(0));
-    // var n = try s.readAsn1BigInt(allocator);
-    // defer bigint.deinitConst(n, allocator);
-    // try testing.expect(n.eqZero());
-
     const f = struct {
         fn f(input: i64) !void {
-            std.log.debug("f start, input={}", .{input});
             const allocator = testing.allocator;
             var buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
             defer buf.deinit();
@@ -1675,7 +1641,6 @@ test "writeAsn1BigInt" {
             defer input_big.deinit();
 
             try writeAsn1BigInt(allocator, input_big.toConst(), writer);
-            std.log.debug("writeAsn1BigInt result, input={}, buf={}", .{ input, fmtx.fmtSliceHexColonLower(buf.readableSlice(0)) });
 
             var s = String.init(buf.readableSlice(0));
             var got = s.readAsn1BigInt(allocator) catch |err| {
@@ -1689,18 +1654,6 @@ test "writeAsn1BigInt" {
             try testing.expect(got.eq(input_big.toConst()));
         }
     }.f;
-
-    // Go results for -32768
-    // bytes=7fff
-    // bytes#2=8000
-    // dest=8000
-    // result=02028000
-
-    // Go results for -256
-    // bytes=ff
-    // bytes#2=00
-    // dest=ff00
-    // result=0202ff0
 
     try f(-32768);
     try f(-32767);
@@ -1720,7 +1673,6 @@ test "writeAsn1BigInt" {
     try f(32768);
 
     // var i: i64 = std.math.minInt(i16);
-    // std.log.debug("i start={}", .{i});
     // while (i <= std.math.maxInt(i16)) : (i += 1) {
     //     try f(i);
     // }
