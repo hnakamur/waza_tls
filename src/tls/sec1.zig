@@ -34,6 +34,27 @@ pub const EcPrivateKey = struct {
         s2 = try s.readAnyAsn1(&tag);
         const public_key = try allocator.dupe(u8, s2.bytes);
 
+        std.log.debug("EcPrivateKey.parse, private_key.len={}, public_key.len={}", .{ private_key.len, public_key.len });
+
+        const P256 = std.crypto.ecc.P256;
+        const pub_from_priv = try P256.basePoint.mulPublic(private_key[0..32].*, .Big);
+        const pub_coord = pub_from_priv.affineCoordinates();
+        std.log.debug("x={}, y={}", .{
+            fmtx.fmtSliceHexColonLower(&pub_coord.x.toBytes(.Big)),
+            fmtx.fmtSliceHexColonLower(&pub_coord.y.toBytes(.Big)),
+        });
+
+        // var s3 = try s2.readAnyAsn1(&tag);
+        // std.log.debug("tag={}, s2={}, s2.len={}", .{ tag, fmtx.fmtSliceHexColonLower(s2.bytes), s2.bytes.len });
+
+        var s3 = asn1.String.init(public_key);
+        std.log.debug("s3={}, s3.len={}", .{ fmtx.fmtSliceHexColonLower(s3.bytes), s3.bytes.len });
+        var s4 = try s3.readAsn1(.bit_string);
+        std.log.debug("s4={}, s4.len={}", .{ fmtx.fmtSliceHexColonLower(s4.bytes), s4.bytes.len });
+
+        // var c = try std.crypto.ecc.P256.fromSec1(public_key);
+        // std.log.debug("EcPrivateKey.parse, c={}", .{c});
+
         return EcPrivateKey{
             .private_key = private_key,
             .named_curve_id = curve_id,

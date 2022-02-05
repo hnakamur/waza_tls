@@ -1888,10 +1888,7 @@ fn parsePublicKey(
             defer named_curve_oid.deinit(allocator);
             if (CurveId.fromOid(named_curve_oid)) |curve_id| {
                 const data = der.bytes;
-                if (data.len == 0 or data[0] != 4) { // uncompressed form
-                    return error.InvalidCurvePoints;
-                }
-                const pub_key = ecdsa.PublicKey.init(curve_id, data[1..]) catch
+                const pub_key = ecdsa.PublicKey.init(curve_id, data) catch
                     return error.InvalidCurvePoints;
                 return crypto.PublicKey{ .ecdsa = pub_key };
             }
@@ -2143,7 +2140,7 @@ test "Certificate.verify" {
     try root_pool.appendCertsFromPem(pem_certs);
 
     // const leaf_pem = @embedFile("../../tests/google.com.crt.pem");
-    const leaf_pem = @embedFile("../../tests/naruh.dev.crt.pem");
+    const leaf_pem = @embedFile("../../tests/naruh.dev.p256.crt.pem");
     var offset: usize = 0;
     var leaf_block = try pem.Block.decode(allocator, leaf_pem, &offset);
     defer leaf_block.deinit(allocator);
