@@ -1601,12 +1601,11 @@ fn writeAsn1BigInt(
                 defer n_neg_minus_one_m.deinit();
                 try n_neg_minus_one_m.sub(n_neg_minus_one_m.toConst(), bigint.one);
 
-                const b = @ptrCast([*]u8, n_neg_minus_one_m.limbs.ptr);
-                var bytes: []u8 = undefined;
-                bytes.ptr = b;
-                bytes.len = n_neg_minus_one_m.len() * @sizeOf(math.big.Limb);
+                var b: []const u8 = undefined;
+                b.ptr = @ptrCast([*]const u8, n_neg_minus_one_m.limbs.ptr);
+                b.len = n_neg_minus_one_m.len() * @sizeOf(math.big.Limb);
 
-                var i: usize = bytes.len - 1;
+                var i: usize = b.len - 1;
                 while (true) : (i -= 1) {
                     if (i == 0 or b[i - 1] != 0) break;
                 }
