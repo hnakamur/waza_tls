@@ -1531,6 +1531,7 @@ fn debugFormatBigIntManaged(
 }
 
 fn writeAsn1(
+    allocator: mem.Allocator,
     tag: TagAndClass,
     comptime Context: type,
     comptime writeToFn: fn (context: Context, writer: anytype) anyerror!void,
@@ -1545,7 +1546,12 @@ fn writeAsn1(
     }
     try writeInt(u8, tag_int, writer);
 
-    const len = try countLength(Context, writeToFn, context);
+    var buf = std.fifo.LinearFifo(u8, .Dynamic).init(allocator);
+    defer buf.deinit();
+    var writer2 = buf.writer();
+    try writeToFn(context, writer2);
+    const len = buf.readableLength();
+
     if (len > 0xfffffffe) {
         return error.Asn1TooLong;
     } else if (len > 0xffffff) {
@@ -1564,7 +1570,7 @@ fn writeAsn1(
         try writer.writeIntBig(u8, @intCast(u8, len));
     }
 
-    try writeToFn(context, writer);
+    try writer.writeAll(buf.readableSlice(0));
 }
 
 fn writeAsn1BigInt(
@@ -1625,7 +1631,7 @@ fn writeAsn1BigInt(
     };
 
     const context = Context{ .allocator = allocator, .n = n };
-    try writeAsn1(.integer, Context, Context.write, context, out_stream);
+    try writeAsn1(allocator, .integer, Context, Context.write, context, out_stream);
 }
 
 test "writeAsn1BigInt" {
@@ -1654,37 +1660,33 @@ test "writeAsn1BigInt" {
         }
     }.f;
 
-    try f(-32768);
-    try f(-32767);
-    try f(-257);
-    try f(-256);
-    try f(-255);
-    try f(-2);
-    try f(-1);
-    try f(0);
-    try f(1);
-    try f(2);
-    try f(127);
-    try f(128);
-    try f(255);
-    try f(256);
-    try f(32767);
-    try f(32768);
+    // try f(-32768);
+    // try f(-32767);
+    // try f(-257);
+    // try f(-256);
+    // try f(-255);
+    // try f(-2);
+    // try f(-1);
+    // try f(0);
+    // try f(1);
+    // try f(2);
+    // try f(127);
+    // try f(128);
+    // try f(255);
+    // try f(256);
+    // try f(32767);
+    // try f(32768);
 
-    // var i: i64 = std.math.minInt(i16);
-    // while (i <= std.math.maxInt(i16)) : (i += 1) {
-    //     try f(i);
-    // }
-}
+    const start = std.time.nanoTimestamp();
+    var i: i64 = std.math.minInt(i16);
+    while (i <= std.math.maxInt(i16)) : (i += 1) {
+        try f(i);
+    }
+    const end = std.time.nanoTimestamp();
+    std.debug.print("elapsed={}ms\n", .{@divTrunc(end - start, std.time.ns_per_ms)});
 
-fn countLength(
-    comptime Context: type,
-    comptime writeToFn: fn (context: Context, writer: anytype) anyerror!void,
-    context: Context,
-) !usize {
-    var cnt_writer = std.io.countingWriter(std.io.null_writer);
-    try writeToFn(context, cnt_writer.writer());
-    return cnt_writer.bytes_written;
+    // elapsed=11902ms for counting and write again
+    // elapsed=11863ms
 }
 
 fn writeInt(comptime T: type, val: anytype, writer: anytype) !void {
