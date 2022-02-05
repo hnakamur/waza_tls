@@ -8,6 +8,7 @@ const io = std.io;
 const mem = std.mem;
 
 const BytesView = @import("../BytesView.zig");
+const asn1 = @import("asn1.zig");
 
 pub const ProtocolVersion = enum(u16) {
     v1_3 = 0x0304,
@@ -1010,10 +1011,41 @@ pub const SignatureScheme = enum(u16) {
 };
 
 pub const CurveId = enum(u16) {
+    // RFC 5480, 2.1.1.1. Named Curve
+    //
+    // secp224r1 OBJECT IDENTIFIER ::= {
+    //   iso(1) identified-organization(3) certicom(132) curve(0) 33 }
+    //
+    // secp256r1 OBJECT IDENTIFIER ::= {
+    //   iso(1) member-body(2) us(840) ansi-X9-62(10045) curves(3)
+    //   prime(1) 7 }
+    //
+    // secp384r1 OBJECT IDENTIFIER ::= {
+    //   iso(1) identified-organization(3) certicom(132) curve(0) 34 }
+    //
+    // secp521r1 OBJECT IDENTIFIER ::= {
+    //   iso(1) identified-organization(3) certicom(132) curve(0) 35 }
+    //
+    // NB: secp256r1 is equivalent to prime256v1
+    const oid_named_curve_p256 = asn1.ObjectIdentifier.initConst(&.{ 1, 2, 840, 10045, 3, 1, 7 });
+    const oid_named_curve_p384 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 34 });
+    const oid_named_curve_p521 = asn1.ObjectIdentifier.initConst(&.{ 1, 3, 132, 0, 35 });
+
     secp256r1 = 23,
     secp384r1 = 24,
     secp521r1 = 25,
     x25519 = 29,
+
+    pub fn fromOid(oid: asn1.ObjectIdentifier) ?CurveId {
+        if (oid.eql(oid_named_curve_p256)) {
+            return CurveId.secp256r1;
+        } else if (oid.eql(oid_named_curve_p384)) {
+            return CurveId.secp384r1;
+        } else if (oid.eql(oid_named_curve_p521)) {
+            return CurveId.secp521r1;
+        }
+        return null;
+    }
 };
 
 // TLS Elliptic Curve Point Formats

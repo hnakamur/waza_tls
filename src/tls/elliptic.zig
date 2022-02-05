@@ -1,66 +1,70 @@
 const std = @import("std");
+const P256 = std.crypto.ecc.P256;
 const math = std.math;
 const mem = std.mem;
 const bigint = @import("big_int.zig");
 const CurveId = @import("handshake_msg.zig").CurveId;
 
-pub const Curve = struct {
-    pub const Params = struct {
-        // p: math.big.int.Const,
-        // n: math.big.int.Const,
-        // b: math.big.int.Const,
-        // gx: math.big.int.Const,
-        // gy: math.big.int.Const,
-        bit_size: usize,
-        name: []const u8 = "",
-        curve_id: ?CurveId,
-    };
-    params: Params,
+pub const Curve = union(CurveId) {
+    secp256r1: P256,
+    secp384r1: P384,
+    secp521r1: void,
+    x25519: void,
 
-    pub fn deinit(self: *Curve, allocator: mem.Allocator) void {
-        // bigint.deinitConst(self.p);
-        // bigint.deinitConst(self.n);
-        // bigint.deinitConst(self.b);
-        // bigint.deinitConst(self.gx);
-        // bigint.deinitConst(self.gy);
-        if (self.name.len > 0) allocator.free(self.name);
+    pub fn init(curve_id: CurveId, data: []const u8) error{InvalidCurvePoints}!Curve {
+        switch (curve_id) {
+            .secp256r1 => {
+                if (data.len != 2 * P256.Fe.encoded_length) {
+                    return error.InvalidCurvePoints;
+                }
+                const c = P256.fromSerializedAffineCoordinates(
+                    data[0..P256.Fe.encoded_length].*,
+                    data[P256.Fe.encoded_length..][0..P256.Fe.encoded_length].*,
+                    .Big,
+                ) catch return error.InvalidCurvePoints;
+                return Curve{ .secp256r1 = c };
+            },
+            .secp384r1 => return Curve{ .secp384r1 = .{} },
+            else => @panic("not implemented yet"),
+        }
+    }
+
+    pub fn format(
+        self: Curve,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .secp256r1 => |c| {
+                var x_bytes: []const u8 = undefined;
+                x_bytes.ptr = @intToPtr([*]const u8, @ptrToInt(&c.x));
+                x_bytes.len = P256.Fe.encoded_length;
+                var y_bytes: []const u8 = undefined;
+                y_bytes.ptr = @intToPtr([*]const u8, @ptrToInt(&c.y));
+                y_bytes.len = P256.Fe.encoded_length;
+                try std.fmt.format(writer, "Curve{{ .secp256r1 = P256{{ x = {}, y = {} }} }}", .{
+                    std.fmt.fmtSliceHexLower(x_bytes),
+                    std.fmt.fmtSliceHexLower(y_bytes),
+                });
+            },
+            else => {
+                try std.fmt.format(writer, "Curve{{ .{s} = ... }}", .{@tagName(self)});
+            },
+        }
     }
 };
 
-pub fn p256() Curve {
-    return .{
-        .params = .{
-            .curve_id = .secp256r1,
-            .bit_size = 256,
-        },
-    };
-}
-
-pub fn p384() Curve {
-    return .{
-        .params = .{
-            .curve_id = .secp384r1,
-            .bit_size = 384,
-        },
-    };
-}
-
-pub fn p521() Curve {
-    return .{
-        .params = .{
-            .curve_id = .secp521r1,
-            .bit_size = 521,
-        },
-    };
-}
+const P384 = struct {
+    not_implemented: usize = 0,
+};
 
 const testing = std.testing;
-const fmt = std.fmt;
 const assert = std.debug.assert;
 
 test "p256mult" {
-    const P256 = std.crypto.ecc.P256;
-
     const f = struct {
         fn f(
             hex_k: []const u8,
@@ -73,18 +77,18 @@ test "p256mult" {
                 hex_x_out.len == 64 and hex_y_out.len == 64);
 
             var k: [32]u8 = undefined;
-            _ = try fmt.hexToBytes(&k, hex_k);
+            _ = try std.fmt.hexToBytes(&k, hex_k);
             var x_in: [32]u8 = undefined;
-            _ = try fmt.hexToBytes(&x_in, hex_x_in);
+            _ = try std.fmt.hexToBytes(&x_in, hex_x_in);
             var y_in: [32]u8 = undefined;
-            _ = try fmt.hexToBytes(&y_in, hex_y_in);
+            _ = try std.fmt.hexToBytes(&y_in, hex_y_in);
             var x_out: [32]u8 = undefined;
-            _ = try fmt.hexToBytes(&x_out, hex_x_out);
+            _ = try std.fmt.hexToBytes(&x_out, hex_x_out);
             var y_out: [32]u8 = undefined;
-            _ = try fmt.hexToBytes(&y_out, hex_y_out);
+            _ = try std.fmt.hexToBytes(&y_out, hex_y_out);
 
             var p = try P256.fromSerializedAffineCoordinates(x_in, y_in, .Big);
-            const r = try p.mul(k, .Big);
+            const r = try p.mulPublic(k, .Big);
 
             var want = try P256.fromSerializedAffineCoordinates(x_out, y_out, .Big);
             try testing.expect(r.equivalent(want));

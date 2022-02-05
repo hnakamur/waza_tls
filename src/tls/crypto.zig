@@ -153,7 +153,6 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
     pub fn deinit(self: *PublicKey, allocator: mem.Allocator) void {
         switch (self.*) {
             .rsa => |*k| k.deinit(allocator),
-            .ecdsa => |*k| k.deinit(allocator),
             else => {},
         }
     }
@@ -173,9 +172,7 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
                 _ = try writer.write(" }");
             },
             .ecdsa => |k| {
-                _ = try writer.write("PublicKey{ .ecdsa = ");
-                try k.format(fmt, options, writer);
-                _ = try writer.write(" }");
+                try std.fmt.format(writer, "PublicKey{{ .ecdsa = {} }}", .{k});
             },
             else => {
                 try std.fmt.format(writer, "PublicKey{{ .{s} = ... }}", .{@tagName(self)});
