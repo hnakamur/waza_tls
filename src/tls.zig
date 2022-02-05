@@ -40,6 +40,7 @@ const cert_pool = @import("tls/cert_pool.zig");
 const root_linux = @import("tls/root_linux.zig");
 const mailbox = @import("tls/mailbox.zig");
 const verify = @import("tls/verify.zig");
+const sec1 = @import("tls/sec1.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

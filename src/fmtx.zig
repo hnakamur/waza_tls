@@ -43,6 +43,53 @@ pub fn fmtSliceHexEscapeUpper(bytes: []const u8) std.fmt.Formatter(formatSliceHe
     return .{ .data = bytes };
 }
 
+fn formatSliceHexColonImpl(comptime case: Case) type {
+    const charset = "0123456789" ++ if (case == .upper) "ABCDEF" else "abcdef";
+
+    return struct {
+        pub fn f(
+            bytes: []const u8,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+            var buf: [3]u8 = undefined;
+
+            if (bytes.len > 0) {
+                const c = bytes[0];
+                buf[1] = charset[c >> 4];
+                buf[2] = charset[c & 15];
+                try writer.writeAll(buf[1..]);
+            }
+            if (bytes.len > 1) {
+                buf[0] = ':';
+                for (bytes[1..]) |c| {
+                    buf[1] = charset[c >> 4];
+                    buf[2] = charset[c & 15];
+                    try writer.writeAll(&buf);
+                }
+            }
+        }
+    };
+}
+
+const formatSliceHexColonLower = formatSliceHexColonImpl(.lower).f;
+const formatSliceHexColonUpper = formatSliceHexColonImpl(.upper).f;
+
+/// Return a Formatter for a []const u8 where every byte is formatted as a pair
+/// of Colond lowercase hexadecimal digits.
+pub fn fmtSliceHexColonLower(bytes: []const u8) std.fmt.Formatter(formatSliceHexColonLower) {
+    return .{ .data = bytes };
+}
+
+/// Return a Formatter for a []const u8 where every byte is formatted as pair
+/// of Colond uppercase hexadecimal digits.
+pub fn fmtSliceHexColonUpper(bytes: []const u8) std.fmt.Formatter(formatSliceHexColonUpper) {
+    return .{ .data = bytes };
+}
+
 pub fn formatStringSlice(
     slice: []const []const u8,
     comptime fmt: []const u8,

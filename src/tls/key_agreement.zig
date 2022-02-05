@@ -223,6 +223,7 @@ pub const EcdheKeyAgreement = struct {
 
         // TODO: implement check curve_id is supported curve
 
+        std.log.debug("processServerKeyExchange curve_id={}", .{curve_id});
         const params = try EcdheParameters.generate(curve_id);
         self.params = params;
 

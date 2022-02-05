@@ -2,6 +2,7 @@ const std = @import("std");
 const crypto = std.crypto;
 const mem = std.mem;
 const CurveId = @import("handshake_msg.zig").CurveId;
+const elliptic = @import("elliptic.zig");
 
 pub const EcdheParameters = union(enum) {
     x25519: X25519Parameters,
@@ -59,6 +60,13 @@ const X25519Parameters = struct {
     }
 };
 
+const NistParameters = struct {
+    curve: elliptic.Curve,
+
+    // pub fn generate(curve: CurveId) !NistParameters {
+    // }
+};
+
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
 
@@ -95,7 +103,3 @@ test "X25519Parameters.sharedKey" {
         "\x92\x70\x74\x87\x14\x66\xbe\x34\x78\xdb\xab\x9d\x86\x08\x5e\xc2\xb7\x66\xda\x51\xa6\x24\x85\x24\x93\x09\xc3\xf1\x0f\x87\x10\x36",
     );
 }
-
-const NistParameters = struct {
-    curve: CurveId,
-};

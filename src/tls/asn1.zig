@@ -918,7 +918,7 @@ pub const TagAndLength = struct {
     // into a byte slice. It returns the new offset. SET and
     // SET OF (tag 17) are mapped to SEQUENCE and SEQUENCE OF (tag 16) since we
     // don't distinguish between ordered and unordered objects in this code.
-    fn parse(input: []const u8, init_offset: usize, out: *TagAndLength) !usize {
+    pub fn parse(input: []const u8, init_offset: usize, out: *TagAndLength) !usize {
         var offset = init_offset;
         if (offset >= input.len) {
             // TagAndLength.parse should not be called without at least a single

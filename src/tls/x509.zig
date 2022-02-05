@@ -1326,7 +1326,7 @@ pub const Certificate = struct {
                 .{ @ptrToInt(root), root.subject.common_name },
             );
 
-            try considerCandidate(
+            considerCandidate(
                 self,
                 allocator,
                 .root,
@@ -1336,7 +1336,7 @@ pub const Certificate = struct {
                 cache,
                 sig_checks,
                 &chain_list,
-            );
+            ) catch {};
         }
 
         if (opts.intermediates) |intermediates| {
@@ -1347,7 +1347,7 @@ pub const Certificate = struct {
                     "buildChains before considerCandidate, intermediate=0x{x} {s}",
                     .{ @ptrToInt(intermediate), intermediate.subject.common_name },
                 );
-                try considerCandidate(
+                considerCandidate(
                     self,
                     allocator,
                     .intermediate,
@@ -1357,7 +1357,7 @@ pub const Certificate = struct {
                     cache,
                     sig_checks,
                     &chain_list,
-                );
+                ) catch {};
             }
         }
 
@@ -1507,6 +1507,14 @@ pub const Certificate = struct {
         if (now.lt(self.not_before)) {
             return error.InvalidCertificate;
         } else if (now.gt(self.not_after)) {
+            var not_after_buf: [20]u8 = undefined;
+            writeUtcTimeToSlice(&self.not_after, &not_after_buf);
+            var now_buf: [20]u8 = undefined;
+            writeUtcTimeToSlice(&now, &now_buf);
+            std.log.warn(
+                "Certificate.isValid, expired, subject={s}, not_after={s}, now={s}",
+                .{ self.subject.common_name, &not_after_buf, &now_buf },
+            );
             return error.InvalidCertificate;
         }
 
@@ -1638,6 +1646,7 @@ fn checkSignaturePublicKey(
     };
     defer allocator.free(signed2);
 
+    std.log.info("checkSignaturePublicKey public_key type={s}", .{@tagName(public_key)});
     switch (public_key) {
         .rsa => |*k| {
             if (pub_key_algo.? != .rsa) {
@@ -2000,6 +2009,12 @@ fn formatUtcTime(dt: *const datetime.datetime.Datetime, allocator: mem.Allocator
     });
 }
 
+fn writeUtcTimeToSlice(dt: *const datetime.datetime.Datetime, dest: *[20]u8) void {
+    var fbs = std.io.fixedBufferStream(dest[0..20]);
+    var writer = fbs.writer();
+    writeUtcTime(dt, writer) catch unreachable;
+}
+
 fn writeUtcTime(dt: *const datetime.datetime.Datetime, writer: anytype) !void {
     try std.fmt.format(writer, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
         dt.date.year,
@@ -2127,7 +2142,8 @@ test "Certificate.verify" {
 
     try root_pool.appendCertsFromPem(pem_certs);
 
-    const leaf_pem = @embedFile("../../tests/google.com.crt.pem");
+    // const leaf_pem = @embedFile("../../tests/google.com.crt.pem");
+    const leaf_pem = @embedFile("../../tests/naruh.dev.crt.pem");
     var offset: usize = 0;
     var leaf_block = try pem.Block.decode(allocator, leaf_pem, &offset);
     defer leaf_block.deinit(allocator);
@@ -2136,14 +2152,16 @@ test "Certificate.verify" {
     var cert = try Certificate.parse(allocator, leaf_der);
     defer cert.deinit(allocator);
 
-    const giag2_intermediate = @embedFile("../../tests/google.intermediate.crt.pem");
+    // const intermediate_pem = @embedFile("../../tests/google.intermediate.crt.pem");
+    const intermediate_pem = @embedFile("../../tests/lets-encrypt-r3.crt.pem");
     var intermediate_pool = try CertPool.init(allocator, true);
     defer intermediate_pool.deinit();
-    try intermediate_pool.appendCertsFromPem(giag2_intermediate);
+    try intermediate_pool.appendCertsFromPem(intermediate_pem);
 
     const opts = VerifyOptions{
         .roots = &root_pool,
-        .dns_name = "www.google.com",
+        // .dns_name = "www.google.com",
+        .dns_name = "naruh.dev",
         .intermediates = &intermediate_pool,
     };
     var chains = try cert.verify(allocator, &opts);

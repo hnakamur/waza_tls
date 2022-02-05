@@ -393,6 +393,7 @@ pub const Conn = struct {
                 .vers = cli_hello_ver,
                 .random = random[0..random_length],
                 .session_id = session_id[0..random_length],
+                .server_name = hostnameInSni(self.config.server_name),
                 .cipher_suites = cipher_suites,
                 .compression_methods = compression_methods,
                 .supported_curves = supported_curves,
@@ -772,11 +773,14 @@ pub const Conn = struct {
             allocator.free(certs);
         }
         for (certificates) |cert_der, i| {
+            std.log.debug("i={}, cert_der={}", .{ i, fmtx.fmtSliceHexEscapeLower(cert_der) });
             var cert = x509.Certificate.parse(allocator, cert_der) catch {
+                std.log.err("bad_certificate i={}", .{i});
                 self.sendAlert(.bad_certificate) catch {};
                 return error.BadServerCertificate;
             };
             certs[i] = cert;
+            std.log.debug("set certs i={}, certs[i]=0x{x}", .{ i, @ptrToInt(&certs[i]) });
         }
 
         if (!self.config.insecure_skip_verify) {
@@ -810,6 +814,7 @@ pub const Conn = struct {
             if (certs[0].verify(allocator, &opts)) |*chains| {
                 chains.deinit(allocator);
             } else |_| {
+                std.log.debug("verifyServerCertificate verify error, certs[0]=0x{x}", .{@ptrToInt(&certs[0])});
                 self.sendAlert(.bad_certificate) catch {};
                 return error.BadServerCertificate;
             }
@@ -1074,6 +1079,25 @@ pub fn AtLeastReader(comptime ReaderType: type) type {
 /// `bytes_left` is a `u64` to be able to take 64 bit file offsets
 pub fn atLeastReader(inner_reader: anytype, bytes_left: u64) AtLeastReader(@TypeOf(inner_reader)) {
     return .{ .inner_reader = inner_reader, .bytes_left = bytes_left };
+}
+
+// hostnameInSni converts name into an appropriate hostname for SNI.
+// Literal IP addresses and absolute FQDNs are not permitted as SNI values.
+// See RFC 6066, Section 3.
+pub fn hostnameInSni(name: []const u8) []const u8 {
+    var host = name;
+    if (host.len > 0 and host[0] == '[' and host[host.len - 1] == ']') {
+        host = host[1 .. host.len - 1];
+    }
+    if (mem.lastIndexOfScalar(u8, host, '%')) |i| {
+        host = host[0..i];
+    }
+
+    if (std.net.Address.parseIp(host, 0)) |_| {
+        return "";
+    } else |_| {
+        return mem.trimRight(u8, name, ".");
+    }
 }
 
 const testing = std.testing;

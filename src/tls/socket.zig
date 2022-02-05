@@ -153,7 +153,7 @@ test "Conn ClientServer" {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var client = try Client.init(allocator, addr, .{
                 .max_version = .v1_2,
-                .insecure_skip_verify = true,
+                .insecure_skip_verify = false,
             });
             defer client.deinit(allocator);
             defer client.close() catch {};
@@ -173,8 +173,10 @@ test "Conn ClientServer" {
         fn runTest() !void {
             const allocator = testing.allocator;
 
-            const cert_pem = @embedFile("../../tests/rsa2048.crt.pem");
-            const key_pem = @embedFile("../../tests/rsa2048.key.pem");
+            // const cert_pem = @embedFile("../../tests/rsa2048.crt.pem");
+            // const key_pem = @embedFile("../../tests/rsa2048.key.pem");
+            const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
+            const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
             var certificates = try allocator.alloc(CertificateChain, 1);
@@ -244,3 +246,38 @@ test "Conn ClientServer" {
 //         }
 //     }.runTest();
 // }
+
+test "Connect to Internet" {
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+
+    testing.log_level = .debug;
+
+    try struct {
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{
+                .max_version = .v1_2,
+                .server_name = "naruh.dev",
+                .insecure_skip_verify = false,
+            });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("hello");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+            const addr = try std.net.Address.parseIp("160.16.94.194", 443);
+            try testClient(addr, allocator);
+        }
+    }.runTest();
+}

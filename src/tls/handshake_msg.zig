@@ -600,6 +600,7 @@ pub const ServerHelloMsg = struct {
     }
 
     fn unmarshalExtensions(self: *ServerHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
+        std.log.debug("unmarshalExtensions start bytes={}", .{fmtx.fmtSliceHexColonLower(bv.rest())});
         const extensions_len = try bv.readIntBig(u16);
         try bv.ensureRestLen(extensions_len);
         const extensions_end_pos = bv.pos + extensions_len;
@@ -607,6 +608,7 @@ pub const ServerHelloMsg = struct {
             const ext_type = try readEnum(ExtensionType, bv);
             const ext_len = try bv.readIntBig(u16);
             try bv.ensureRestLen(ext_len);
+            std.log.debug("unmarshalExtensions ext_type={}, ext_len={}, bytes={}", .{ ext_type, ext_len, fmtx.fmtSliceHexColonLower(bv.rest()) });
             switch (ext_type) {
                 .StatusRequest => self.ocsp_stapling = true,
                 .SessionTicket => self.ticket_supported = true,
@@ -644,6 +646,7 @@ pub const ServerHelloMsg = struct {
                 },
                 .PreSharedKey => self.selected_identity = try bv.readIntBig(u16),
                 .SupportedPoints => {
+                    std.log.debug("SupportedPoints bytes={}", .{fmtx.fmtSliceHexColonLower(bv.rest())});
                     // RFC 4492, Section 5.1.2
                     self.supported_points = try readEnumList(
                         u8,
@@ -1052,6 +1055,7 @@ pub const CurveId = enum(u16) {
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
 pub const EcPointFormat = enum(u8) {
     uncompressed = 0,
+    _,
 };
 
 // TLS 1.3 Key Share. See RFC 8446, Section 4.2.8.

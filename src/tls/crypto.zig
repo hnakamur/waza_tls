@@ -195,9 +195,9 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
     pub fn parse(allocator: mem.Allocator, der: []const u8) !PrivateKey {
         if (parsePkcs1PrivateKey(allocator, der)) |rsa_key| {
             return PrivateKey{ .rsa = rsa_key };
-        } else |_| {
-            @panic("not implemented yet");
-        }
+        } else |_| {}
+
+        @panic("not implemented yet");
     }
 
     pub fn deinit(self: *PrivateKey, allocator: mem.Allocator) void {
