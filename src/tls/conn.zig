@@ -797,7 +797,8 @@ pub const Conn = struct {
             var intermediate_pool = try CertPool.init(allocator, true);
             defer intermediate_pool.deinit();
             for (certs[1..]) |*cert| {
-                try intermediate_pool.addCert(cert);
+                var cert_copy = x509.Certificate.parse(allocator, cert.raw) catch unreachable;
+                try intermediate_pool.addCert(&cert_copy);
             }
 
             const opts = VerifyOptions{
