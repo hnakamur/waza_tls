@@ -1,4 +1,5 @@
 const std = @import("std");
+const math = std.math;
 const mem = std.mem;
 const P256 = std.crypto.ecc.P256;
 
@@ -182,7 +183,7 @@ fn randFieldElement(
     curve_id: CurveId,
     rand: std.rand.Random,
 ) !std.math.big.int.Const {
-    const encoded_length = switch (curve_id) {
+    const encoded_length: usize = switch (curve_id) {
         .secp256r1 => P256.Fe.encoded_length,
         else => @panic("not implemented yet"),
     };
@@ -192,21 +193,30 @@ fn randFieldElement(
     var b = try allocator.alloc(u8, encoded_length + 8);
     defer allocator.free(b);
 
-    try rand.bytes(b);
-    // bigint
+    rand.bytes(b);
 
-    // params := c.Params()
-    // b := make([]byte, params.BitSize/8+8) // TODO: use params.N.BitLen()
-    // _, err = io.ReadFull(rand, b)
-    // if err != nil {
-    // 	return
-    // }
+    var k = try bigint.managedFromBytes(allocator, b);
+    errdefer k.deinit();
 
-    // k = new(big.Int).SetBytes(b)
-    // n := new(big.Int).Sub(params.N, one)
-    // k.Mod(k, n)
-    // k.Add(k, one)
-    // return
+    var n = switch (curve_id) {
+        // value is copied from Fe.field_order in pcurves/p256/scalar.zig
+        .secp256r1 => try math.big.int.Managed.initSet(
+            allocator,
+            115792089210356248762697446949407573529996955224135760342422259061068512044369,
+        ),
+        else => @panic("not implemented yet"),
+    };
+    defer n.deinit();
+
+    try n.ensureAddCapacity(n.toConst(), bigint.one);
+    try n.sub(n.toConst(), bigint.one);
+
+    var q = try math.big.int.Managed.init(allocator);
+    defer q.deinit();
+
+    try q.divFloor(&k, k.toConst(), n.toConst());
+    try k.add(k.toConst(), bigint.one);
+    return k.toConst();
 }
 
 const testing = std.testing;
@@ -221,4 +231,22 @@ test "ecdsa.PrivateKey.parseAsn1" {
     const key_der = key_block.bytes;
     const key = try PrivateKey.parseAsn1(allocator, key_der, null);
     std.log.debug("key={}", .{key});
+}
+
+test "randFieldElement" {
+    testing.log_level = .debug;
+    const RandomForTest = @import("random_for_test.zig").RandomForTest;
+    const allocator = testing.allocator;
+    const initial = [_]u8{0} ** 48;
+    var rand = RandomForTest.init(initial);
+    var rand2 = rand.random();
+    var k = try randFieldElement(allocator, .secp256r1, rand2);
+    defer bigint.deinitConst(k, allocator);
+
+    var want = try math.big.int.Managed.initSet(
+        allocator,
+        7535431974917535157809964245275928230175247012883497609941754139633030054175,
+    );
+    defer want.deinit();
+    try testing.expect(want.toConst().eq(k));
 }
