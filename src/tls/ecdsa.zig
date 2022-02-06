@@ -4,6 +4,7 @@ const P256 = std.crypto.ecc.P256;
 
 const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
+const bigint = @import("big_int.zig");
 const crypto = @import("crypto.zig");
 const pem = @import("pem.zig");
 const fmtx = @import("../fmtx.zig");
@@ -173,6 +174,40 @@ const PrivateKeyP256 = struct {
 const PublicKeyP384 = struct {
     not_implemented_yet: usize = 1,
 };
+
+// randFieldElement returns a random element of the order of the given
+// curve using the procedure given in FIPS 186-4, Appendix B.5.1.
+fn randFieldElement(
+    allocator: mem.Allocator,
+    curve_id: CurveId,
+    rand: std.rand.Random,
+) !std.math.big.int.Const {
+    const encoded_length = switch (curve_id) {
+        .secp256r1 => P256.Fe.encoded_length,
+        else => @panic("not implemented yet"),
+    };
+
+    // Note that for P-521 this will actually be 63 bits more than the order, as
+    // division rounds down, but the extra bit is inconsequential.
+    var b = try allocator.alloc(u8, encoded_length + 8);
+    defer allocator.free(b);
+
+    try rand.bytes(b);
+    // bigint
+
+    // params := c.Params()
+    // b := make([]byte, params.BitSize/8+8) // TODO: use params.N.BitLen()
+    // _, err = io.ReadFull(rand, b)
+    // if err != nil {
+    // 	return
+    // }
+
+    // k = new(big.Int).SetBytes(b)
+    // n := new(big.Int).Sub(params.N, one)
+    // k.Mod(k, n)
+    // k.Add(k, one)
+    // return
+}
 
 const testing = std.testing;
 

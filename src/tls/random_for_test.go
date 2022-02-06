@@ -17,16 +17,16 @@ func TestGimli(t *testing.T) {
 	fmt.Printf("g=%d\n", g)
 }
 
-type GimliReader struct {
+type RandomForTest struct {
 	g gimli.Gimli
 }
 
-func NewGimliReader(initial [12]uint32) GimliReader {
+func NewRandomForTest(initial [12]uint32) RandomForTest {
 	g := gimli.Gimli(initial)
-	return GimliReader{g: g}
+	return RandomForTest{g: g}
 }
 
-func (r *GimliReader) permute() {
+func (r *RandomForTest) permute() {
 	r.g.Update()
 }
 
@@ -35,7 +35,7 @@ const (
 	rate       = 16
 )
 
-func (r *GimliReader) squeeze(out []byte) {
+func (r *RandomForTest) squeeze(out []byte) {
 	i := 0
 	for i+rate < len(out) {
 		r.permute()
@@ -49,7 +49,7 @@ func (r *GimliReader) squeeze(out []byte) {
 	}
 }
 
-func (r *GimliReader) Read(p []byte) (n int, err error) {
+func (r *RandomForTest) Read(p []byte) (n int, err error) {
 	if len(p) != 0 {
 		r.squeeze(p)
 	} else {
@@ -86,7 +86,7 @@ func TestGimliReader(t *testing.T) {
 	}
 
 	var initial [12]uint32
-	r := NewGimliReader(initial)
+	r := NewRandomForTest(initial)
 	var buf [20]byte
 	for i := 0; i < len(buf); i++ {
 		n, err := r.Read(buf[0:i])

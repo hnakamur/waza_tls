@@ -10,20 +10,34 @@ const SignedDoubleLimb = std.math.big.SignedDoubleLimb;
 const Const = std.math.big.int.Const;
 const Mutable = std.math.big.int.Mutable;
 const Managed = std.math.big.int.Managed;
+const Allocator = std.mem.Allocator;
 
 const bits = @import("bits.zig");
 
 pub const zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
 pub const one = Const{ .limbs = &[_]Limb{1}, .positive = true };
 
-pub const ConstFromBytesError = std.mem.Allocator.Error;
-
 // constFromBytes interprets buf as the bytes of a big-endian unsigned
 // integer, sets z to that value, and returns z.
-pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) ConstFromBytesError!Const {
+pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error!Const {
+    const limbs = try limbsFromBytes(allocator, buf);
+    return Const{ .limbs = limbs, .positive = true };
+}
+
+// managedFromBytes interprets buf as the bytes of a big-endian unsigned
+// integer, sets z to that value, and returns z.
+pub fn managedFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error!Managed {
+    const limbs = try limbsFromBytes(allocator, buf);
+    return Managed{
+        .allocator = allocator,
+        .limbs = limbs,
+        .metadata = limbs.len & ~Managed.sign_bit,
+    };
+}
+
+fn limbsFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error![]Limb {
     const limbs_len = math.divCeil(usize, buf.len, @sizeOf(Limb)) catch unreachable;
     var limbs = try allocator.alloc(Limb, limbs_len);
-    errdefer allocator.free(limbs);
 
     var limbs_bytes = @ptrCast([*]u8, limbs.ptr);
     var i: usize = 0;
@@ -32,8 +46,7 @@ pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) ConstFromBytesE
         limbs_bytes[i] = buf[buf.len - 1 - i];
     }
     mem.set(u8, limbs_bytes[i .. limbs.len * @sizeOf(Limb)], 0);
-
-    return Const{ .limbs = limbs, .positive = true };
+    return limbs;
 }
 
 pub fn formatConst(
@@ -1462,4 +1475,72 @@ test "bigIntDivTrunc" {
     try f(-5, -3, 1, -2, 2, 1);
     try f(1, 2, 0, 1, 0, 1);
     try f(8, 4, 2, 0, 2, 0);
+}
+
+test "managedFromBytes" {
+    const cases = &[_]struct {
+        input: []const u8,
+        want: []const u8,
+    }{
+        .{ .input = "\x4a", .want = "74" },
+        .{ .input = "\xd9\xaa", .want = "55722" },
+        .{ .input = "\x47\x5f\x17", .want = "4677399" },
+        .{ .input = "\x8c\x46\x12\xaa", .want = "2353402538" },
+        .{ .input = "\xd7\x54\xeb\xec\x53", .want = "924842716243" },
+        .{ .input = "\xaa\x6a\x28\xef\xe4\x94", .want = "187372930065556" },
+        .{ .input = "\x3b\x7d\x1d\x4c\x92\x7f\xcc", .want = "16744588418121676" },
+        .{ .input = "\x63\xff\xb2\x36\xe2\x30\xf0\x0a", .want = "7205673877608919050" },
+        .{ .input = "\x26\xaf\xe3\x47\xe1\xb9\xaf\x1e\x36", .want = "713650327612122144310" },
+        .{
+            .input = "\xa3\xa0\x63\xcf\xd9\xd8\xf5\x8f\xa9\xcc",
+            .want = "772704407966201488058828",
+        },
+        .{
+            .input = "\xf3\x73\x00\x14\xc3\xb4\x5e\xcd\x79\x6c\x86",
+            .want = "294312047808122719137524870",
+        },
+        .{
+            .input = "\xc6\xfb\x2c\x1a\x1e\x56\x12\xbe\xd7\x57\xc8\x4b",
+            .want = "61581680591276142991196538955",
+        },
+        .{
+            .input = "\xfd\xf9\x03\x3d\x29\x9e\xbb\x56\x52\x67\x61\x95\x47",
+            .want = "20121790799163960969827622950215",
+        },
+        .{
+            .input = "\x87\x28\x2c\x91\x46\x84\x78\x6c\x74\x61\x11\xbe\x33\xfe",
+            .want = "2741308215961231365498022024590334",
+        },
+        .{
+            .input = "\x19\xab\xed\x9c\xc8\x61\xa1\x0d\xfb\xb2\xf6\x88\x80\x36\x3b",
+            .want = "133294539102018743538753550516500027",
+        },
+        .{
+            .input = "\x7b\x14\xe5\x40\x2f\xa7\x72\xc4\xe0\x92\xa4\xa9\xbb\x20\xd2\x86",
+            .want = "163603539175865214120185492597282755206",
+        },
+        .{
+            .input = "\xf2\xec\xf4\xd7\x94\xa0\x3d\x94\x5d\x68\x15\xed\xf7\x64\x74\x4d\x76",
+            .want = "82663301894799255685983276547661284789622",
+        },
+        .{
+            .input = "\x9c\xf3\xd2\xc7\x6a\x4b\x68\xba\xd9\xf1\xf2\xbe\x0c\x17\x58\x1a\x0a\x1f",
+            .want = "13672485393818486146765023671054315829201439",
+        },
+        .{
+            .input = "\x58\x6f\x9d\x99\x9d\x7a\x75\x19\x4c\xdd\xcc\xaf\xb3\x31\x45\x18\xa4\x63\xe4",
+            .want = "1972188669730284504550489401945552795554046948",
+        },
+    };
+
+    const allocator = testing.allocator;
+    for (cases) |c| {
+        var n = try managedFromBytes(allocator, c.input);
+        defer n.deinit();
+
+        var got = try n.toString(allocator, 10, .lower);
+        defer allocator.free(got);
+
+        try testing.expectEqualStrings(c.want, got);
+    }
 }
