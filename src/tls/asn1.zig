@@ -1530,7 +1530,7 @@ fn debugFormatBigIntManaged(
     );
 }
 
-fn writeAsn1(
+pub fn writeAsn1(
     allocator: mem.Allocator,
     tag: TagAndClass,
     comptime Context: type,
@@ -1573,7 +1573,7 @@ fn writeAsn1(
     try writer.writeAll(buf.readableSlice(0));
 }
 
-fn writeAsn1BigInt(
+pub fn writeAsn1BigInt(
     allocator: mem.Allocator,
     n: std.math.big.int.Const,
     out_stream: anytype,
@@ -1660,30 +1660,30 @@ test "writeAsn1BigInt" {
         }
     }.f;
 
-    // try f(-32768);
-    // try f(-32767);
-    // try f(-257);
-    // try f(-256);
-    // try f(-255);
-    // try f(-2);
-    // try f(-1);
-    // try f(0);
-    // try f(1);
-    // try f(2);
-    // try f(127);
-    // try f(128);
-    // try f(255);
-    // try f(256);
-    // try f(32767);
-    // try f(32768);
+    try f(-32768);
+    try f(-32767);
+    try f(-257);
+    try f(-256);
+    try f(-255);
+    try f(-2);
+    try f(-1);
+    try f(0);
+    try f(1);
+    try f(2);
+    try f(127);
+    try f(128);
+    try f(255);
+    try f(256);
+    try f(32767);
+    try f(32768);
 
-    const start = std.time.nanoTimestamp();
-    var i: i64 = std.math.minInt(i16);
-    while (i <= std.math.maxInt(i16)) : (i += 1) {
-        try f(i);
-    }
-    const end = std.time.nanoTimestamp();
-    std.debug.print("elapsed={}ms\n", .{@divTrunc(end - start, std.time.ns_per_ms)});
+    // const start = std.time.nanoTimestamp();
+    // var i: i64 = std.math.minInt(i16);
+    // while (i <= std.math.maxInt(i16)) : (i += 1) {
+    //     try f(i);
+    // }
+    // const end = std.time.nanoTimestamp();
+    // std.debug.print("elapsed={}ms\n", .{@divTrunc(end - start, std.time.ns_per_ms)});
 
     // elapsed=11902ms for counting and write again
     // elapsed=11863ms
