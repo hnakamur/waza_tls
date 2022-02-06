@@ -68,6 +68,19 @@ pub const PrivateKey = union(CurveId) {
         return try PrivateKey.init(curve_id, private_key_bytes);
     }
 
+    pub fn generateForTest(
+        allocator: mem.Allocator,
+        curve_id: CurveId,
+        rand: std.rand.Random,
+    ) !PrivateKey {
+        return switch (curve_id) {
+            .secp256r1 => PrivateKey{
+                .secp256r1 = try PrivateKeyP256.generateForTest(allocator, rand),
+            },
+            else => @panic("not implemented yet"),
+        };
+    }
+
     pub fn init(curve_id: CurveId, data: []const u8) !PrivateKey {
         switch (curve_id) {
             .secp256r1 => {
@@ -137,8 +150,18 @@ const PrivateKeyP256 = struct {
     d: [P256.Fe.encoded_length]u8,
 
     pub fn init(d: [P256.Fe.encoded_length]u8) !PrivateKeyP256 {
-        const pub_key_point = try P256.basePoint.mulPublic(d, .Big);
+        const pub_key_point = try P256.basePoint.mul(d, .Little);
         return PrivateKeyP256{ .public_key = .{ .point = pub_key_point }, .d = d };
+    }
+
+    pub fn generateForTest(allocator: mem.Allocator, rand: std.rand.Random) !PrivateKeyP256 {
+        var k = try randFieldElement(allocator, .secp256r1, rand);
+        defer bigint.deinitConst(k, allocator);
+
+        var d: []const u8 = undefined;
+        d.ptr = @ptrCast([*]const u8, k.limbs.ptr);
+        d.len = P256.Fe.encoded_length;
+        return init(d[0..P256.Fe.encoded_length].*);
     }
 
     pub fn sign(
@@ -249,4 +272,43 @@ test "randFieldElement" {
     );
     defer want.deinit();
     try testing.expect(want.toConst().eq(k));
+}
+
+test "PrivateKey.generateForTest" {
+    testing.log_level = .debug;
+    const RandomForTest = @import("random_for_test.zig").RandomForTest;
+    const allocator = testing.allocator;
+    const initial = [_]u8{0} ** 48;
+    var rand = RandomForTest.init(initial);
+    var rand2 = rand.random();
+
+    var priv_key = try PrivateKey.generateForTest(allocator, .secp256r1, rand2);
+    // std.log.debug("priv_key={}", .{priv_key});
+
+    const d_want = "10a8e7424b64ddaf8b3e7e428c3f6e0e253709be285c64bc41cc300fd800c11f";
+    const x_want = "b4eda0b0f478fdc289d8d759f5600eb873e711f70090a8cf55ccadcfeccaf023";
+    const y_want = "9f4cecf8a0eae3d3f6299cdb52fde60fb64aa3694795df1516bc9ddb05aa0ecc";
+
+    var src: []const u8 = undefined;
+    var bytes_buf: [32]u8 = undefined;
+    var hex_buf: [64]u8 = undefined;
+
+    src.ptr = @intToPtr([*]const u8, @ptrToInt(&priv_key.secp256r1.d));
+    src.len = P256.Fe.encoded_length;
+    mem.copy(u8, &bytes_buf, src);
+    mem.reverse(u8, &bytes_buf);
+
+    var fbs = std.io.fixedBufferStream(&hex_buf);
+    try std.fmt.format(fbs.writer(), "{}", .{std.fmt.fmtSliceHexLower(&bytes_buf)});
+    try testing.expectEqualStrings(d_want, &hex_buf);
+
+    const p = priv_key.secp256r1.public_key.point.affineCoordinates();
+
+    fbs = std.io.fixedBufferStream(&hex_buf);
+    try std.fmt.format(fbs.writer(), "{}", .{std.fmt.fmtSliceHexLower(&p.x.toBytes(.Big))});
+    try testing.expectEqualStrings(x_want, &hex_buf);
+
+    fbs = std.io.fixedBufferStream(&hex_buf);
+    try std.fmt.format(fbs.writer(), "{}", .{std.fmt.fmtSliceHexLower(&p.y.toBytes(.Big))});
+    try testing.expectEqualStrings(y_want, &hex_buf);
 }
