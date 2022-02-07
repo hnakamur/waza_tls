@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"testing"
 )
@@ -72,5 +73,56 @@ func TestGenerateEcdsaPrivateKey(t *testing.T) {
 	}
 	if hexGotY != hexWantY {
 		t.Errorf("Y mismatch, got=%s, want=%s", hexGotY, hexWantY)
+	}
+}
+
+func TestSignAndVerify(t *testing.T) {
+	testAllCurves(t, testSignAndVerify)
+}
+
+func testSignAndVerify(t *testing.T, c elliptic.Curve) {
+	var initial [12]uint32
+	rnd := NewRandomForTest(initial)
+
+	priv, _ := ecdsa.GenerateKey(c, &rnd)
+
+	hashed := []byte("testing")
+	r, s, err := ecdsa.Sign(&rnd, priv, hashed)
+	if err != nil {
+		t.Errorf("error signing: %s", err)
+		return
+	}
+	log.Printf("r=0x%x, s=0x%x", r.Bytes(), s.Bytes())
+	// r=0xe14fd9eb5f743e74390b09c9dfffeae4e43fa7fa0985da7d8161b5cf83b61d46, s=0x67d212b5ca4880782922f7e41f7dc054ec025389d209dcb47216e7be98fe06ae
+
+	if !ecdsa.Verify(&priv.PublicKey, hashed, r, s) {
+		t.Errorf("Verify failed")
+	}
+
+	hashed[0] ^= 0xff
+	if ecdsa.Verify(&priv.PublicKey, hashed, r, s) {
+		t.Errorf("Verify always works!")
+	}
+}
+
+func testAllCurves(t *testing.T, f func(*testing.T, elliptic.Curve)) {
+	tests := []struct {
+		name  string
+		curve elliptic.Curve
+	}{
+		{"P256", elliptic.P256()},
+		// {"P224", elliptic.P224()},
+		// {"P384", elliptic.P384()},
+		// {"P521", elliptic.P521()},
+	}
+	if testing.Short() {
+		tests = tests[:1]
+	}
+	for _, test := range tests {
+		curve := test.curve
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			f(t, curve)
+		})
 	}
 }

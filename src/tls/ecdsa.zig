@@ -2,6 +2,9 @@ const std = @import("std");
 const math = std.math;
 const mem = std.mem;
 const P256 = std.crypto.ecc.P256;
+const Sha512 = std.crypto.hash.sha2.Sha512;
+const Aes128 = std.crypto.core.aes.Aes128;
+const AesEncryptCtx = std.crypto.core.aes.AesEncryptCtx;
 
 const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
@@ -150,7 +153,7 @@ const PrivateKeyP256 = struct {
     d: [P256.Fe.encoded_length]u8,
 
     pub fn init(d: [P256.Fe.encoded_length]u8) !PrivateKeyP256 {
-        const pub_key_point = try P256.basePoint.mul(d, .Little);
+        const pub_key_point = try P256.basePoint.mulPublic(d, .Little);
         return PrivateKeyP256{ .public_key = .{ .point = pub_key_point }, .d = d };
     }
 
@@ -240,6 +243,34 @@ fn randFieldElement(
     try q.divFloor(&k, k.toConst(), n.toConst());
     try k.add(k.toConst(), bigint.one);
     return k.toConst();
+}
+
+pub fn signWithPrivateKey(
+    allocator: mem.Allocator,
+    random: std.rand.Random,
+    priv_key: *const PrivateKey,
+    digest: []const u8,
+    opts: crypto.SignOpts,
+) ![]const u8 {
+    _ = allocator;
+    _ = opts;
+
+    var entropy: [32]u8 = undefined;
+    random.bytes(&entropy);
+
+    var md = Sha512.init(.{});
+    const d = switch (priv_key.*) {
+        .secp256r1 => |*k| k.d,
+        else => @panic("not implemented yet"), 
+    };
+    md.update(d);
+    md.update(&entropy);
+    md.update(digest);
+    var key_buf: [Sha512.digest_length]u8 = undefined;
+    md.final(&key_buf);
+    const key = key_buf[0..32];
+    Aes128.initEnc(key);
+    @panic("not implemented yet");
 }
 
 const testing = std.testing;
