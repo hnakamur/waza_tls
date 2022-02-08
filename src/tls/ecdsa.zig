@@ -261,7 +261,7 @@ pub fn signWithPrivateKey(
     var md = Sha512.init(.{});
     const d = switch (priv_key.*) {
         .secp256r1 => |*k| k.d,
-        else => @panic("not implemented yet"), 
+        else => @panic("not implemented yet"),
     };
     md.update(d);
     md.update(&entropy);
@@ -273,7 +273,49 @@ pub fn signWithPrivateKey(
     @panic("not implemented yet");
 }
 
+fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.int.Managed {
+    const encoded_length: usize = switch (c) {
+        .secp256r1 => P256.Fe.encoded_length,
+        else => @panic("not implemented yet"),
+    };
+
+    const hash2 = if (hash.len > encoded_length)
+        hash[0..encoded_length]
+    else
+        hash;
+
+    var ret = try bigint.managedFromBytes(allocator, hash2);
+
+    const field_bits: usize = switch (c) {
+        .secp256r1 => P256.Fe.field_bits,
+        else => @panic("not implemented yet"),
+    };
+    // std.log.debug(
+    //     "hashToInt, encoded_length={}, hash2.len={}, field_bits={}",
+    //     .{ encoded_length, hash2.len, field_bits },
+    // );
+    if (hash2.len * 8 > field_bits) {
+        const excess: usize = hash2.len * 8 - field_bits;
+        try ret.shiftRight(ret, excess);
+    }
+    return ret;
+}
+
 const testing = std.testing;
+
+test "ecdsa.hashToInt" {
+    testing.log_level = .debug;
+
+    const allocator = testing.allocator;
+    const hash = "testing";
+    var n = try hashToInt(allocator, hash, .secp256r1);
+    defer n.deinit();
+
+    var n_s = try n.toString(allocator, 10, .lower);
+    defer allocator.free(n_s);
+
+    try testing.expectEqualStrings("32762643847147111", n_s);
+}
 
 test "ecdsa.PrivateKey.parseAsn1" {
     testing.log_level = .debug;

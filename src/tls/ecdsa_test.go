@@ -126,3 +126,31 @@ func testAllCurves(t *testing.T, f func(*testing.T, elliptic.Curve)) {
 		})
 	}
 }
+
+func TestHashToInt(t *testing.T) {
+	hash := []byte("testing")
+	c := elliptic.P256()
+	n := hashToInt(hash, c)
+	// log.Printf("n=%v", n)
+	if got, want := n.String(), "32762643847147111"; got != want {
+		t.Errorf("result mismatch, got=%v, want=%v", got, want)
+	}
+}
+
+// hashToInt converts a hash value to an integer. Per FIPS 186-4, Section 6.4,
+// we use the left-most bits of the hash to match the bit-length of the order of
+// the curve. This also performs Step 5 of SEC 1, Version 2.0, Section 4.1.3.
+func hashToInt(hash []byte, c elliptic.Curve) *big.Int {
+	orderBits := c.Params().N.BitLen()
+	orderBytes := (orderBits + 7) / 8
+	if len(hash) > orderBytes {
+		hash = hash[:orderBytes]
+	}
+
+	ret := new(big.Int).SetBytes(hash)
+	excess := len(hash)*8 - orderBits
+	if excess > 0 {
+		ret.Rsh(ret, uint(excess))
+	}
+	return ret
+}
