@@ -154,3 +154,25 @@ func hashToInt(hash []byte, c elliptic.Curve) *big.Int {
 	}
 	return ret
 }
+
+func TestFermatInverse(t *testing.T) {
+	k := new(big.Int)
+	k.SetString("31165868474356909094101301562817744597875721467446372694368806754002914873404", 10)
+
+	n := new(big.Int)
+	n.SetString("115792089210356248762697446949407573529996955224135760342422259061068512044369", 10)
+
+	ret := fermatInverse(k, n)
+	got := ret.String()
+
+	want := "86225417743096558800740718328827616534367331415382654615473225504007389458516"
+	if got != want {
+		t.Errorf("result mismatch, got=%v, want=%v", got, want)
+	}
+}
+
+func fermatInverse(k, N *big.Int) *big.Int {
+	two := big.NewInt(2)
+	nMinus2 := new(big.Int).Sub(N, two)
+	return new(big.Int).Exp(k, nMinus2, N)
+}

@@ -301,7 +301,92 @@ fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.i
     return ret;
 }
 
+// fermatInverse calculates the inverse of k in GF(P) using Fermat's method
+// (exponentiation modulo P - 2, per Euler's theorem). This has better
+// constant-time properties than Euclid's method (implemented in
+// math/big.Int.ModInverse and FIPS 186-4, Appendix C.1) although math/big
+// itself isn't strictly constant-time so it's not perfect.
+fn fermatInverse(
+    allocator: mem.Allocator,
+    k: math.big.int.Const,
+    n: math.big.int.Const,
+) !math.big.int.Const {
+    var n_minus_2 = try n.toManaged(allocator);
+    defer n_minus_2.deinit();
+    try n_minus_2.sub(n_minus_2.toConst(), bigint.two);
+    return try bigint.expConst(allocator, k, n_minus_2.toConst(), n);
+
+    // var n_minus_2 = blk: {
+    //     var n_minus_2_m = try n.toManaged(allocator);
+    //     errdefer n_minus_2_m.deinit();
+    //     try n_minus_2_m.sub(n_minus_2_m.toConst(), bigint.two);
+    //     break :blk n_minus_2_m.toConst();
+    // };
+    // defer bigint.deinitConst(n_minus_2, allocator);
+    // return try bigint.expConst(allocator, k, n_minus_2, n);
+}
+
 const testing = std.testing;
+
+test "ecdsa.fermatInverse" {
+    const allocator = testing.allocator;
+
+    var k = try math.big.int.Managed.initSet(
+        allocator,
+        31165868474356909094101301562817744597875721467446372694368806754002914873404,
+    );
+    defer k.deinit();
+
+    var n = try math.big.int.Managed.initSet(
+        allocator,
+        115792089210356248762697446949407573529996955224135760342422259061068512044369,
+    );
+    defer n.deinit();
+
+    var want = try math.big.int.Managed.initSet(
+        allocator,
+        86225417743096558800740718328827616534367331415382654615473225504007389458516,
+    );
+    defer want.deinit();
+
+    var got = try fermatInverse(allocator, k.toConst(), n.toConst());
+    defer bigint.deinitConst(got, allocator);
+
+    if (!want.toConst().eq(got)) {
+        var got_m = try got.toManaged(allocator);
+        defer got_m.deinit();
+        var got_str = try got_m.toString(allocator, 10, .lower);
+        defer allocator.free(got_str);
+        var want_str = try want.toString(allocator, 10, .lower);
+        defer allocator.free(want_str);
+        std.debug.print("\n got={s},\nwant={s}\n", .{got_str, want_str});
+    }
+
+    try testing.expect(want.toConst().eq(got));
+
+    // var k = (try math.big.int.Managed.initSet(
+    //     allocator,
+    //     31165868474356909094101301562817744597875721467446372694368806754002914873404,
+    // )).toConst();
+    // defer bigint.deinitConst(k, allocator);
+
+    // var n = (try math.big.int.Managed.initSet(
+    //     allocator,
+    //     115792089210356248762697446949407573529996955224135760342422259061068512044369,
+    // )).toConst();
+    // defer bigint.deinitConst(n, allocator);
+
+    // var want = (try math.big.int.Managed.initSet(
+    //     allocator,
+    //     86225417743096558800740718328827616534367331415382654615473225504007389458516,
+    // )).toConst();
+    // defer bigint.deinitConst(want, allocator);
+
+    // var got = try fermatInverse(allocator, k, n);
+    // defer bigint.deinitConst(got, allocator);
+
+    // try testing.expect(want.eq(got));
+}
 
 test "ecdsa.hashToInt" {
     testing.log_level = .debug;

@@ -16,6 +16,7 @@ const bits = @import("bits.zig");
 
 pub const zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
 pub const one = Const{ .limbs = &[_]Limb{1}, .positive = true };
+pub const two = Const{ .limbs = &[_]Limb{2}, .positive = true };
 
 // constFromBytes interprets buf as the bytes of a big-endian unsigned
 // integer, sets z to that value, and returns z.
@@ -1049,7 +1050,15 @@ fn expNnMontgomery(
         }
     }
     // convert to regular number
-    try montgomery(allocator, &zz2, z, one.limbs[0..m_len], m_abs_m.limbs[0..m_len], k0, m_len);
+    try montgomery(
+        allocator,
+        &zz2,
+        z,
+        long_one.limbs[0..m_len],
+        m_abs_m.limbs[0..m_len],
+        k0,
+        m_len,
+    );
 
     // One last reduction, just in case.
     // See golang.org/issue/13907.
