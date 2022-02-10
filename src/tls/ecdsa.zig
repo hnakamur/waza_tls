@@ -351,10 +351,40 @@ test "ecdsa.fermatInverse" {
         defer allocator.free(got_str);
         var want_str = try want.toString(allocator, 10, .lower);
         defer allocator.free(want_str);
-        std.debug.print("\n got={s},\nwant={s}\n", .{got_str, want_str});
+        std.debug.print("\n got={s},\nwant={s}\n", .{ got_str, want_str });
     }
 
     try testing.expect(want.toConst().eq(got));
+}
+
+test "p256.Scalar.invert" {
+    const allocator = testing.allocator;
+    var k = try math.big.int.Managed.initSet(
+        allocator,
+        69679341414823589043920591308017428039318963656356153131478201006811587571322,
+    );
+    defer k.deinit();
+
+    var want = try math.big.int.Managed.initSet(
+        allocator,
+        86586517801769794643900956701147035451346541280727946852964839837080582533940,
+    );
+    defer want.deinit();
+
+    var k_limbs: []const u8 = undefined;
+    k_limbs.ptr = @ptrCast([*]const u8, k.limbs.ptr);
+    const k_scalar = try P256.scalar.Scalar.fromBytes(
+        k_limbs[0..P256.scalar.encoded_length].*,
+        .Little,
+    );
+    const k_inv_scalar = k_scalar.invert();
+    const k_inv_bytes = k_inv_scalar.toBytes(.Big);
+    var k_inv = try bigint.managedFromBytes(allocator, &k_inv_bytes);
+    defer k_inv.deinit();
+    // var k_inv_str = try k_inv.toString(allocator, 10, .lower);
+    // defer allocator.free(k_inv_str);
+    // std.debug.print("k_inv={s}\n", .{k_inv_str});
+    try testing.expect(k_inv.eq(want));
 }
 
 test "ecdsa.hashToInt" {

@@ -95,6 +95,8 @@ func testSignAndVerify(t *testing.T, c elliptic.Curve) {
 	log.Printf("r=0x%x, s=0x%x", r.Bytes(), s.Bytes())
 	// r=0xe14fd9eb5f743e74390b09c9dfffeae4e43fa7fa0985da7d8161b5cf83b61d46, s=0x67d212b5ca4880782922f7e41f7dc054ec025389d209dcb47216e7be98fe06ae
 
+	// after calling Inverse, k=69679341414823589043920591308017428039318963656356153131478201006811587571322, kInv=86586517801769794643900956701147035451346541280727946852964839837080582533940
+
 	if !ecdsa.Verify(&priv.PublicKey, hashed, r, s) {
 		t.Errorf("Verify failed")
 	}
@@ -175,4 +177,8 @@ func fermatInverse(k, N *big.Int) *big.Int {
 	two := big.NewInt(2)
 	nMinus2 := new(big.Int).Sub(N, two)
 	return new(big.Int).Exp(k, nMinus2, N)
+}
+
+func TestP256Inverse(t *testing.T) {
+
 }
