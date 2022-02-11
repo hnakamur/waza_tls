@@ -1,6 +1,7 @@
 const std = @import("std");
 
-// pub fn Ctr()
+pub const Ctr = struct {
+};
 
 const mem = std.mem;
 const debug = std.debug;
@@ -11,11 +12,12 @@ const debug = std.debug;
 ///
 /// Important: the counter mode doesn't provide authenticated encryption: the ciphertext can be trivially modified without this being detected.
 /// As a result, applications should generally never use it directly, but only in a construction that includes a MAC.
-pub fn ctr(comptime BlockCipher: type, block_cipher: BlockCipher, dst: []u8, src: []const u8, iv: [BlockCipher.block_length]u8, endian: std.builtin.Endian) void {
+pub fn ctr(block_cipher: anytype, dst: []u8, src: []const u8, iv: []const u8, endian: std.builtin.Endian) void {
+    const BlockCipher = @TypeOf(block_cipher);
     debug.assert(dst.len >= src.len);
     const block_length = BlockCipher.block_length;
     var counter: [BlockCipher.block_length]u8 = undefined;
-    var counterInt = mem.readInt(u128, &iv, endian);
+    var counterInt = mem.readInt(u128, iv[0..@sizeOf(u128)], endian);
     var i: usize = 0;
 
     const parallel_count = BlockCipher.block.parallel.optimal_parallel_blocks;
@@ -49,7 +51,6 @@ const testing = std.testing;
 
 test "copied crypto.core.modes.ctr" {
     const Aes128 = std.crypto.core.aes.Aes128;
-    const AesEncryptCtx = std.crypto.core.aes.AesEncryptCtx;
 
     // NIST SP 800-38A pp 55-58
     const key = [_]u8{ 0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c };
@@ -69,6 +70,6 @@ test "copied crypto.core.modes.ctr" {
 
     var out: [exp_out.len]u8 = undefined;
     var ctx = Aes128.initEnc(key);
-    ctr(AesEncryptCtx(Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.Big);
+    ctr(ctx, out[0..], in[0..], iv[0..], std.builtin.Endian.Big);
     try testing.expectEqualSlices(u8, exp_out[0..], out[0..]);
 }
