@@ -6,11 +6,16 @@ const Random = std.rand.Random;
 pub const RandomForTest = struct {
     gimli: Gimli,
 
+    pub const Error = error{};
+    pub const Reader = std.io.Reader(*Self, Error, read);
+
+    const Self = @This();
+
     pub fn init(initial_state: [Gimli.BLOCKBYTES]u8) RandomForTest {
         return .{ .gimli = Gimli.init(initial_state) };
     }
 
-    pub fn bytes(self: *RandomForTest, buffer: []u8) void {
+    pub fn bytes(self: *Self, buffer: []u8) void {
         if (buffer.len != 0) {
             self.gimli.squeeze(buffer);
         } else {
@@ -19,8 +24,17 @@ pub const RandomForTest = struct {
         mem.set(u8, self.gimli.toSlice()[0..Gimli.RATE], 0);
     }
 
-    pub fn random(self: *RandomForTest) Random {
+    pub fn random(self: *Self) Random {
         return Random.init(self, bytes);
+    }
+
+    pub fn read(self: *Self, buffer: []u8) Error!usize {
+        self.bytes(buffer);
+        return buffer.len;
+    }
+
+    pub fn reader(self: *Self) Reader {
+        return .{ .context = self };
     }
 };
 

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"fmt"
@@ -23,11 +26,16 @@ func randFieldElement(c elliptic.Curve, rand io.Reader) (k *big.Int, err error) 
 	if err != nil {
 		return
 	}
+	log.Printf("randFieldElement b=%x", b)
+	// b=5ff62c206728a6be32e475544b811474ea079d2665dcf84fc437014d359c2d328305870e65aa69d9
 
 	k = new(big.Int).SetBytes(b)
 	n := new(big.Int).Sub(params.N, one)
+	log.Printf("randFieldElement n_bytes=%x", n.Bytes())
 	k.Mod(k, n)
 	k.Add(k, one)
+	log.Printf("randFieldElement k_bytes=%x", k.Bytes())
+	// k_bytes=9a0d1c1184624197032e6bbbf637fcb380a3695d68f37bb648daaf4ea3b46e7a
 	return
 }
 
@@ -85,6 +93,8 @@ func testSignAndVerify(t *testing.T, c elliptic.Curve) {
 	rnd := NewRandomForTest(initial)
 
 	priv, _ := ecdsa.GenerateKey(c, &rnd)
+	log.Printf("testSignAndVerify priv.D=%x", priv.D)
+	// testSignAndVerify priv.D=10a8e7424b64ddaf8b3e7e428c3f6e0e253709be285c64bc41cc300fd800c11f
 
 	hashed := []byte("testing")
 	r, s, err := ecdsa.Sign(&rnd, priv, hashed)
@@ -179,6 +189,43 @@ func fermatInverse(k, N *big.Int) *big.Int {
 	return new(big.Int).Exp(k, nMinus2, N)
 }
 
-func TestP256Inverse(t *testing.T) {
+const aesIV = "IV for ECDSA CTR"
 
+func TestStreamReader(t *testing.T) {
+	key := []byte("\x57\x0a\xb7\x5e\xb8\x7a\xbe\x27\x4b\xc4\x19\xb6\x45\xa6\x0f\xdc\xf8\x18\x05\xee\x0a\x49\xbf\x3d\x7c\xdc\x9a\xf7\xe7\x7f\x4e\x0d")
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	csprng := cipher.StreamReader{
+		R: zeroReader,
+		S: cipher.NewCTR(block, []byte(aesIV)),
+	}
+
+	c := elliptic.P256()
+
+	k, err := randFieldElement(c, &csprng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("\x9a\x0d\x1c\x11\x84\x62\x41\x97\x03\x2e\x6b\xbb\xf6\x37\xfc\xb3\x80\xa3\x69\x5d\x68\xf3\x7b\xb6\x48\xda\xaf\x4e\xa3\xb4\x6e\x7a")
+	// log.Printf("k.bytes=%x", k.Bytes())
+	if got := k.Bytes(); !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
 }
+
+type zr struct {
+	io.Reader
+}
+
+// Read replaces the contents of dst with zeros.
+func (z *zr) Read(dst []byte) (n int, err error) {
+	for i := range dst {
+		dst[i] = 0
+	}
+	return len(dst), nil
+}
+
+var zeroReader = &zr{}

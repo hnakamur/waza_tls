@@ -50,6 +50,36 @@ fn limbsFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error![]L
     return limbs;
 }
 
+pub fn constToBytesLittle(n: Const) []const u8 {
+    var limbs: []const u8 = undefined;
+    limbs.ptr = @ptrCast([*]const u8, n.limbs.ptr);
+    limbs.len = n.limbs.len * @sizeOf(Limb);
+    return limbs;
+}
+
+pub fn constToBytesBig(allocator: mem.Allocator, n: Const) error{OutOfMemory}![]const u8 {
+    var little_bytes = constToBytesLittle(n);
+    return try allocReverse(allocator, little_bytes);
+}
+
+pub fn managedToBytesLittle(n: Managed) []const u8 {
+    var limbs: []const u8 = undefined;
+    limbs.ptr = @ptrCast([*]const u8, n.limbs.ptr);
+    limbs.len = n.len() * @sizeOf(Limb);
+    return limbs;
+}
+
+pub fn managedToBytesBig(allocator: mem.Allocator, n: Managed) error{OutOfMemory}![]const u8 {
+    var little_bytes = managedToBytesLittle(n);
+    return try allocReverse(allocator, little_bytes);
+}
+
+pub fn allocReverse(allocator: mem.Allocator, bytes: []const u8) error{OutOfMemory}![]const u8 {
+    var ret = try allocator.alloc(u8, bytes.len);
+    for (bytes) |b, i| ret[ret.len - 1 - i] = b;
+    return ret;
+}
+
 pub fn formatConst(
     c: Const,
     comptime fmt: []const u8,
@@ -359,7 +389,7 @@ test "gcdManaged" {
     );
 }
 
-fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
+pub fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
     var m = try Managed.init(allocator);
     errdefer m.deinit();
     try m.setString(10, value);
