@@ -42,6 +42,7 @@ const mailbox = @import("tls/mailbox.zig");
 const verify = @import("tls/verify.zig");
 const sec1 = @import("tls/sec1.zig");
 const random_for_test = @import("tls/random_for_test.zig");
+const ctr = @import("tls/ctr.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
