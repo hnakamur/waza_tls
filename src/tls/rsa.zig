@@ -252,7 +252,8 @@ pub const VerifyPkcs1v15Error = error{
     Verification,
     InputMustBeHashedMessage,
     UnsupportedHashType,
-} || bigint.ConstFromBytesError;
+    OutOfMemory,
+};
 
 // verifyPkcs1v15 verifies an RSA PKCS #1 v1.5 signature.
 // hashed is the result of hashing the input message using the given hash

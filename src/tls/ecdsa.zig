@@ -174,11 +174,10 @@ const PrivateKeyP256 = struct {
         opts: crypto.SignOpts,
     ) ![]const u8 {
         _ = opts;
-        var random = std.crypto.random;
         const priv_key = PrivateKey{ .secp256r1 = self.* };
         return try signWithPrivateKey(
             allocator,
-            random,
+            std.crypto.random,
             &priv_key,
             digest,
         );
@@ -251,7 +250,7 @@ fn randFieldElement(
 
 pub fn signWithPrivateKey(
     allocator: mem.Allocator,
-    random: std.rand.Random,
+    random: *const std.rand.Random,
     priv_key: *const PrivateKey,
     digest: []const u8,
 ) ![]const u8 {
@@ -265,14 +264,14 @@ pub fn signWithPrivateKey(
         .secp256r1 => |*k| k.d,
         else => @panic("not implemented yet"),
     };
-    md.update(d);
+    md.update(&d);
     md.update(&entropy);
     md.update(digest);
     var key_buf: [Sha512.digest_length]u8 = undefined;
     md.final(&key_buf);
     const key = key_buf[0..32];
+    _ = key;
 
-    Aes128.initEnc(key);
     @panic("not implemented yet");
 }
 

@@ -10,6 +10,8 @@ pub const AesBlock = struct {
     const aes128_key_bytes = Aes128.key_bits / @bitSizeOf(u8);
     const aes256_key_bytes = Aes256.key_bits / @bitSizeOf(u8);
 
+    // Caller must owns the memory for the key until later call of encrypt
+    // is finished.
     pub fn init(key: []const u8) !AesBlock {
         switch (key.len) {
             aes128_key_bytes, aes256_key_bytes => {},
