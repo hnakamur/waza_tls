@@ -5,7 +5,7 @@ const Aes256 = std.crypto.core.aes.Aes256;
 pub const AesBlock = struct {
     key: []const u8,
 
-    const block_length = std.crypto.core.aes.Block.block_length;
+    pub const block_length = std.crypto.core.aes.Block.block_length;
     const byte_bits = @bitSizeOf(u8);
     const aes128_key_bytes = Aes128.key_bits / @bitSizeOf(u8);
     const aes256_key_bytes = Aes256.key_bits / @bitSizeOf(u8);

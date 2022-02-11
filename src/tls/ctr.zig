@@ -56,15 +56,14 @@ pub const Ctr = struct {
     }
 
     fn refill(self: *Ctr) void {
-        std.log.debug("refill start, out_len={}, out_used={}", .{ self.out_len, self.out_used });
         var remain = self.out_len - self.out_used;
         mem.copy(u8, self.out, self.out[self.out_used..]);
         self.out_len = self.out.len;
         const block_size = self.block.block_size();
         while (remain <= self.out_len - block_size) {
             self.block.encrypt(
-                self.out[remain..][0..16],
-                self.ctr[0..16],
+                self.out[remain..][0..AesBlock.block_length],
+                self.ctr[0..AesBlock.block_length],
             );
             remain += block_size;
 
@@ -79,7 +78,6 @@ pub const Ctr = struct {
         }
         self.out_len = remain;
         self.out_used = 0;
-        std.log.debug("refill, out={}", .{std.fmt.fmtSliceHexLower(self.out[0..self.out_len])});
     }
 };
 
@@ -97,8 +95,6 @@ const testing = std.testing;
 
 test "Ctr.xorKeyStream" {
     testing.log_level = .debug;
-
-    const fmtx = @import("../fmtx.zig");
 
     const common_counter = &[_]u8{
         0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
@@ -150,9 +146,6 @@ test "Ctr.xorKeyStream" {
             defer allocator.free(encrypted);
             c.xorKeyStream(encrypted, in);
             const want = t.out[0..in.len];
-            std.log.debug("j={}, want={}, encrypted={}", .{
-                j, fmtx.fmtSliceHexColonLower(want), fmtx.fmtSliceHexColonLower(encrypted),
-            });
             try testing.expectEqualSlices(u8, want, encrypted);
         }
 
@@ -165,9 +158,6 @@ test "Ctr.xorKeyStream" {
             defer allocator.free(plain);
             c.xorKeyStream(plain, in);
             const want = t.in[0..in.len];
-            std.log.debug("j={}, want={}, plain={}", .{
-                j, fmtx.fmtSliceHexColonLower(want), fmtx.fmtSliceHexColonLower(plain),
-            });
             try testing.expectEqualSlices(u8, want, plain);
         }
     }
