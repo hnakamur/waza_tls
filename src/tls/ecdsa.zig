@@ -179,13 +179,40 @@ const PrivateKeyP256 = struct {
     ) ![]const u8 {
         _ = opts;
         const priv_key = PrivateKey{ .secp256r1 = self.* };
-        try signWithPrivateKey(
+
+        const capacity = bigint.limbsCapacityForBytesLength(P256.scalar.encoded_length);
+        var r = try math.big.int.Managed.initCapacity(allocator, capacity);
+        defer r.deinit();
+        var s = try math.big.int.Managed.initCapacity(allocator, capacity);
+        defer s.deinit();
+
+        try signWithPrivateKey(allocator, std.crypto.random.*, &priv_key, digest, &r, &s);
+
+        var buf = std.ArrayListUnmanaged(u8){};
+        errdefer buf.deinit(allocator);
+
+        const Context = struct {
+            allocator: mem.Allocator,
+            r: math.big.int.Const,
+            s: math.big.int.Const,
+
+            const Self = @This();
+
+            fn write(ctx: Self, writer: anytype) !void {
+                try asn1.writeAsn1BigInt(ctx.allocator, ctx.r, writer);
+                try asn1.writeAsn1BigInt(ctx.allocator, ctx.s, writer);
+            }
+        };
+        var ctx = Context{ .allocator = allocator, .r = r.toConst(), .s = s.toConst() };
+        try asn1.writeAsn1(
             allocator,
-            std.crypto.random,
-            &priv_key,
-            digest,
+            .sequence,
+            Context,
+            Context.write,
+            ctx,
+            buf.writer(allocator),
         );
-        @panic("not implemented yet");
+        return buf.toOwnedSlice(allocator);
     }
 
     pub fn format(
