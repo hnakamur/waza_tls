@@ -153,7 +153,7 @@ test "Conn ClientServer" {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var client = try Client.init(allocator, addr, .{
                 .max_version = .v1_2,
-                .insecure_skip_verify = false,
+                .insecure_skip_verify = true,
             });
             defer client.deinit(allocator);
             defer client.close() catch {};
