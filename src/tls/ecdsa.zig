@@ -69,14 +69,14 @@ pub const PrivateKey = union(CurveId) {
         return try PrivateKey.init(curve_id, private_key_bytes);
     }
 
-    pub fn generateForTest(
+    pub fn generate(
         allocator: mem.Allocator,
         curve_id: CurveId,
         rand: std.rand.Random,
     ) !PrivateKey {
         return switch (curve_id) {
             .secp256r1 => PrivateKey{
-                .secp256r1 = try PrivateKeyP256.generateForTest(allocator, rand),
+                .secp256r1 = try PrivateKeyP256.generate(allocator, rand),
             },
             else => @panic("not implemented yet"),
         };
@@ -155,7 +155,7 @@ const PrivateKeyP256 = struct {
         return PrivateKeyP256{ .public_key = .{ .point = pub_key_point }, .d = d };
     }
 
-    pub fn generateForTest(allocator: mem.Allocator, rand: std.rand.Random) !PrivateKeyP256 {
+    pub fn generate(allocator: mem.Allocator, rand: std.rand.Random) !PrivateKeyP256 {
         var k = try randFieldElement(allocator, .secp256r1, rand);
         defer bigint.deinitConst(k, allocator);
 
@@ -620,7 +620,7 @@ test "signWithPrivateKey and verifyWithPublicKey" {
     const initial = [_]u8{0} ** 48;
     var rand = RandomForTest.init(initial);
 
-    var priv_key = try PrivateKey.generateForTest(allocator, .secp256r1, rand.random());
+    var priv_key = try PrivateKey.generate(allocator, .secp256r1, rand.random());
     {
         var d_bytes = priv_key.secp256r1.bigD();
         std.log.debug("priv.d={}", .{std.fmt.fmtSliceHexLower(&d_bytes)});
@@ -792,7 +792,7 @@ test "randFieldElement" {
     try testing.expect(want.toConst().eq(k));
 }
 
-test "PrivateKey.generateForTest" {
+test "PrivateKey.generate" {
     testing.log_level = .debug;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const allocator = testing.allocator;
@@ -800,7 +800,7 @@ test "PrivateKey.generateForTest" {
     var rand = RandomForTest.init(initial);
     var rand2 = rand.random();
 
-    var priv_key = try PrivateKey.generateForTest(allocator, .secp256r1, rand2);
+    var priv_key = try PrivateKey.generate(allocator, .secp256r1, rand2);
     // std.log.debug("priv_key={}", .{priv_key});
 
     const d_want = "10a8e7424b64ddaf8b3e7e428c3f6e0e253709be285c64bc41cc300fd800c11f";
