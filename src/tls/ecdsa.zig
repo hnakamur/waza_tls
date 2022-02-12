@@ -10,6 +10,7 @@ const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
 const bigint = @import("big_int.zig");
 const crypto = @import("crypto.zig");
+const elliptic = @import("elliptic.zig");
 const pem = @import("pem.zig");
 const fmtx = @import("../fmtx.zig");
 const AesBlock = @import("aes.zig").AesBlock;
@@ -237,13 +238,6 @@ const PublicKeyP384 = struct {
     not_implemented_yet: usize = 1,
 };
 
-// value is copied from Fe.field_order in pcurves/p256/scalar.zig
-const p256_params_n = 115792089210356248762697446949407573529996955224135760342422259061068512044369;
-
-fn p256ParamsN(allocator: mem.Allocator) !math.big.int.Managed {
-    return try math.big.int.Managed.initSet(allocator, p256_params_n);
-}
-
 const aes_iv = "IV for ECDSA CTR";
 
 pub fn signWithPrivateKey(
@@ -299,7 +293,7 @@ fn signGeneric(
         else => @panic("not implemented yet"),
     };
     var n = switch (curve_id) {
-        .secp256r1 => try p256ParamsN(allocator),
+        .secp256r1 => try elliptic.p256ParamN(allocator),
         else => @panic("not implemented yet"),
     };
     defer n.deinit();
@@ -425,7 +419,7 @@ fn randFieldElement(
     errdefer k.deinit();
 
     var n = switch (curve_id) {
-        .secp256r1 => try p256ParamsN(allocator),
+        .secp256r1 => try elliptic.p256ParamN(allocator),
         else => @panic("not implemented yet"),
     };
     defer n.deinit();
@@ -527,7 +521,7 @@ pub fn verifyWithPublicKey(
         else => @panic("not implemented yet"),
     };
     var n = switch (curve_id) {
-        .secp256r1 => try p256ParamsN(allocator),
+        .secp256r1 => try elliptic.p256ParamN(allocator),
         else => @panic("not implemented yet"),
     };
     defer n.deinit();
@@ -559,7 +553,7 @@ pub fn verifyGeneric(
     defer e.deinit();
 
     var n = switch (curve_id) {
-        .secp256r1 => try p256ParamsN(allocator),
+        .secp256r1 => try elliptic.p256ParamN(allocator),
         else => @panic("not implemented yet"),
     };
     defer n.deinit();

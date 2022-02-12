@@ -5,6 +5,71 @@ const mem = std.mem;
 const bigint = @import("big_int.zig");
 const CurveId = @import("handshake_msg.zig").CurveId;
 
+// value is copied from Fe.field_order in pcurves/p256/scalar.zig
+pub const p256_param_n = 115792089210356248762697446949407573529996955224135760342422259061068512044369;
+
+pub fn p256ParamN(allocator: mem.Allocator) !math.big.int.Managed {
+    return try math.big.int.Managed.initSet(allocator, p256_param_n);
+}
+
+pub fn generateKey(
+    allocator: mem.Allocator,
+    curve_id: CurveId,
+    rand: std.rand.Random,
+    out_x: *math.big.int.Managed,
+    out_y: *math.big.int.Managed,
+) ![]const u8 {
+    const mask = [_]u8{ 0xff, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f };
+
+    var n = try math.big.int.Managed.init(allocator);
+    defer n.deinit();
+    switch (curve_id) {
+        .secp256r1 => try n.set(p256_param_n),
+        else => @panic("not implemented yet"),
+    }
+
+    const bit_size = n.bitCountTwosComp();
+    const byte_len = math.divCeil(usize, bit_size, @bitSizeOf(u8)) catch unreachable;
+    std.log.debug("elliptic.generateKey, bit_size={}, byte_len={}", .{ bit_size, byte_len });
+
+    var priv = try allocator.alloc(u8, byte_len);
+    errdefer allocator.free(priv);
+
+    while (true) {
+        rand.bytes(priv);
+
+        // We have to mask off any excess bits in the case that the size of the
+        // underlying field is not a whole number of bytes.
+        priv[0] &= mask[bit_size % 8];
+        // This is because, in tests, rand will return all zeros and we don't
+        // want to get the point at infinity and loop forever.
+        priv[1] ^= 0x42;
+        std.log.debug("elliptic.generateKey, priv={}", .{std.fmt.fmtSliceHexLower(priv)});
+
+        // If the scalar is out of range, sample another random number.
+        var priv_int = try bigint.managedFromBytes(allocator, priv, .Big);
+        defer priv_int.deinit();
+
+        // If the scalar is out of range, sample another random number.
+        if (priv_int.order(n).compare(.gte)) {
+            continue;
+        }
+
+        switch (curve_id) {
+            .secp256r1 => {
+                const p = try P256.basePoint.mulPublic(priv[0..P256.scalar.encoded_length].*, .Big);
+                const pa = p.affineCoordinates();
+                try bigint.setManagedBytes(out_x, &pa.x.toBytes(.Little), .Little);
+                try bigint.setManagedBytes(out_y, &pa.y.toBytes(.Little), .Little);
+            },
+            else => @panic("not implemented yet"),
+        }
+        break;
+    }
+
+    return priv;
+}
+
 pub const Curve = union(CurveId) {
     secp256r1: P256,
     secp384r1: P384,
@@ -63,6 +128,35 @@ const P384 = struct {
 
 const testing = std.testing;
 const assert = std.debug.assert;
+
+test "elliptic.generateKey" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+    const RandomForTest = @import("random_for_test.zig").RandomForTest;
+    const initial = [_]u8{0} ** 48;
+    var rand = RandomForTest.init(initial);
+
+    var x = try math.big.int.Managed.init(allocator);
+    defer x.deinit();
+    var y = try math.big.int.Managed.init(allocator);
+    defer y.deinit();
+    var priv = try generateKey(allocator, .secp256r1, rand.random(), &x, &y);
+    defer allocator.free(priv);
+
+    const want_priv = "\xc4\x9a\x67\x64\x3b\xf8\xdc\x07\xd4\xb0\x0b\x3b\x4c\x36\x21\x1b\x57\xa6\x9d\xf9\x78\x78\x6a\xfd\xe9\xea\x94\x88\x85\xfd\x59\xfd";
+    const want_x = "\xb8\xe1\xb9\x07\xbd\x87\xf9\xdb\x37\x26\x63\x37\x40\x4a\x46\x1e\x18\x80\x16\xb8\x4c\x8c\x86\x39\xff\x38\xba\xe6\xee\xcd\x35\x43";
+    const want_y = "\x5a\x7f\x1e\x42\xce\x56\x76\x01\xf7\x7d\x1f\xc1\x8a\xa4\x0d\x64\x5f\x03\x89\x5c\x15\x20\x43\xb1\x5d\x42\x3a\xb1\xa5\xf9\xb5\x19";
+
+    try testing.expectEqualSlices(u8, want_priv, priv);
+
+    const got_x = try bigint.managedToBytesBig(allocator, x);
+    defer allocator.free(got_x);
+    try testing.expectEqualSlices(u8, want_x, got_x);
+
+    const got_y = try bigint.managedToBytesBig(allocator, y);
+    defer allocator.free(got_y);
+    try testing.expectEqualSlices(u8, want_y, got_y);
+}
 
 test "p256mult" {
     const f = struct {
