@@ -117,12 +117,11 @@ pub const PrivateKey = union(CurveId) {
     }
 };
 
-const PublicKeyP256 = struct {
+pub const PublicKeyP256 = struct {
     point: P256,
 
     pub fn init(data: []const u8) !PublicKeyP256 {
-        const s = mem.trimLeft(u8, data, "\x00");
-        const p = try P256.fromSec1(s);
+        const p = try P256.fromSec1(data);
         return PublicKeyP256{ .point = p };
     }
 
@@ -609,8 +608,8 @@ const testing = std.testing;
 
 test "signWithPrivateKey and verifyWithPublicKey" {
     testing.log_level = .debug;
-    const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const allocator = testing.allocator;
+    const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const initial = [_]u8{0} ** 48;
     var rand = RandomForTest.init(initial);
 
