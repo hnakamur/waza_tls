@@ -22,10 +22,6 @@ pub const PublicKey = union(CurveId) {
     x25519: void,
 
     pub fn init(curve_id: CurveId, data: []const u8) !PublicKey {
-        // std.log.debug(
-        //     "ecdsa.PublicKey.init curve_id={}, data={}",
-        //     .{ curve_id, fmtx.fmtSliceHexColonLower(data) },
-        // );
         switch (curve_id) {
             .secp256r1 => return PublicKey{ .secp256r1 = try PublicKeyP256.init(data) },
             .secp384r1 => return PublicKey{ .secp384r1 = .{} },
@@ -216,10 +212,8 @@ const PublicKeyP384 = struct {
 
 // value is copied from Fe.field_order in pcurves/p256/scalar.zig
 const p256_params_n = 115792089210356248762697446949407573529996955224135760342422259061068512044369;
-const p256_params_n_decimal_str = "115792089210356248762697446949407573529996955224135760342422259061068512044369";
 
 fn p256ParamsN(allocator: mem.Allocator) !math.big.int.Managed {
-    // return bigint.strToManaged(allocator, p256_params_n_decimal_str);
     return try math.big.int.Managed.initSet(allocator, p256_params_n);
 }
 
@@ -399,7 +393,6 @@ fn randFieldElement(
     defer allocator.free(b);
 
     rand.bytes(b);
-    // std.log.debug("randFieldElement b={}", .{std.fmt.fmtSliceHexLower(b)});
 
     var k = try bigint.managedFromBytes(allocator, b);
     errdefer k.deinit();
@@ -409,19 +402,9 @@ fn randFieldElement(
         else => @panic("not implemented yet"),
     };
     defer n.deinit();
-    // {
-    //     var n_str = try n.toString(allocator, 10, .lower);
-    //     defer allocator.free(n_str);
-    //     std.log.debug("randFieldElement n#1={s}", .{n_str});
-    // }
 
     try n.ensureAddCapacity(n.toConst(), bigint.one);
     try n.sub(n.toConst(), bigint.one);
-    // {
-    //     var n_str = try n.toString(allocator, 10, .lower);
-    //     defer allocator.free(n_str);
-    //     std.log.debug("randFieldElement n#2={s}", .{n_str});
-    // }
 
     var q = try math.big.int.Managed.init(allocator);
     defer q.deinit();
@@ -429,12 +412,6 @@ fn randFieldElement(
     try q.divFloor(&k, k.toConst(), n.toConst());
     try k.add(k.toConst(), bigint.one);
 
-    // {
-    //     var k_bytes: []const u8 = undefined;
-    //     k_bytes.ptr = @ptrCast([*]const u8, k.limbs.ptr);
-    //     k_bytes.len = k.len() * 8;
-    //     std.log.debug("randFieldElement k={}", .{std.fmt.fmtSliceHexLower(k_bytes)});
-    // }
     return k.toConst();
 }
 
@@ -455,10 +432,6 @@ fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.i
         .secp256r1 => P256.Fe.field_bits,
         else => @panic("not implemented yet"),
     };
-    // std.log.debug(
-    //     "hashToInt, encoded_length={}, hash2.len={}, field_bits={}",
-    //     .{ encoded_length, hash2.len, field_bits },
-    // );
     if (hash2.len * 8 > field_bits) {
         const excess: usize = hash2.len * 8 - field_bits;
         try ret.shiftRight(ret, excess);
@@ -515,63 +488,6 @@ const StreamRandom = struct {
     }
 };
 
-const ZeroReader = struct {
-    pub const Error = error{};
-    const Reader = std.io.Reader(void, ZeroReader.Error, ZeroReader.read);
-    pub const reader = Reader{ .context = {} };
-
-    pub fn read(self: void, buffer: []u8) Error!usize {
-        _ = self;
-        mem.set(u8, buffer, 0);
-        return buffer.len;
-    }
-};
-
-const RandomReader = struct {
-    pub const Error = error{};
-    pub const Reader = std.io.Reader(*Self, Error, read);
-
-    rand: *const std.rand.Random,
-
-    const Self = @This();
-
-    pub fn init(rand: *const std.rand.Random) Self {
-        return .{ .rand = rand };
-    }
-
-    pub fn read(self: void, buffer: []u8) Error!usize {
-        self.rand.bytes(buffer);
-        return buffer.len;
-    }
-
-    pub fn reader(self: *Self) Reader {
-        return .{ .context = self };
-    }
-};
-
-const StreamReader = struct {
-    pub const Error = error{};
-    pub const Reader = std.io.Reader(*Self, Error, read);
-
-    const Self = @This();
-
-    r: std.io.Reader,
-    s: Ctr,
-
-    pub fn init(r: std.io.Reader, s: Ctr) StreamReader {
-        return .{ .r = r, .s = s };
-    }
-
-    pub fn read(self: void, buffer: []u8) Error!usize {
-        const n = self.r.read(buffer);
-        self.s.xorKeyStream(buffer[0..n], buffer[0..n]);
-        return n;
-    }
-
-    pub fn reader(self: *Self) Reader {
-        return .{ .context = self };
-    }
-};
 
 const testing = std.testing;
 
@@ -638,14 +554,6 @@ test "StreamRandom" {
 
     const want = "\x9a\x0d\x1c\x11\x84\x62\x41\x97\x03\x2e\x6b\xbb\xf6\x37\xfc\xb3\x80\xa3\x69\x5d\x68\xf3\x7b\xb6\x48\xda\xaf\x4e\xa3\xb4\x6e\x7a";
     try testing.expectEqualSlices(u8, want, k_rev);
-}
-
-test "ZeroReader" {
-    var buffer: [32]u8 = undefined;
-    const num_read = try ZeroReader.reader.read(&buffer);
-    try testing.expectEqual(buffer.len, num_read);
-    const want = [_]u8{0} ** 32;
-    try testing.expectEqualSlices(u8, &want, &buffer);
 }
 
 test "ecdsa.fermatInverse" {
