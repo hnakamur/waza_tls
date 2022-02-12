@@ -302,8 +302,8 @@ fn signGeneric(
                             k_bytes_ptr[0..P256.scalar.encoded_length].*,
                             .Little,
                         );
-                        const x_bytes = point.affineCoordinates().x.toBytes(.Big);
-                        var r2 = try bigint.constFromBytes(allocator, &x_bytes);
+                        const x_bytes = point.affineCoordinates().x.toBytes(.Little);
+                        var r2 = try bigint.constFromBytes(allocator, &x_bytes, .Little);
                         defer bigint.deinitConst(r2, allocator);
                         {
                             var r2_bytes = try bigint.constToBytesBig(allocator, r2);
@@ -338,7 +338,7 @@ fn signGeneric(
         defer e.deinit();
 
         var d = switch (priv.*) {
-            .secp256r1 => |*k| try bigint.constFromBytes(allocator, &k.bigD()),
+            .secp256r1 => |*k| try bigint.constFromBytes(allocator, &k.d, .Little),
             else => @panic("not implemented yet"),
         };
         defer bigint.deinitConst(d, allocator);
@@ -371,8 +371,8 @@ fn p256Inverse(allocator: mem.Allocator, k: std.math.big.int.Const) !std.math.bi
         .Little,
     );
     const k_inv_scalar = k_scalar.invert();
-    const k_inv_bytes = k_inv_scalar.toBytes(.Big);
-    return try bigint.managedFromBytes(allocator, &k_inv_bytes);
+    const k_inv_bytes = k_inv_scalar.toBytes(.Little);
+    return try bigint.managedFromBytes(allocator, &k_inv_bytes, .Little);
 }
 
 // randFieldElement returns a random element of the order of the given
@@ -394,7 +394,7 @@ fn randFieldElement(
 
     rand.bytes(b);
 
-    var k = try bigint.managedFromBytes(allocator, b);
+    var k = try bigint.managedFromBytes(allocator, b, .Big);
     errdefer k.deinit();
 
     var n = switch (curve_id) {
@@ -426,7 +426,7 @@ fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.i
     else
         hash;
 
-    var ret = try bigint.managedFromBytes(allocator, hash2);
+    var ret = try bigint.managedFromBytes(allocator, hash2, .Big);
 
     const field_bits: usize = switch (c) {
         .secp256r1 => P256.Fe.field_bits,
@@ -488,10 +488,105 @@ const StreamRandom = struct {
     }
 };
 
+pub fn verifyWithPublicKey(
+    allocator: mem.Allocator,
+    pub_key: *const PublicKey,
+    hash: []const u8,
+    r: *math.big.int.Managed,
+    s: *math.big.int.Managed,
+) !bool {
+    const curve_id: CurveId = switch (pub_key.*) {
+        .secp256r1 => .secp256r1,
+        else => @panic("not implemented yet"),
+    };
+    var n = switch (curve_id) {
+        .secp256r1 => try p256ParamsN(allocator),
+        else => @panic("not implemented yet"),
+    };
+    defer n.deinit();
+
+    if ((r.eqZero() or !r.isPositive()) or (s.eqZero() or !s.isPositive())) {
+        return false;
+    }
+
+    if (s.order(n).compare(.gte) or r.order(n).compare(.gte)) {
+        return false;
+    }
+
+    return try verifyGeneric(allocator, pub_key, hash, r, s);
+}
+
+pub fn verifyGeneric(
+    allocator: mem.Allocator,
+    pub_key: *const PublicKey,
+    hash: []const u8,
+    r: *math.big.int.Managed,
+    s: *math.big.int.Managed,
+) !bool {
+    const curve_id: CurveId = switch (pub_key.*) {
+        .secp256r1 => .secp256r1,
+        else => @panic("not implemented yet"),
+    };
+
+    var e = try hashToInt(allocator, hash, curve_id);
+    defer e.deinit();
+
+    var n = switch (curve_id) {
+        .secp256r1 => try p256ParamsN(allocator),
+        else => @panic("not implemented yet"),
+    };
+    defer n.deinit();
+
+    var w = switch (curve_id) {
+        .secp256r1 => try p256Inverse(allocator, s.toConst()),
+        else => @panic("not implemented yet"),
+    };
+    defer w.deinit();
+
+    var q = try math.big.int.Managed.init(allocator);
+    defer q.deinit();
+
+    var @"u1" = try math.big.int.Managed.init(allocator);
+    defer @"u1".deinit();
+    try @"u1".mul(e.toConst(), w.toConst());
+    try q.divFloor(&@"u1", @"u1".toConst(), n.toConst());
+
+    var @"u2" = try math.big.int.Managed.init(allocator);
+    defer @"u2".deinit();
+    try @"u2".mul(r.toConst(), w.toConst());
+    try q.divFloor(&@"u2", @"u2".toConst(), n.toConst());
+
+    const capacity = bigint.limbsCapacityForBytesLength(P256.scalar.encoded_length);
+    var x = try math.big.int.Managed.initCapacity(allocator, capacity);
+    defer x.deinit();
+    var y = try math.big.int.Managed.initCapacity(allocator, capacity);
+    defer y.deinit();
+    switch (pub_key.*) {
+        .secp256r1 => |*k| {
+            const u1_bytes = bigint.managedToBytesLittle(@"u1");
+            const p1 = try P256.basePoint.mulPublic(u1_bytes[0..P256.scalar.encoded_length].*, .Little);
+
+            const u2_bytes = bigint.managedToBytesLittle(@"u2");
+            const p2 = try k.point.mulPublic(u2_bytes[0..P256.scalar.encoded_length].*, .Little);
+
+            const p = p1.add(p2).affineCoordinates();
+            try bigint.setManagedBytes(&x, &p.x.toBytes(.Little), .Little);
+            try bigint.setManagedBytes(&y, &p.y.toBytes(.Little), .Little);
+        },
+        else => @panic("not implemented yet"),
+    }
+
+    if (x.eqZero() and y.eqZero()) {
+        return false;
+    }
+
+    try q.divFloor(&x, x.toConst(), n.toConst());
+    return x.order(r.*) == .eq;
+}
 
 const testing = std.testing;
 
-test "signWithPrivateKey" {
+test "signWithPrivateKey and verifyWithPublicKey" {
     testing.log_level = .debug;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const allocator = testing.allocator;
@@ -506,7 +601,8 @@ test "signWithPrivateKey" {
     const want_priv_key_d_big = "\x10\xa8\xe7\x42\x4b\x64\xdd\xaf\x8b\x3e\x7e\x42\x8c\x3f\x6e\x0e\x25\x37\x09\xbe\x28\x5c\x64\xbc\x41\xcc\x30\x0f\xd8\x00\xc1\x1f";
     try testing.expectEqualSlices(u8, want_priv_key_d_big, &priv_key.secp256r1.bigD());
 
-    const hashed = "testing";
+    var hashed = try allocator.dupe(u8, "testing");
+    defer allocator.free(hashed);
 
     var r = try math.big.int.Managed.init(allocator);
     defer r.deinit();
@@ -525,6 +621,11 @@ test "signWithPrivateKey" {
 
     try testing.expectEqualSlices(u8, want_r_bytes, r_bytes);
     try testing.expectEqualSlices(u8, want_s_bytes, s_bytes);
+
+    try testing.expect(try verifyWithPublicKey(allocator, &priv_key.publicKey(), hashed, &r, &s));
+
+    hashed[0] ^= 0xff;
+    try testing.expect(!try verifyWithPublicKey(allocator, &priv_key.publicKey(), hashed, &r, &s));
 }
 
 test "StreamRandom" {
@@ -615,12 +716,9 @@ test "p256.Scalar.invert" {
         .Little,
     );
     const k_inv_scalar = k_scalar.invert();
-    const k_inv_bytes = k_inv_scalar.toBytes(.Big);
-    var k_inv = try bigint.managedFromBytes(allocator, &k_inv_bytes);
+    const k_inv_bytes = k_inv_scalar.toBytes(.Little);
+    var k_inv = try bigint.managedFromBytes(allocator, &k_inv_bytes, .Little);
     defer k_inv.deinit();
-    // var k_inv_str = try k_inv.toString(allocator, 10, .lower);
-    // defer allocator.free(k_inv_str);
-    // std.debug.print("k_inv={s}\n", .{k_inv_str});
     try testing.expect(k_inv.eq(want));
 }
 

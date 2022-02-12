@@ -18,17 +18,17 @@ pub const zero = Const{ .limbs = &[_]Limb{0}, .positive = true };
 pub const one = Const{ .limbs = &[_]Limb{1}, .positive = true };
 pub const two = Const{ .limbs = &[_]Limb{2}, .positive = true };
 
-// constFromBytes interprets buf as the bytes of a big-endian unsigned
-// integer, sets z to that value, and returns z.
-pub fn constFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error!Const {
-    const limbs = try limbsFromBytes(allocator, buf);
-    return Const{ .limbs = limbs, .positive = true };
+pub fn setManagedBytes(n: *Managed, bytes: []const u8, endian: std.builtin.Endian) !void {
+    const capacity = limbsCapacityForBytesLength(bytes.len);
+    try n.ensureCapacity(capacity);
+    setLimbsBytes(n.limbs, bytes, endian);
+    n.setMetadata(true, capacity);
 }
 
-// managedFromBytes interprets buf as the bytes of a big-endian unsigned
+// managedFromBytes interprets buf as the bytes of a unsigned
 // integer, sets z to that value, and returns z.
-pub fn managedFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error!Managed {
-    const limbs = try limbsFromBytes(allocator, buf);
+pub fn managedFromBytes(allocator: Allocator, buf: []const u8, endian: std.builtin.Endian) Allocator.Error!Managed {
+    const limbs = try limbsFromBytes(allocator, buf, endian);
     return Managed{
         .allocator = allocator,
         .limbs = limbs,
@@ -36,18 +36,37 @@ pub fn managedFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Err
     };
 }
 
-fn limbsFromBytes(allocator: mem.Allocator, buf: []const u8) Allocator.Error![]Limb {
-    const limbs_len = math.divCeil(usize, buf.len, @sizeOf(Limb)) catch unreachable;
-    var limbs = try allocator.alloc(Limb, limbs_len);
+// constFromBytes interprets buf as the bytes of a unsigned
+// integer, sets z to that value, and returns z.
+pub fn constFromBytes(allocator: Allocator, buf: []const u8, endian: std.builtin.Endian) Allocator.Error!Const {
+    const limbs = try limbsFromBytes(allocator, buf, endian);
+    return Const{ .limbs = limbs, .positive = true };
+}
 
-    var limbs_bytes = @ptrCast([*]u8, limbs.ptr);
-    var i: usize = 0;
-    while (i < buf.len) : (i += 1) {
-        // Note:  note bytes in zig's big integer are little-endian ordered.
-        limbs_bytes[i] = buf[buf.len - 1 - i];
-    }
-    mem.set(u8, limbs_bytes[i .. limbs.len * @sizeOf(Limb)], 0);
+fn limbsFromBytes(allocator: Allocator, bytes: []const u8, endian: std.builtin.Endian) Allocator.Error![]Limb {
+    const capacity = limbsCapacityForBytesLength(bytes.len);
+    var limbs = try allocator.alloc(Limb, capacity);
+    setLimbsBytes(limbs, bytes, endian);
     return limbs;
+}
+
+pub fn limbsCapacityForBytesLength(bytes_length: usize) usize {
+    return math.divCeil(usize, bytes_length, @sizeOf(Limb)) catch unreachable;
+}
+
+fn setLimbsBytes(limbs: []Limb, bytes: []const u8, endian: std.builtin.Endian) void {
+    var limbs_bytes = @ptrCast([*]u8, limbs.ptr);
+    switch (endian) {
+        .Big => {
+            var i: usize = 0;
+            while (i < bytes.len) : (i += 1) {
+                // Note:  note bytes in zig's big integer are little-endian ordered.
+                limbs_bytes[i] = bytes[bytes.len - 1 - i];
+            }
+        },
+        .Little => mem.copy(u8, limbs_bytes[0..bytes.len], bytes),
+    }
+    mem.set(u8, limbs_bytes[bytes.len .. limbs.len * @sizeOf(Limb)], 0);
 }
 
 pub fn constToBytesLittle(n: Const) []const u8 {
@@ -57,7 +76,7 @@ pub fn constToBytesLittle(n: Const) []const u8 {
     return limbs;
 }
 
-pub fn constToBytesBig(allocator: mem.Allocator, n: Const) error{OutOfMemory}![]const u8 {
+pub fn constToBytesBig(allocator: Allocator, n: Const) Allocator.Error![]const u8 {
     var little_bytes = constToBytesLittle(n);
     return try allocReverse(allocator, little_bytes);
 }
@@ -69,12 +88,12 @@ pub fn managedToBytesLittle(n: Managed) []const u8 {
     return limbs;
 }
 
-pub fn managedToBytesBig(allocator: mem.Allocator, n: Managed) error{OutOfMemory}![]const u8 {
+pub fn managedToBytesBig(allocator: Allocator, n: Managed) Allocator.Error![]const u8 {
     var little_bytes = managedToBytesLittle(n);
     return try allocReverse(allocator, little_bytes);
 }
 
-pub fn allocReverse(allocator: mem.Allocator, bytes: []const u8) error{OutOfMemory}![]const u8 {
+pub fn allocReverse(allocator: Allocator, bytes: []const u8) Allocator.Error![]const u8 {
     var ret = try allocator.alloc(u8, bytes.len);
     for (bytes) |b, i| ret[ret.len - 1 - i] = b;
     return ret;
@@ -101,7 +120,7 @@ pub fn formatConst(
     );
 }
 
-pub fn constFromDecimal(allocator: mem.Allocator, str: []const u8) !Const {
+pub fn constFromDecimal(allocator: Allocator, str: []const u8) !Const {
     return (try strToManaged(allocator, str)).toConst();
 }
 
@@ -112,7 +131,7 @@ pub fn constFromDecimal(allocator: mem.Allocator, str: []const u8) !Const {
 // Modular exponentiation of inputs of a particular size is not a
 // cryptographically constant-time operation.
 pub fn expConst(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     x: Const,
     y: Const,
     m: Const,
@@ -144,7 +163,7 @@ pub fn expConst(
     return z.toConst();
 }
 
-pub fn deinitConst(c: Const, allocator: mem.Allocator) void {
+pub fn deinitConst(c: Const, allocator: Allocator) void {
     allocator.free(c.limbs);
 }
 
@@ -152,7 +171,7 @@ pub fn deinitConst(c: Const, allocator: mem.Allocator) void {
 // If g and n are not relatively prime, g has no multiplicative
 // inverse in the ring ℤ/nℤ.  In this case, returns a zero.
 fn modInverseConst(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     g: Const,
     n: Const,
 ) !Const {
@@ -389,7 +408,7 @@ test "gcdManaged" {
     );
 }
 
-pub fn strToManaged(allocator: mem.Allocator, value: []const u8) !Managed {
+pub fn strToManaged(allocator: Allocator, value: []const u8) !Managed {
     var m = try Managed.init(allocator);
     errdefer m.deinit();
     try m.setString(10, value);
@@ -746,7 +765,7 @@ fn euclidUpdate(
 // expNn returns x**y mod m if m != 0,
 // otherwise it returns x**y.
 fn expNn(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     x_abs: Const,
     y_abs: Const,
     m_abs: Const,
@@ -858,7 +877,7 @@ fn expNn(
 
 /// expNnWindowed calculates x**y mod m using a fixed, 4-bit window.
 fn expNnWindowed(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     x_abs: Const,
     y_abs: Const,
     m_abs: Const,
@@ -945,7 +964,7 @@ fn expNnWindowed(
 }
 
 fn expNnMontgomery(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     x_abs: Const,
     y_abs: Const,
     m_abs: Const,
@@ -1128,7 +1147,7 @@ fn expNnMontgomery(
 // x and y are required to satisfy 0 <= z < 2**(n*_W) and then the result
 // z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
 fn montgomery(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     z: *[]Limb,
     x: []const Limb,
     y: []const Limb,
@@ -1201,7 +1220,7 @@ fn subVv(z: []Limb, x: []const Limb, y: []const Limb) Limb {
     return c;
 }
 
-fn initManagedCapacityZero(allocator: mem.Allocator, capacity: usize) !Managed {
+fn initManagedCapacityZero(allocator: Allocator, capacity: usize) !Managed {
     var m = try Managed.initCapacity(allocator, capacity);
     clearUnusedLimbs(&m);
     return m;
@@ -1222,7 +1241,7 @@ fn nlz(x: Limb) usize {
 }
 
 fn cloneConst(
-    allocator: mem.Allocator,
+    allocator: Allocator,
     x: Const,
 ) !Const {
     return Const{
@@ -1284,7 +1303,7 @@ test "constFromBytes" {
     testing.log_level = .debug;
     const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
     const allocator = testing.allocator;
-    var i = try constFromBytes(allocator, buf);
+    var i = try constFromBytes(allocator, buf, .Big);
     defer deinitConst(i, allocator);
 
     var s = try i.toStringAlloc(allocator, 10, .lower);
@@ -1332,7 +1351,7 @@ test "expConst" {
             }
         }
 
-        fn initConst(allocator: mem.Allocator, base: u8, value: []const u8) !Const {
+        fn initConst(allocator: Allocator, base: u8, value: []const u8) !Const {
             var m = try Managed.init(allocator);
             errdefer m.deinit();
             try m.setString(base, value);
@@ -1574,7 +1593,7 @@ test "managedFromBytes" {
 
     const allocator = testing.allocator;
     for (cases) |c| {
-        var n = try managedFromBytes(allocator, c.input);
+        var n = try managedFromBytes(allocator, c.input, .Big);
         defer n.deinit();
 
         var got = try n.toString(allocator, 10, .lower);

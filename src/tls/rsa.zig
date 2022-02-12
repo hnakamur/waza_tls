@@ -159,7 +159,7 @@ fn signPKCS1v15(
     mem.copy(u8, em[k - t_len .. k - hash_len], prefix);
     mem.copy(u8, em[k - hash_len .. k], digest);
 
-    var m = try bigint.constFromBytes(allocator, em);
+    var m = try bigint.constFromBytes(allocator, em, .Big);
     defer bigint.deinitConst(m, allocator);
 
     var c = try decryptAndCheck(priv_key, allocator, m);
@@ -283,7 +283,7 @@ pub fn verifyPkcs1v15(
         return error.Verification;
     }
 
-    var c = try bigint.constFromBytes(allocator, sig);
+    var c = try bigint.constFromBytes(allocator, sig, .Big);
     defer bigint.deinitConst(c, allocator);
 
     var m = try encrypt(allocator, pub_key, c);
