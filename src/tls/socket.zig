@@ -272,12 +272,50 @@ test "Connect to localhost" {
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
-            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+            std.log.info("response:\n{s}", .{buffer[0..n]});
+            try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
         }
 
         fn runTest() !void {
             const allocator = testing.allocator;
             const addr = try std.net.Address.parseIp("127.0.0.1", 8443);
+            try testClient(addr, allocator);
+        }
+    }.runTest();
+}
+
+test "Connect to Internet" {
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+
+    // testing.log_level = .debug;
+    testing.log_level = .info;
+
+    try struct {
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{
+                .max_version = .v1_2,
+                .server_name = "naruh.dev",
+                .insecure_skip_verify = false,
+            });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("GET / HTTP/1.1\r\nHost: naruh.dev\r\n\r\n");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            std.log.info("response:\n{s}", .{buffer[0..n]});
+            try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+            const addr = try std.net.Address.parseIp("160.16.94.194", 443);
             try testClient(addr, allocator);
         }
     }.runTest();

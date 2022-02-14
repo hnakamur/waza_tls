@@ -107,14 +107,16 @@ fn HashAdapter(comptime HashImpl: type) type {
 
         pub fn writeFinal(self: *Self, writer: anytype) !usize {
             var d_out: [HashImpl.digest_length]u8 = undefined;
-            self.inner_hash.final(&d_out);
+            var inner_hash_copy = self.inner_hash;
+            inner_hash_copy.final(&d_out);
             try writer.writeAll(&d_out);
             return d_out.len;
         }
 
         pub fn finalToSlice(self: *Self, out: []u8) usize {
             const len = HashImpl.digest_length;
-            self.inner_hash.final(out[0..len]);
+            var inner_hash_copy = self.inner_hash;
+            inner_hash_copy.final(out[0..len]);
             return len;
         }
 
