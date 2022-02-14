@@ -40,6 +40,10 @@ pub const FinishedHash = struct {
         version: ProtocolVersion,
         cipher_suite: *const CipherSuite12,
     ) FinishedHash {
+        std.log.info(
+            "FinishedHash.new, version={}, suite={}",
+            .{ version, cipher_suite },
+        );
         switch (version) {
             .v1_2 => {
                 if (cipher_suite.flags.sha384) {
@@ -85,11 +89,21 @@ pub const FinishedHash = struct {
         }
     }
 
-    pub fn allocSum(self: *FinishedHash, allocator: mem.Allocator) ![]const u8{
+    pub fn allocSum(self: *FinishedHash, allocator: mem.Allocator) ![]const u8 {
         return switch (self.version) {
             .v1_2 => try self.client.allocFinal(allocator),
             else => @panic("not implemented"),
         };
+    }
+
+    pub fn debugLogClientHash(
+        self: *FinishedHash,
+        allocator: mem.Allocator,
+        label: []const u8,
+    ) !void {
+        var sum = try self.client.clone().allocFinal(allocator);
+        defer allocator.free(sum);
+        std.log.info("{s}: client hash={}", .{ label, std.fmt.fmtSliceHexLower(sum) });
     }
 
     // clientSum returns to the contents of the verify_data member of a client's

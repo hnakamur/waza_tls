@@ -95,7 +95,10 @@ pub const ClientHandshakeStateTls12 = struct {
         // TODO: implement
 
         try self.finished_hash.?.write(try self.hello.marshal(allocator));
+        std.log.info("client: clientHello {}", .{std.fmt.fmtSliceHexLower(self.hello.raw.?)});
+        try self.finished_hash.?.debugLogClientHash(allocator, "client: clientHello");
         try self.finished_hash.?.write(try self.server_hello.marshal(allocator));
+        try self.finished_hash.?.debugLogClientHash(allocator, "client: serverHello");
 
         self.conn.buffering = true;
         if (is_resume) {
@@ -135,6 +138,7 @@ pub const ClientHandshakeStateTls12 = struct {
         }
 
         try self.finished_hash.?.write(try cert_msg.marshal(allocator));
+        try self.finished_hash.?.debugLogClientHash(allocator, "client: cert");
 
         hs_msg = try self.conn.readHandshake(allocator);
         errdefer hs_msg.deinit(allocator);
@@ -150,10 +154,11 @@ pub const ClientHandshakeStateTls12 = struct {
                     return error.UnexpectedCertificateStatusMessage;
                 }
 
-                try self.finished_hash.?.write(try cert_msg.marshal(allocator));
+                // try self.finished_hash.?.write(try hs_msg.marshal(allocator));
 
                 // TODO: implement
                 _ = cs;
+                std.log.err("not implemented yet", .{});
 
                 hs_msg = try self.conn.readHandshake(allocator);
             },
@@ -175,6 +180,7 @@ pub const ClientHandshakeStateTls12 = struct {
                 {
                     defer skx_msg.deinit(allocator);
                     try self.finished_hash.?.write(try skx_msg.marshal(allocator));
+                    try self.finished_hash.?.debugLogClientHash(allocator, "client: skx");
                     key_agreement.processServerKeyExchange(
                         allocator,
                         &self.hello,
@@ -197,6 +203,7 @@ pub const ClientHandshakeStateTls12 = struct {
             .ServerHelloDone => |*hello_done_msg| {
                 defer hello_done_msg.deinit(allocator);
                 try self.finished_hash.?.write(try hello_done_msg.marshal(allocator));
+                try self.finished_hash.?.debugLogClientHash(allocator, "client: hello_done");
             },
             else => {
                 self.conn.sendAlert(.unexpected_message) catch {};
@@ -220,9 +227,13 @@ pub const ClientHandshakeStateTls12 = struct {
         };
         defer ckx_msg.deinit(allocator);
         defer allocator.free(pre_master_secret);
+        std.log.info("ClientHandshakeStateTls12.doFullHandshake, pre_master_secret={}", .{
+            std.fmt.fmtSliceHexLower(pre_master_secret),
+        });
         // TODO: implement for case when cks_msg is not generated.
         const ckx_msg_bytes = try ckx_msg.marshal(allocator);
         try self.finished_hash.?.write(ckx_msg_bytes);
+        try self.finished_hash.?.debugLogClientHash(allocator, "client: ckx");
         try self.conn.writeRecord(allocator, .handshake, ckx_msg_bytes);
 
         // TODO: implement sending CertVerifyMsg when needed
@@ -235,9 +246,9 @@ pub const ClientHandshakeStateTls12 = struct {
             self.hello.random,
             self.server_hello.random,
         );
-        std.log.debug(
+        std.log.info(
             "ClientHandshakeStateTls12 master_secret={}",
-            .{fmtx.fmtSliceHexEscapeLower(self.master_secret.?)},
+            .{std.fmt.fmtSliceHexLower(self.master_secret.?)},
         );
 
         // TODO: implement write key log
@@ -286,6 +297,8 @@ pub const ClientHandshakeStateTls12 = struct {
 
         const finished_bytes = try finished.marshal(allocator);
         try self.finished_hash.?.write(finished_bytes);
+        std.log.info("client: clientFisniehd={}", .{std.fmt.fmtSliceHexLower(finished_bytes)});
+        try self.finished_hash.?.debugLogClientHash(allocator, "client: clientFinished");
         try self.conn.writeRecord(allocator, .handshake, finished_bytes);
         std.log.debug("ClientHandshakeStateTls12.sendFinished after writeRecord finished", .{});
         mem.copy(u8, out, finished.verify_data);
@@ -317,11 +330,16 @@ pub const ClientHandshakeStateTls12 = struct {
         );
 
         if (constantTimeEqlBytes(&verify_data, server_finished_msg.verify_data) != 1) {
+            std.log.debug("ClientHandshakeStateTls12.readFinished verified data mismach,\n  ours={}\ntheirs={}", .{
+                fmtx.fmtSliceHexColonLower(&verify_data),
+                fmtx.fmtSliceHexColonLower(server_finished_msg.verify_data),
+            });
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.IncorrectServerFinishedMessage;
         }
 
         try self.finished_hash.?.write(try server_finished_msg.marshal(allocator));
+        try self.finished_hash.?.debugLogClientHash(allocator, "client: server_finished");
         mem.copy(u8, out, &verify_data);
     }
 
@@ -342,6 +360,7 @@ pub const ClientHandshakeStateTls12 = struct {
     fn pickCipherSuite(self: *ClientHandshakeStateTls12) !void {
         if (mutualCipherSuite12(self.hello.cipher_suites, self.server_hello.cipher_suite)) |suite| {
             self.suite = suite;
+            std.log.debug("ClientHandshakeStateTls12.pickCipherSuite, suite={}", .{suite});
         } else {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.ServerChoseAnUnconfiguredCipherSuite;

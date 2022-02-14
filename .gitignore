@@ -2,3 +2,6 @@ zig-cache/
 /zig-out/
 /kcov-output*
 *.code-workspace
+
+src/tls/naruh.dev.crt
+src/tls/naruh.dev.key

@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto"
+	"crypto/sha256"
+	"log"
 	"testing"
 )
 
@@ -21,4 +23,12 @@ func TestHashSize(t *testing.T) {
 			t.Errorf("size mismatch for %v, got=%d, want=%d", c.hash, got, c.want)
 		}
 	}
+}
+
+func TestHashSum(t *testing.T) {
+	h := sha256.New()
+	h.Write([]byte("hello"))
+	log.Printf("sum=%x", h.Sum(nil))
+	h.Write([]byte("goodbye"))
+	log.Printf("sum=%x", h.Sum(nil))
 }

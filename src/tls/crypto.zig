@@ -73,6 +73,16 @@ pub const Hash = union(HashType) {
             else => @panic("Unsupported HashType"),
         };
     }
+
+    pub fn clone(self: *const Hash) Hash {
+        return switch (self.*) {
+            .sha256 => |*s| Hash{ .sha256 = Sha256Hash{ .inner_hash = s.inner_hash } },
+            .sha384 => @panic("not implemented yet"),
+            .sha512 => @panic("not implemented yet"),
+            .sha1 => @panic("not implemented yet"),
+            else => @panic("Unsupported HashType"),
+        };
+    }
 };
 
 pub const Sha256Hash = HashAdapter(std.crypto.hash.sha2.Sha256);

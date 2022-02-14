@@ -130,7 +130,7 @@ test "Conn ClientServer" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .debug;
+    testing.log_level = .info;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -247,10 +247,11 @@ test "Conn ClientServer" {
 //     }.runTest();
 // }
 
-test "Connect to Internet" {
+test "Connect to localhost" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .debug;
+    // testing.log_level = .debug;
+    testing.log_level = .info;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -266,7 +267,7 @@ test "Connect to Internet" {
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
-            _ = try client.conn.write("hello");
+            _ = try client.conn.write("GET / HTTP/1.1\r\nHost: naruh.dev\r\n\r\n");
 
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
@@ -276,7 +277,7 @@ test "Connect to Internet" {
 
         fn runTest() !void {
             const allocator = testing.allocator;
-            const addr = try std.net.Address.parseIp("160.16.94.194", 443);
+            const addr = try std.net.Address.parseIp("127.0.0.1", 8443);
             try testClient(addr, allocator);
         }
     }.runTest();

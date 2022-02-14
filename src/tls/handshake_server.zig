@@ -238,6 +238,7 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(try self.client_hello.marshal(allocator));
         const server_hello_bytes = try self.hello.?.marshal(allocator);
         try self.finished_hash.?.write(server_hello_bytes);
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: serverHello");
         try self.conn.writeRecord(allocator, .handshake, server_hello_bytes);
 
         {
@@ -250,6 +251,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
             const cert_msg_bytes = try cert_msg.marshal(allocator);
             try self.finished_hash.?.write(cert_msg_bytes);
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: cert");
             try self.conn.writeRecord(allocator, .handshake, cert_msg_bytes);
         }
 
@@ -270,12 +272,14 @@ pub const ServerHandshakeStateTls12 = struct {
 
         const skx_bytes = try skx.marshal(allocator);
         try self.finished_hash.?.write(skx_bytes);
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: skx");
         try self.conn.writeRecord(allocator, .handshake, skx_bytes);
 
         var hello_done = ServerHelloDoneMsg{};
         defer hello_done.deinit(allocator);
         const hello_done_bytes = try hello_done.marshal(allocator);
         try self.finished_hash.?.write(hello_done_bytes);
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: helloDone");
         try self.conn.writeRecord(allocator, .handshake, hello_done_bytes);
 
         try self.conn.flush();
@@ -292,6 +296,7 @@ pub const ServerHandshakeStateTls12 = struct {
         };
         defer ckx_msg.deinit(allocator);
         try self.finished_hash.?.write(try ckx_msg.marshal(allocator));
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: ckx");
 
         const pre_master_secret = try key_agreement.processClientKeyExchange(
             allocator,
@@ -373,6 +378,7 @@ pub const ServerHandshakeStateTls12 = struct {
         }
 
         try self.finished_hash.?.write(try client_finished_msg.marshal(allocator));
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: clientFinished");
         mem.copy(u8, out, &verify_data);
     }
 
@@ -390,6 +396,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         const finished_bytes = try finished.marshal(allocator);
         try self.finished_hash.?.write(finished_bytes);
+        try self.finished_hash.?.debugLogClientHash(allocator, "server: finished");
         try self.conn.writeRecord(allocator, .handshake, finished_bytes);
         std.log.debug(
             "ServerHandshakeStateTls12.sendFinished after writeRecord finished={}",

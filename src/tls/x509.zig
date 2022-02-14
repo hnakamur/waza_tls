@@ -1718,7 +1718,9 @@ fn considerCandidate(
 
     try c.checkSignatureFrom(allocator, candidate);
 
+    std.log.debug("considerCandidate before candidate.isValid", .{});
     try candidate.isValid(allocator, cert_type, current_chain, opts);
+    std.log.debug("considerCandidate after candidate.isValid", .{});
 
     switch (cert_type) {
         .root => {

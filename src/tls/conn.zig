@@ -631,10 +631,10 @@ pub const Conn = struct {
             }
         }
 
-        std.log.debug(
-            "Conn.readRecordOrChangeCipherSpec self=0x{x}, before get data",
-            .{@ptrToInt(self)},
-        );
+        // std.log.debug(
+        //     "Conn.readRecordOrChangeCipherSpec self=0x{x}, before get data",
+        //     .{@ptrToInt(self)},
+        // );
         const data = blk: {
             try record.resize(allocator, record_header_len + payload_len);
             const payload_bytes_read = try self.raw_input.reader().readAll(
@@ -646,10 +646,10 @@ pub const Conn = struct {
             break :blk try self.in.decrypt(allocator, record.items);
         };
         errdefer allocator.free(data);
-        std.log.debug(
-            "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}",
-            .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data) },
-        );
+        // std.log.debug(
+        //     "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}",
+        //     .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data) },
+        // );
 
         if (rec_type != .alert and rec_type != .change_cipher_spec and data.len > 0) {
             // This is a state-advancing message: reset the retry count.

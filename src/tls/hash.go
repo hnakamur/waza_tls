@@ -9,11 +9,11 @@ import (
 	"strings"
 )
 
-func main() {
-	if err := run(); err != nil {
-		log.Fatal(err)
-	}
-}
+// func main() {
+// 	if err := run(); err != nil {
+// 		log.Fatal(err)
+// 	}
+// }
 
 func run() error {
 	log.Printf("Sha256Hash hash=%x\n", sha256.Sum256([]byte("hello")))
