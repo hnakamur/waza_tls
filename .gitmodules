@@ -1,6 +1,3 @@
-[submodule "lib/tigerbeetle-io"]
-	path = lib/tigerbeetle-io
-	url = https://github.com/hnakamur/tigerbeetle-io
 [submodule "lib/zig-datetime"]
 	path = lib/zig-datetime
 	url = https://github.com/frmdstryr/zig-datetime
