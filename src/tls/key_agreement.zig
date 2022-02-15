@@ -132,7 +132,7 @@ pub const EcdheKeyAgreement = struct {
     ) !ServerKeyExchangeMsg {
         const curve_id = CurveId.x25519;
 
-        const params = try EcdheParameters.generate(allocator, curve_id, std.crypto.random.*);
+        const params = try EcdheParameters.generate(allocator, curve_id, std.crypto.random);
         self.params = params;
 
         // See RFC 4492, Section 5.4.
@@ -225,7 +225,7 @@ pub const EcdheKeyAgreement = struct {
         // TODO: implement check curve_id is supported curve
 
         std.log.debug("processServerKeyExchange curve_id={}", .{curve_id});
-        const params = try EcdheParameters.generate(allocator, curve_id, std.crypto.random.*);
+        const params = try EcdheParameters.generate(allocator, curve_id, std.crypto.random);
         self.params = params;
 
         self.pre_master_secret = try params.sharedKey(allocator, public_key);

@@ -186,7 +186,7 @@ const PrivateKeyP256 = struct {
         var s = try math.big.int.Managed.initCapacity(allocator, capacity);
         defer s.deinit();
 
-        try signWithPrivateKey(allocator, std.crypto.random.*, &priv_key, digest, &r, &s);
+        try signWithPrivateKey(allocator, std.crypto.random, &priv_key, digest, &r, &s);
 
         var buf = std.ArrayListUnmanaged(u8){};
         errdefer buf.deinit(allocator);

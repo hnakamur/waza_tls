@@ -199,9 +199,9 @@ test "NistParameters.sharedKey" {
     testing.log_level = .debug;
     const allocator = testing.allocator;
 
-    var p1 = try NistParameters.generate(allocator, .secp256r1, std.crypto.random.*);
+    var p1 = try NistParameters.generate(allocator, .secp256r1, std.crypto.random);
     defer p1.deinit(allocator);
-    var p2 = try NistParameters.generate(allocator, .secp256r1, std.crypto.random.*);
+    var p2 = try NistParameters.generate(allocator, .secp256r1, std.crypto.random);
     defer p2.deinit(allocator);
 
     var k1 = try p1.sharedKey(allocator, p2.publicKey());
