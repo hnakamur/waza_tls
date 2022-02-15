@@ -250,8 +250,7 @@ test "Conn ClientServer" {
 test "Connect to localhost" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    // testing.log_level = .debug;
-    testing.log_level = .info;
+    testing.log_level = .debug;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -287,8 +286,7 @@ test "Connect to localhost" {
 test "Connect to Internet" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    // testing.log_level = .debug;
-    testing.log_level = .info;
+    testing.log_level = .debug;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {

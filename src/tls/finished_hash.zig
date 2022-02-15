@@ -101,7 +101,7 @@ pub const FinishedHash = struct {
         allocator: mem.Allocator,
         label: []const u8,
     ) !void {
-        var sum = try self.client.clone().allocFinal(allocator);
+        var sum = try self.client.allocFinal(allocator);
         defer allocator.free(sum);
         std.log.info("{s}: client hash={}", .{ label, std.fmt.fmtSliceHexLower(sum) });
     }

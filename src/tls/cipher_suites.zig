@@ -39,10 +39,10 @@ pub const default_cipher_suites = cipher_suites_preference_order;
 
 const cipher_suites_preference_order = [_]CipherSuiteId{
     .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-    // .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-    // .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-    // .TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-    // .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+    .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+    .TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+    .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 };
 
 pub const cipher_suites12 = [_]CipherSuite12{
