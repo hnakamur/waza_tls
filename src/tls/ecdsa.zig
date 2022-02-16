@@ -338,8 +338,12 @@ fn signGeneric(
             std.log.debug("signGeneric k_inv={}", .{std.fmt.fmtSliceHexLower(k_inv_bytes)});
         }
 
-        var e = try hashToInt(allocator, hash, curve_id);
+        var e = try math.big.int.Managed.initCapacity(
+            allocator,
+            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+        );
         defer e.deinit();
+        try hashToInt(&e, hash, curve_id);
 
         var d = switch (priv.*) {
             .secp256r1 => |*k| try bigint.constFromBytes(allocator, &k.d, .Little),
@@ -419,7 +423,11 @@ fn randFieldElement(
     return k;
 }
 
-fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.int.Managed {
+fn hashToInt(
+    out: *math.big.int.Managed,
+    hash: []const u8,
+    c: CurveId,
+) !void {
     const encoded_length: usize = switch (c) {
         .secp256r1 => P256.Fe.encoded_length,
         else => @panic("not implemented yet"),
@@ -430,7 +438,7 @@ fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.i
     else
         hash;
 
-    var ret = try bigint.managedFromBytes(allocator, hash2, .Big);
+    try bigint.setManagedBytes(out, hash2, .Big);
 
     const field_bits: usize = switch (c) {
         .secp256r1 => P256.Fe.field_bits,
@@ -438,9 +446,8 @@ fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.i
     };
     if (hash2.len * 8 > field_bits) {
         const excess: usize = hash2.len * 8 - field_bits;
-        try ret.shiftRight(ret, excess);
+        try out.shiftRight(out.*, excess);
     }
-    return ret;
 }
 
 // fermatInverse calculates the inverse of k in GF(P) using Fermat's method
@@ -535,8 +542,12 @@ pub fn verifyGeneric(
         else => @panic("not implemented yet"),
     };
 
-    var e = try hashToInt(allocator, hash, curve_id);
+    var e = try math.big.int.Managed.initCapacity(
+        allocator,
+        P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+    );
     defer e.deinit();
+    try hashToInt(&e, hash, curve_id);
 
     var n = switch (curve_id) {
         .secp256r1 => try elliptic.p256ParamN(allocator),
@@ -733,8 +744,12 @@ test "ecdsa.hashToInt" {
 
     const allocator = testing.allocator;
     const hash = "testing";
-    var n = try hashToInt(allocator, hash, .secp256r1);
+    var n = try math.big.int.Managed.initCapacity(
+        allocator,
+        P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+    );
     defer n.deinit();
+    try hashToInt(&n, hash, .secp256r1);
 
     var n_s = try n.toString(allocator, 10, .lower);
     defer allocator.free(n_s);
