@@ -317,8 +317,12 @@ fn signGeneric(
                         defer k.deinit();
                         try randFieldElement(&k, curve_id, csprng);
 
-                        var k_inv2 = try p256Inverse(allocator, k.toConst());
+                        var k_inv2 = try math.big.int.Managed.initCapacity(
+                            allocator,
+                            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+                        );
                         errdefer k_inv2.deinit();
+                        try p256Inverse(&k_inv2, k.toConst());
 
                         var k_bytes_ptr = @ptrCast([*]const u8, k.limbs.ptr);
                         const point = try P256.basePoint.mulPublic(
@@ -379,7 +383,8 @@ fn signGeneric(
     }
 }
 
-fn p256Inverse(allocator: mem.Allocator, k: std.math.big.int.Const) !std.math.big.int.Managed {
+// out and k may be alias
+fn p256Inverse(out: *math.big.int.Managed, k: std.math.big.int.Const) !void {
     var k_limbs: []const u8 = undefined;
     k_limbs.ptr = @ptrCast([*]const u8, k.limbs.ptr);
     const k_scalar = try P256.scalar.Scalar.fromBytes(
@@ -388,7 +393,7 @@ fn p256Inverse(allocator: mem.Allocator, k: std.math.big.int.Const) !std.math.bi
     );
     const k_inv_scalar = k_scalar.invert();
     const k_inv_bytes = k_inv_scalar.toBytes(.Little);
-    return try bigint.managedFromBytes(allocator, &k_inv_bytes, .Little);
+    try bigint.setManagedBytes(out, &k_inv_bytes, .Little);
 }
 
 // randFieldElement returns a random element of the order of the given
@@ -561,11 +566,15 @@ pub fn verifyGeneric(
     };
     defer n.deinit();
 
-    var w = switch (curve_id) {
-        .secp256r1 => try p256Inverse(allocator, s.toConst()),
-        else => @panic("not implemented yet"),
-    };
+    var w = try math.big.int.Managed.initCapacity(
+        allocator,
+        P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+    );
     defer w.deinit();
+    switch (curve_id) {
+        .secp256r1 => try p256Inverse(&w, s.toConst()),
+        else => @panic("not implemented yet"),
+    }
 
     var q = try math.big.int.Managed.init(allocator);
     defer q.deinit();
