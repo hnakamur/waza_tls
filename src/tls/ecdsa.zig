@@ -156,8 +156,12 @@ const PrivateKeyP256 = struct {
     }
 
     pub fn generate(allocator: mem.Allocator, rand: std.rand.Random) !PrivateKeyP256 {
-        var k = try randFieldElement(allocator, .secp256r1, rand);
+        var k = try math.big.int.Managed.initCapacity(
+            allocator,
+            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+        );
         defer k.deinit();
+        try randFieldElement(&k, .secp256r1, rand);
 
         var d: []const u8 = undefined;
         d.ptr = @ptrCast([*]const u8, k.limbs.ptr);
@@ -306,8 +310,12 @@ fn signGeneric(
             switch (curve_id) {
                 .secp256r1 => {
                     while (true) {
-                        var k = try randFieldElement(allocator, curve_id, csprng);
+                        var k = try math.big.int.Managed.initCapacity(
+                            allocator,
+                            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+                        );
                         defer k.deinit();
+                        try randFieldElement(&k, curve_id, csprng);
 
                         var k_inv2 = try p256Inverse(allocator, k.toConst());
                         errdefer k_inv2.deinit();
@@ -386,15 +394,16 @@ fn p256Inverse(allocator: mem.Allocator, k: std.math.big.int.Const) !std.math.bi
 // randFieldElement returns a random element of the order of the given
 // curve using the procedure given in FIPS 186-4, Appendix B.5.1.
 fn randFieldElement(
-    allocator: mem.Allocator,
+    out: *math.big.int.Managed,
     curve_id: CurveId,
     rand: std.rand.Random,
-) !std.math.big.int.Managed {
+) !void {
     const encoded_length: usize = switch (curve_id) {
         .secp256r1 => P256.Fe.encoded_length,
         else => @panic("not implemented yet"),
     };
 
+    const allocator = out.allocator;
     // Note that for P-521 this will actually be 63 bits more than the order, as
     // division rounds down, but the extra bit is inconsequential.
     var b = try allocator.alloc(u8, encoded_length + 8);
@@ -402,8 +411,7 @@ fn randFieldElement(
 
     rand.bytes(b);
 
-    var k = try bigint.managedFromBytes(allocator, b, .Big);
-    errdefer k.deinit();
+    try bigint.setManagedBytes(out, b, .Big);
 
     var n = switch (curve_id) {
         .secp256r1 => try elliptic.p256ParamN(allocator),
@@ -417,10 +425,8 @@ fn randFieldElement(
     var q = try math.big.int.Managed.init(allocator);
     defer q.deinit();
 
-    try q.divFloor(&k, k.toConst(), n.toConst());
-    try k.add(k.toConst(), bigint.one);
-
-    return k;
+    try q.divFloor(out, out.toConst(), n.toConst());
+    try out.add(out.toConst(), bigint.one);
 }
 
 fn hashToInt(
@@ -659,8 +665,12 @@ test "StreamRandom" {
     var csprng = StreamRandom.init(ZeroRandom.random(), ctr);
 
     const curve_id = CurveId.secp256r1;
-    var k = try randFieldElement(allocator, curve_id, csprng.random());
+    var k = try math.big.int.Managed.initCapacity(
+        allocator,
+        P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+    );
     defer k.deinit();
+    try randFieldElement(&k, curve_id, csprng.random());
 
     var k_bytes: []const u8 = undefined;
     k_bytes.ptr = @ptrCast([*]const u8, k.limbs.ptr);
@@ -775,8 +785,12 @@ test "randFieldElement" {
     const allocator = testing.allocator;
     const initial = [_]u8{0} ** 48;
     var rand = RandomForTest.init(initial);
-    var k = try randFieldElement(allocator, .secp256r1, rand.random());
+    var k = try math.big.int.Managed.initCapacity(
+        allocator,
+        P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+    );
     defer k.deinit();
+    try randFieldElement(&k, .secp256r1, rand.random());
 
     var want = try math.big.int.Managed.initSet(
         allocator,
