@@ -157,7 +157,7 @@ const PrivateKeyP256 = struct {
 
     pub fn generate(allocator: mem.Allocator, rand: std.rand.Random) !PrivateKeyP256 {
         var k = try randFieldElement(allocator, .secp256r1, rand);
-        defer bigint.deinitConst(k, allocator);
+        defer k.deinit();
 
         var d: []const u8 = undefined;
         d.ptr = @ptrCast([*]const u8, k.limbs.ptr);
@@ -307,14 +307,9 @@ fn signGeneric(
                 .secp256r1 => {
                     while (true) {
                         var k = try randFieldElement(allocator, curve_id, csprng);
-                        defer bigint.deinitConst(k, allocator);
-                        {
-                            var k_bytes = try bigint.constToBytesBig(allocator, k);
-                            defer allocator.free(k_bytes);
-                            std.log.debug("signGeneric k={}", .{std.fmt.fmtSliceHexLower(k_bytes)});
-                        }
+                        defer k.deinit();
 
-                        var k_inv2 = try p256Inverse(allocator, k);
+                        var k_inv2 = try p256Inverse(allocator, k.toConst());
                         errdefer k_inv2.deinit();
 
                         var k_bytes_ptr = @ptrCast([*]const u8, k.limbs.ptr);
@@ -325,21 +320,10 @@ fn signGeneric(
                         const x_bytes = point.affineCoordinates().x.toBytes(.Little);
                         var r2 = try bigint.constFromBytes(allocator, &x_bytes, .Little);
                         defer bigint.deinitConst(r2, allocator);
-                        {
-                            var r2_bytes = try bigint.constToBytesBig(allocator, r2);
-                            defer allocator.free(r2_bytes);
-                            std.log.debug("signGeneric r2={}", .{std.fmt.fmtSliceHexLower(r2_bytes)});
-                        }
                         var q = try std.math.big.int.Managed.init(allocator);
                         defer q.deinit();
                         try q.divFloor(r, r2, n.toConst());
                         if (!r.eqZero()) {
-                            {
-                                var r_bytes = try bigint.managedToBytesBig(allocator, r.*);
-                                defer allocator.free(r_bytes);
-                                std.log.debug("signGeneric r={}", .{std.fmt.fmtSliceHexLower(r_bytes)});
-                            }
-
                             break :blk k_inv2;
                         }
                     }
@@ -401,7 +385,7 @@ fn randFieldElement(
     allocator: mem.Allocator,
     curve_id: CurveId,
     rand: std.rand.Random,
-) !std.math.big.int.Const {
+) !std.math.big.int.Managed {
     const encoded_length: usize = switch (curve_id) {
         .secp256r1 => P256.Fe.encoded_length,
         else => @panic("not implemented yet"),
@@ -432,7 +416,7 @@ fn randFieldElement(
     try q.divFloor(&k, k.toConst(), n.toConst());
     try k.add(k.toConst(), bigint.one);
 
-    return k.toConst();
+    return k;
 }
 
 fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.int.Managed {
@@ -662,11 +646,11 @@ test "StreamRandom" {
 
     const curve_id = CurveId.secp256r1;
     var k = try randFieldElement(allocator, curve_id, csprng.random());
-    defer bigint.deinitConst(k, allocator);
+    defer k.deinit();
 
     var k_bytes: []const u8 = undefined;
     k_bytes.ptr = @ptrCast([*]const u8, k.limbs.ptr);
-    k_bytes.len = k.limbs.len * @sizeOf(math.big.Limb);
+    k_bytes.len = k.len() * @sizeOf(math.big.Limb);
     std.log.debug("k={}", .{std.fmt.fmtSliceHexLower(k_bytes)});
 
     var k_rev = try allocator.alloc(u8, k_bytes.len);
@@ -775,14 +759,14 @@ test "randFieldElement" {
     const initial = [_]u8{0} ** 48;
     var rand = RandomForTest.init(initial);
     var k = try randFieldElement(allocator, .secp256r1, rand.random());
-    defer bigint.deinitConst(k, allocator);
+    defer k.deinit();
 
     var want = try math.big.int.Managed.initSet(
         allocator,
         7535431974917535157809964245275928230175247012883497609941754139633030054175,
     );
     defer want.deinit();
-    try testing.expect(want.toConst().eq(k));
+    try testing.expect(want.eq(k));
 }
 
 test "PrivateKey.generate" {
