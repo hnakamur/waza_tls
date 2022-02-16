@@ -449,14 +449,17 @@ fn hashToInt(allocator: mem.Allocator, hash: []const u8, c: CurveId) !math.big.i
 // math/big.Int.ModInverse and FIPS 186-4, Appendix C.1) although math/big
 // itself isn't strictly constant-time so it's not perfect.
 fn fermatInverse(
+    out: *math.big.int.Managed,
     allocator: mem.Allocator,
     k: math.big.int.Const,
     n: math.big.int.Const,
-) !math.big.int.Const {
+) !void {
     var n_minus_2 = try math.big.int.Managed.init(allocator);
     defer n_minus_2.deinit();
     try n_minus_2.sub(n, bigint.two);
-    return try bigint.expConst(allocator, k, n_minus_2.toConst(), n);
+    var r_c = try bigint.expConst(allocator, k, n_minus_2.toConst(), n);
+    defer bigint.deinitConst(r_c, allocator);
+    try bigint.setManagedBytes(out, bigint.constToBytesLittle(r_c), .Little);
 }
 
 const ZeroRandom = struct {
@@ -683,20 +686,19 @@ test "ecdsa.fermatInverse" {
     );
     defer want.deinit();
 
-    var got = try fermatInverse(allocator, k.toConst(), n.toConst());
-    defer bigint.deinitConst(got, allocator);
+    var got = try math.big.int.Managed.init(allocator);
+    defer got.deinit();
+    try fermatInverse(&got, allocator, k.toConst(), n.toConst());
 
-    if (!want.toConst().eq(got)) {
-        var got_m = try got.toManaged(allocator);
-        defer got_m.deinit();
-        var got_str = try got_m.toString(allocator, 10, .lower);
+    if (!want.eq(got)) {
+        var got_str = try got.toString(allocator, 10, .lower);
         defer allocator.free(got_str);
         var want_str = try want.toString(allocator, 10, .lower);
         defer allocator.free(want_str);
         std.debug.print("\n got={s},\nwant={s}\n", .{ got_str, want_str });
     }
 
-    try testing.expect(want.toConst().eq(got));
+    try testing.expect(want.eq(got));
 }
 
 test "p256.Scalar.invert" {
