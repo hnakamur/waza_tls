@@ -199,12 +199,14 @@ fn decrypt(
         return error.Decryption;
     }
 
-    var m = if (priv_key.precomputed) |_| {
+    var m = try math.big.int.Managed.init(allocator);
+    errdefer m.deinit();
+    if (priv_key.precomputed) |_| {
         @panic("not implemented yet");
-    } else blk: {
-        break :blk try bigint.expConst(allocator, c, priv_key.d, priv_key.public_key.modulus);
-    };
-    return m;
+    } else {
+        try bigint.exp(&m, c, priv_key.d, priv_key.public_key.modulus);
+    }
+    return m.toConst();
 }
 
 fn encrypt(
@@ -214,7 +216,10 @@ fn encrypt(
 ) !math.big.int.Const {
     var e = try math.big.int.Managed.initSet(allocator, public_key.exponent);
     defer e.deinit();
-    return try bigint.expConst(allocator, m, e.toConst(), public_key.modulus);
+    var out = try math.big.int.Managed.init(allocator);
+    errdefer out.deinit();
+    try bigint.exp(&out, m, e.toConst(), public_key.modulus);
+    return out.toConst();
 }
 
 // These are ASN1 DER structures:

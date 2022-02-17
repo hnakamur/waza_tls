@@ -169,48 +169,52 @@ pub fn constFromDecimal(allocator: Allocator, str: []const u8) !Const {
     return (try strToManaged(allocator, str)).toConst();
 }
 
-// expConst returns x**y mod |m| (i.e. the sign of m is ignored).
+// exp returns x**y mod |m| (i.e. the sign of m is ignored).
 // If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
 // and x and m are not relatively prime, returns 0.
 //
 // Modular exponentiation of inputs of a particular size is not a
 // cryptographically constant-time operation.
-pub fn expConst(
-    allocator: Allocator,
+pub fn exp(
+    out: *Managed,
     x: Const,
     y: Const,
     m: Const,
-) !Const {
+) !void {
+    const allocator = out.allocator;
+
     // See Knuth, volume 2, section 4.6.3.
     var x2 = try Managed.init(allocator);
     defer x2.deinit();
     try x2.copy(x.abs());
     if (!y.positive) {
         if (m.eqZero()) {
-            return try cloneConst(allocator, one);
+            try out.set(1);
+            return;
         }
         // for y < 0: x**y mod m == (x**(-1))**|y| mod m
         var inverse = try Managed.init(allocator);
         defer inverse.deinit();
         try modInverse(&inverse, x, m);
         if (inverse.eqZero()) {
-            return try cloneConst(allocator, zero);
+            try out.set(0);
+            return;
         }
         inverse.abs();
         x2.swap(&inverse);
     }
     const m_abs = m.abs();
     var z = try Managed.init(allocator);
-    errdefer z.deinit();
+    defer z.deinit();
     try expNn(&z, x2.toConst().abs(), y.abs(), m_abs);
     z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
     if (!z.isPositive() and !m.eqZero()) {
         // make modulus result positive
         // z == x**y mod |m| && 0 <= z < |m|
         try sub(&z, m_abs, z.toConst().abs());
-        return z.toConst().abs();
+        z.abs();
     }
-    return z.toConst();
+    out.swap(&z);
 }
 
 pub fn deinitConst(c: Const, allocator: Allocator) void {
@@ -869,7 +873,6 @@ fn expNn(
     y_abs: Const,
     m_abs: Const,
 ) !void {
-    std.log.debug("expNn start", .{});
     const allocator = out.allocator;
 
     // x**y mod 1 == 0
@@ -1419,12 +1422,10 @@ test "constFromBytes" {
     try testing.expectEqualStrings("335812727627494322174", s);
 }
 
-test "expConst" {
+test "exp" {
     testing.log_level = .debug;
 
     const f = struct {
-        var i: usize = 0;
-
         fn f(
             x_base: u8,
             x: []const u8,
@@ -1432,42 +1433,39 @@ test "expConst" {
             y: []const u8,
             m_base: u8,
             m: []const u8,
-            out_base: u8,
-            out: []const u8,
+            want_base: u8,
+            want: []const u8,
         ) !void {
-            std.log.debug("f start, i={}", .{i});
-            i += 1;
-            // std.log.debug(
-            //     "expConst test x=({}){s}, y=({}){s}, m=({}){s}",
-            //     .{ x_base, x, y_base, y, m_base, m },
-            // );
             const allocator = testing.allocator;
-            var x_i = try initConst(allocator, x_base, x);
-            defer deinitConst(x_i, allocator);
-            var y_i = try initConst(allocator, y_base, y);
-            defer deinitConst(y_i, allocator);
-            var m_i = try initConst(allocator, m_base, m);
-            defer deinitConst(m_i, allocator);
-            var out_i = try initConst(allocator, out_base, out);
-            defer deinitConst(out_i, allocator);
 
-            var got = try expConst(allocator, x_i, y_i, m_i);
-            defer deinitConst(got, allocator);
-            if (!got.eq(out_i)) {
-                var got_s = try got.toStringAlloc(allocator, 10, .lower);
+            var x_m = try Managed.init(allocator);
+            defer x_m.deinit();
+            try x_m.setString(x_base, x);
+
+            var y_m = try Managed.init(allocator);
+            defer y_m.deinit();
+            try y_m.setString(y_base, y);
+
+            var m_m = try Managed.init(allocator);
+            defer m_m.deinit();
+            try m_m.setString(m_base, m);
+
+            var want_m = try Managed.init(allocator);
+            defer want_m.deinit();
+            try want_m.setString(want_base, want);
+
+            var got_m = try Managed.init(allocator);
+            defer got_m.deinit();
+            try exp(&got_m, x_m.toConst(), y_m.toConst(), m_m.toConst());
+
+            if (!got_m.eq(want_m)) {
+                var got_s = try got_m.toString(allocator, 10, .lower);
                 defer allocator.free(got_s);
-                var want_s = try out_i.toStringAlloc(allocator, 10, .lower);
+                var want_s = try want_m.toString(allocator, 10, .lower);
                 defer allocator.free(want_s);
                 std.debug.print("result mismatch, got={s}, want={s}\n", .{ got_s, want_s });
                 return error.TestExpectedError;
             }
-        }
-
-        fn initConst(allocator: Allocator, base: u8, value: []const u8) !Const {
-            var m = try Managed.init(allocator);
-            errdefer m.deinit();
-            try m.setString(base, value);
-            return m.toConst();
         }
     }.f;
 

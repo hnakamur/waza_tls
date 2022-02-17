@@ -475,9 +475,7 @@ fn fermatInverse(
     var n_minus_2 = try math.big.int.Managed.init(allocator);
     defer n_minus_2.deinit();
     try n_minus_2.sub(n, bigint.two);
-    var r_c = try bigint.expConst(allocator, k, n_minus_2.toConst(), n);
-    defer bigint.deinitConst(r_c, allocator);
-    try bigint.setManagedBytes(out, bigint.constToBytesLittle(r_c), .Little);
+    try bigint.exp(out, k, n_minus_2.toConst(), n);
 }
 
 const ZeroRandom = struct {
