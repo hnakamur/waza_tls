@@ -182,7 +182,9 @@ pub fn expConst(
         }
     }
     const m_abs = m.abs();
-    var z = try expNn(allocator, x2.abs(), y.abs(), m_abs);
+    var z = try Managed.init(allocator);
+    errdefer z.deinit();
+    try expNn(&z, x2.abs(), y.abs(), m_abs);
     z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
     if (!z.isPositive() and !m.eqZero()) {
         // make modulus result positive
@@ -795,21 +797,25 @@ fn euclidUpdate(
 // expNn returns x**y mod m if m != 0,
 // otherwise it returns x**y.
 fn expNn(
-    allocator: Allocator,
+    out: *Managed,
     x_abs: Const,
     y_abs: Const,
     m_abs: Const,
-) !Managed {
+) !void {
     std.log.debug("expNn start", .{});
+    const allocator = out.allocator;
+
     // x**y mod 1 == 0
     if (m_abs.eq(one)) {
-        return try zero.toManaged(allocator);
+        try out.set(0);
+        return;
     }
     // m == 0 || m > 1
 
     // x**0 == 1
     if (y_abs.eq(zero)) {
-        return try one.toManaged(allocator);
+        try out.set(1);
+        return;
     }
     // y > 0
 
@@ -817,10 +823,8 @@ fn expNn(
     if (y_abs.eq(one) and !m_abs.eqZero()) {
         var q = try Managed.init(allocator);
         defer q.deinit();
-        var r = try Managed.init(allocator);
-        errdefer r.deinit();
-        try q.divFloor(&r, x_abs, m_abs);
-        return r;
+        try q.divFloor(out, x_abs, m_abs);
+        return;
     }
     // y > 1
 
@@ -838,15 +842,11 @@ fn expNn(
     const y_abs_limbs_len = y_abs.limbs.len;
     if (x_abs.order(one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
         if (m_abs.limbs[0] & 1 == 1) {
-            var out = try Managed.init(allocator);
-            errdefer out.deinit();
-            try expNnMontgomery(&out, x_abs, y_abs, m_abs);
-            return out;
+            try expNnMontgomery(out, x_abs, y_abs, m_abs);
+            return;
         }
-        var out = try Managed.init(allocator);
-        errdefer out.deinit();
-        try expNnWindowed(&out, x_abs, y_abs, m_abs);
-        return out;
+        try expNnWindowed(out, x_abs, y_abs, m_abs);
+        return;
     }
 
     var v = y_abs.limbs[y_abs_limbs_len - 1]; // v > 0 because y_abs is normalized and y_abs > 0
@@ -909,7 +909,7 @@ fn expNn(
             v = math.shl(Limb, v, 1);
         }
     }
-    return try z.clone();
+    try out.copy(z.toConst());
 }
 
 /// expNnWindowed calculates x**y mod m using a fixed, 4-bit window.
