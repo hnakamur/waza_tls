@@ -304,9 +304,9 @@ fn mod(
     try q.divTrunc(r, x, y);
     if (!r.isPositive()) {
         if (y.positive) {
-            try r.add(r.toConst(), y);
+            try add(r, r.toConst(), y);
         } else {
-            try r.sub(r.toConst(), y);
+            try sub(r, r.toConst(), y);
         }
     }
 }
