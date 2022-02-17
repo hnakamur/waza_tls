@@ -351,11 +351,11 @@ test "verifyPkcs1v15" {
 
     const allocator = testing.allocator;
 
+    var modulus = try math.big.int.Managed.init(allocator);
+    errdefer modulus.deinit();
+    try modulus.setString(10, "9353930466774385905609975137998169297361893554149986716853295022578535724979677252958524466350471210367835187480748268864277464700638583474144061408845077");
     var pub_key = PublicKey{
-        .modulus = try bigint.constFromDecimal(
-            allocator,
-            "9353930466774385905609975137998169297361893554149986716853295022578535724979677252958524466350471210367835187480748268864277464700638583474144061408845077",
-        ),
+        .modulus = modulus.toConst(),
         .exponent = 65537,
     };
     defer pub_key.deinit(allocator);

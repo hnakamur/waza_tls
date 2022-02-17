@@ -165,10 +165,6 @@ pub fn formatConst(
     );
 }
 
-pub fn constFromDecimal(allocator: Allocator, str: []const u8) !Const {
-    return (try strToManaged(allocator, str)).toConst();
-}
-
 // exp returns x**y mod |m| (i.e. the sign of m is ignored).
 // If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
 // and x and m are not relatively prime, returns 0.
