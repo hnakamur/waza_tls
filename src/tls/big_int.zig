@@ -255,7 +255,7 @@ fn modInverse(
     // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
     // but it may be negative, so convert to the range 0 <= z < |n|
     if (x.isPositive()) {
-        try out.copy(x.toConst());
+        out.swap(&x);
     } else {
         try add(out, x.toConst(), n2.toConst());
     }
@@ -964,7 +964,7 @@ fn expNn(
             v = math.shl(Limb, v, 1);
         }
     }
-    try out.copy(z.toConst());
+    out.swap(&z);
 }
 
 /// expNnWindowed calculates x**y mod m using a fixed, 4-bit window.
@@ -1054,7 +1054,7 @@ fn expNnWindowed(
         }
     }
     z.normalize(z.len());
-    try out.copy(z.toConst());
+    out.swap(&z);
 }
 
 fn expNnMontgomery(
@@ -1230,7 +1230,7 @@ fn expNnMontgomery(
     }
 
     zz2m.normalize(zz2m.len());
-    try out.copy(zz2m.toConst());
+    out.swap(&zz2m);
 }
 
 // montgomery computes z mod m = x*y*2**(-n*_W) mod m,
