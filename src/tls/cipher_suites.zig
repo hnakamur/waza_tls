@@ -359,7 +359,7 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             const tag_start = old_len + plaintext.len;
             const new_len = tag_start + tag_length;
             try dest.resize(allocator, new_len);
-            self.do_encrypt(
+            self.doEncrypt(
                 dest.items[old_len..tag_start],
                 dest.items[tag_start..new_len][0..tag_length],
                 plaintext,
@@ -368,7 +368,7 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             );
         }
 
-        fn do_encrypt(
+        fn doEncrypt(
             self: *Self,
             out_ciphertext: []u8,
             out_tag: *[tag_length]u8,
@@ -479,7 +479,7 @@ fn XorNonceAead(comptime InnerAead: type) type {
             const tag_start = old_len + plaintext.len;
             const new_len = tag_start + tag_length;
             try dest.resize(allocator, new_len);
-            self.do_encrypt(
+            self.doEncrypt(
                 dest.items[old_len..tag_start],
                 dest.items[tag_start..new_len][0..tag_length],
                 plaintext,
@@ -488,7 +488,7 @@ fn XorNonceAead(comptime InnerAead: type) type {
             );
         }
 
-        fn do_encrypt(
+        fn doEncrypt(
             self: *Self,
             out_ciphertext: []u8,
             out_tag: *[tag_length]u8,
