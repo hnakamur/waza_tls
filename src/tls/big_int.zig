@@ -520,16 +520,8 @@ pub fn gcdMutable(
     if (a.eqZero() or b.eqZero()) {
         rma.copy(if (a.eqZero()) b else a);
         rma.abs();
-        if (x) |xx| {
-            try xx.set(if (a.eqZero()) @as(i8, 0) else blk: {
-                break :blk if (a.positive) @as(i8, 1) else @as(i8, -1);
-            });
-        }
-        if (y) |yy| {
-            try yy.set(if (b.eqZero()) @as(i8, 0) else blk: {
-                break :blk if (b.positive) @as(i8, 1) else @as(i8, -1);
-            });
-        }
+        if (x) |xx| try xx.set(signConst(a));
+        if (y) |yy| try yy.set(signConst(b));
         return;
     }
 
@@ -548,6 +540,26 @@ pub fn gcdMutable(
     } else b;
 
     return lehmerGcd(rma, x, y, a_copy, b_copy, limbs_buffer);
+}
+
+fn signConst(c: Const) i2 {
+    return if (c.eqZero()) @as(i2, 0) else if (c.positive) @as(i2, 1) else @as(i2, -1);
+}
+
+test "signConst" {
+    const f = struct {
+        fn f(input: i64, want: i2) !void {
+            const allocator = testing.allocator;
+            var m = try Managed.initSet(allocator, input);
+            defer m.deinit();
+            var got = signConst(m.toConst());
+            try testing.expectEqual(want, got);
+        }
+    }.f;
+
+    try f(2, @as(i2, 1));
+    try f(0, @as(i2, 0));
+    try f(-2, @as(i2, -1));
 }
 
 fn lehmerGcd(
