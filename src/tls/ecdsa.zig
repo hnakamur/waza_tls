@@ -306,48 +306,37 @@ fn signGeneric(
     }
 
     while (true) {
-        var k_inv = blk: {
-            switch (curve_id) {
-                .secp256r1 => {
-                    while (true) {
-                        var k = try math.big.int.Managed.initCapacity(
-                            allocator,
-                            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
-                        );
-                        defer k.deinit();
-                        try randFieldElement(&k, curve_id, csprng);
-
-                        var k_inv2 = try math.big.int.Managed.initCapacity(
-                            allocator,
-                            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
-                        );
-                        errdefer k_inv2.deinit();
-                        try p256Inverse(&k_inv2, k.toConst());
-
-                        var k_bytes_ptr = @ptrCast([*]const u8, k.limbs.ptr);
-                        const point = try P256.basePoint.mulPublic(
-                            k_bytes_ptr[0..P256.scalar.encoded_length].*,
-                            .Little,
-                        );
-                        const x_bytes = point.affineCoordinates().x.toBytes(.Little);
-                        var r2 = try bigint.constFromBytes(allocator, &x_bytes, .Little);
-                        defer bigint.deinitConst(r2, allocator);
-                        var q = try std.math.big.int.Managed.init(allocator);
-                        defer q.deinit();
-                        try q.divFloor(r, r2, n.toConst());
-                        if (!r.eqZero()) {
-                            break :blk k_inv2;
-                        }
-                    }
-                },
-                else => @panic("not implemented yet"),
-            }
-        };
+        var k_inv = try math.big.int.Managed.initCapacity(
+            allocator,
+            P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+        );
         defer k_inv.deinit();
-        {
-            var k_inv_bytes = try bigint.managedToBytesBig(allocator, k_inv);
-            defer allocator.free(k_inv_bytes);
-            std.log.debug("signGeneric k_inv={}", .{std.fmt.fmtSliceHexLower(k_inv_bytes)});
+        switch (curve_id) {
+            .secp256r1 => {
+                while (true) {
+                    var k = try math.big.int.Managed.initCapacity(
+                        allocator,
+                        P256.scalar.encoded_length / @sizeOf(math.big.Limb),
+                    );
+                    defer k.deinit();
+                    try randFieldElement(&k, curve_id, csprng);
+
+                    try p256Inverse(&k_inv, k.toConst());
+
+                    var k_bytes_ptr = @ptrCast([*]const u8, k.limbs.ptr);
+                    const point = try P256.basePoint.mulPublic(
+                        k_bytes_ptr[0..P256.scalar.encoded_length].*,
+                        .Little,
+                    );
+                    const x_bytes = point.affineCoordinates().x.toBytes(.Little);
+                    try bigint.setManagedBytes(r, &x_bytes, .Little);
+                    try bigint.mod(r, r.toConst(), n.toConst());
+                    if (!r.eqZero()) {
+                        break;
+                    }
+                }
+            },
+            else => @panic("not implemented yet"),
         }
 
         var e = try math.big.int.Managed.initCapacity(
@@ -363,21 +352,11 @@ fn signGeneric(
         };
         defer bigint.deinitConst(d, allocator);
 
-        var s2 = try std.math.big.int.Managed.init(allocator);
-        defer s2.deinit();
-        try s2.mul(d, r.toConst());
-        try s2.add(s2.toConst(), e.toConst());
-        try s.mul(s2.toConst(), k_inv.toConst());
-        var q = try std.math.big.int.Managed.init(allocator);
-        defer q.deinit();
-        try q.divFloor(s, s.toConst(), n.toConst());
+        try bigint.mul(s, d, r.toConst());
+        try bigint.add(s, s.toConst(), e.toConst());
+        try bigint.mul(s, s.toConst(), k_inv.toConst());
+        try bigint.mod(s, s.toConst(), n.toConst());
         if (!s.eqZero()) {
-            {
-                var s_bytes = try bigint.managedToBytesBig(allocator, s.*);
-                defer allocator.free(s_bytes);
-                std.log.debug("signGeneric s={}", .{std.fmt.fmtSliceHexLower(s_bytes)});
-            }
-
             break;
         }
     }
@@ -424,14 +403,9 @@ fn randFieldElement(
     };
     defer n.deinit();
 
-    try n.ensureAddCapacity(n.toConst(), bigint.one);
-    try n.sub(n.toConst(), bigint.one);
-
-    var q = try math.big.int.Managed.init(allocator);
-    defer q.deinit();
-
-    try q.divFloor(out, out.toConst(), n.toConst());
-    try out.add(out.toConst(), bigint.one);
+    try bigint.sub(&n, n.toConst(), bigint.one);
+    try bigint.mod(out, out.toConst(), n.toConst());
+    try bigint.add(out, out.toConst(), bigint.one);
 }
 
 fn hashToInt(
@@ -474,7 +448,7 @@ fn fermatInverse(
 ) !void {
     var n_minus_2 = try math.big.int.Managed.init(allocator);
     defer n_minus_2.deinit();
-    try n_minus_2.sub(n, bigint.two);
+    try bigint.sub(&n_minus_2, n, bigint.two);
     try bigint.exp(out, k, n_minus_2.toConst(), n);
 }
 

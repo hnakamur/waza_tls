@@ -332,7 +332,7 @@ test "modInverse" {
 // mod sets r to the modulus x%y for y != 0.
 // If y == 0, a division-by-zero run-time panic occurs.
 // mod implements Euclidean modulus (unlike Go).
-fn mod(
+pub fn mod(
     r: *Managed,
     x: Const,
     y: Const,
