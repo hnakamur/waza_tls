@@ -65,6 +65,12 @@ const default_curve_preferences = [_]CurveId{
     .secp521r1,
 };
 
+// downgrade_canary_tls12 or downgrade_canary_tls11 is embedded in the server
+// random as a downgrade protection if the server would be capable of
+// negotiating a higher version. See RFC 8446, Section 4.1.3.
+const downgrade_canary_tls12 = "DOWNGRD\x01";
+const downgrade_canary_tls11 = "DOWNGRD\x00";
+
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     pub const Config = struct {
@@ -312,13 +318,30 @@ pub const Conn = struct {
             var server_hello = switch (hs_msg) {
                 .ServerHello => |sh| sh,
                 else => {
-                    // TODO: send alert
+                    self.sendAlert(.unexpected_message) catch {};
                     return error.UnexpectedMessage;
                 },
             };
             errdefer server_hello.deinit(allocator);
 
             try self.pickTlsVersion(&server_hello);
+
+            // If we are negotiating a protocol version that's lower than what we
+            // support, check for the server downgrade canaries.
+            // See RFC 8446, Section 4.1.3.
+            const max_ver = self.config.maxSupportedVersion();
+            const tls12_downgrade = mem.eql(u8, server_hello.random[24..], downgrade_canary_tls12);
+            const tls11_downgrade = mem.eql(u8, server_hello.random[24..], downgrade_canary_tls11);
+            if ((max_ver == .v1_3 and
+                @enumToInt(self.version.?) <= @enumToInt(ProtocolVersion.v1_2) and
+                (tls12_downgrade or tls11_downgrade)) or
+                (max_ver == .v1_2 and
+                @enumToInt(self.version.?) <= @enumToInt(ProtocolVersion.v1_1) and
+                tls11_downgrade))
+            {
+                self.sendAlert(.illegal_parameter) catch {};
+                return error.DowngradeAttemptDetected;
+            }
 
             break :blk HandshakeState{
                 .client = ClientHandshakeState.init(

@@ -26,6 +26,7 @@ const fmtx = @import("../fmtx.zig");
 pub const ClientHandshakeState = union(ProtocolVersion) {
     v1_3: void,
     v1_2: ClientHandshakeStateTls12,
+    v1_1: void,
     v1_0: void,
 
     pub fn init(
@@ -39,7 +40,7 @@ pub const ClientHandshakeState = union(ProtocolVersion) {
             .v1_2 => ClientHandshakeState{
                 .v1_2 = ClientHandshakeStateTls12.init(conn, client_hello, server_hello),
             },
-            .v1_0 => @panic("unsupported version"),
+            .v1_1, .v1_0 => @panic("unsupported version"),
         };
     }
 
@@ -47,7 +48,7 @@ pub const ClientHandshakeState = union(ProtocolVersion) {
         switch (self.*) {
             .v1_3 => @panic("not implemented yet"),
             .v1_2 => |*hs| hs.deinit(allocator),
-            .v1_0 => @panic("unsupported version"),
+            .v1_1, .v1_0 => @panic("unsupported version"),
         }
     }
 
@@ -55,7 +56,7 @@ pub const ClientHandshakeState = union(ProtocolVersion) {
         switch (self.*) {
             .v1_3 => @panic("not implemented yet"),
             .v1_2 => |*hs| try hs.handshake(allocator),
-            .v1_0 => @panic("unsupported version"),
+            .v1_1, .v1_0 => @panic("unsupported version"),
         }
     }
 };

@@ -13,6 +13,7 @@ const asn1 = @import("asn1.zig");
 pub const ProtocolVersion = enum(u16) {
     v1_3 = 0x0304,
     v1_2 = 0x0303,
+    v1_1 = 0x0302,
     v1_0 = 0x0301,
 };
 

@@ -33,13 +33,14 @@ const memx = @import("../memx.zig");
 pub const ServerHandshakeState = union(ProtocolVersion) {
     v1_3: void,
     v1_2: ServerHandshakeStateTls12,
+    v1_1: void,
     v1_0: void,
 
     pub fn init(ver: ProtocolVersion, conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeState {
         return switch (ver) {
             .v1_3 => @panic("not implemented yet"),
             .v1_2 => ServerHandshakeState{ .v1_2 = ServerHandshakeStateTls12.init(conn, client_hello) },
-            .v1_0 => @panic("unsupported version"),
+            .v1_1, .v1_0 => @panic("unsupported version"),
         };
     }
 
@@ -47,7 +48,7 @@ pub const ServerHandshakeState = union(ProtocolVersion) {
         switch (self.*) {
             .v1_3 => @panic("not implemented yet"),
             .v1_2 => |*hs| hs.deinit(allocator),
-            .v1_0 => @panic("unsupported version"),
+            .v1_1, .v1_0 => @panic("unsupported version"),
         }
     }
 
@@ -55,7 +56,7 @@ pub const ServerHandshakeState = union(ProtocolVersion) {
         switch (self.*) {
             .v1_3 => @panic("not implemented yet"),
             .v1_2 => |*hs| try hs.handshake(allocator),
-            .v1_0 => @panic("unsupported version"),
+            .v1_1, .v1_0 => @panic("unsupported version"),
         }
     }
 };
