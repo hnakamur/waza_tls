@@ -616,18 +616,18 @@ fn lehmerGcd(
     b_c: Const,
     limbs_buffer: *std.ArrayList(Limb),
 ) !void {
-    var a = try a_c.toManaged(limbs_buffer.allocator);
+    const allocator = limbs_buffer.allocator;
+
+    var a = try a_c.abs().toManaged(allocator);
     defer a.deinit();
-    a.abs();
 
-    var b = try b_c.toManaged(limbs_buffer.allocator);
+    var b = try b_c.abs().toManaged(allocator);
     defer b.deinit();
-    b.abs();
 
-    var ua = try Managed.init(limbs_buffer.allocator);
+    var ua = try Managed.init(allocator);
     defer ua.deinit();
 
-    var ub = try Managed.init(limbs_buffer.allocator);
+    var ub = try Managed.init(allocator);
     defer ub.deinit();
 
     const extended = x != null or y != null;
@@ -643,16 +643,16 @@ fn lehmerGcd(
         ua.swap(&ub);
     }
 
-    var q = try Managed.init(limbs_buffer.allocator);
+    var q = try Managed.init(allocator);
     defer q.deinit();
 
-    var r = try Managed.init(limbs_buffer.allocator);
+    var r = try Managed.init(allocator);
     defer r.deinit();
 
-    var s = try Managed.init(limbs_buffer.allocator);
+    var s = try Managed.init(allocator);
     defer s.deinit();
 
-    var t = try Managed.init(limbs_buffer.allocator);
+    var t = try Managed.init(allocator);
     defer t.deinit();
 
     // loop invariant a >= b
@@ -724,10 +724,10 @@ fn lehmerGcd(
                 t.setSign(even);
                 s.setSign(!even);
 
-                try t.mul(ua.toConst(), t.toConst());
-                try s.mul(ub.toConst(), s.toConst());
+                try mul(&t, ua.toConst(), t.toConst());
+                try mul(&s, ub.toConst(), s.toConst());
 
-                try ua.add(t.toConst(), s.toConst());
+                try add(&ua, t.toConst(), s.toConst());
             } else {
                 while (b_word != 0) {
                     const new_a_word = a_word % b_word;
@@ -741,18 +741,18 @@ fn lehmerGcd(
 
     if (y) |yy| {
         // y = (z - a*x)/b
-        var y_m = try Managed.init(limbs_buffer.allocator);
-        defer y_m.deinit();
-        try y_m.mul(a_c, ua.toConst());
+        // var y_m = try Managed.init(allocator);
+        // defer y_m.deinit();
+        try mul(yy, a_c, ua.toConst());
         if (!a_c.positive) {
-            y_m.negate();
+            yy.negate();
         }
-        try y_m.sub(a.toConst(), y_m.toConst());
-        try y_m.divTrunc(&r, y_m.toConst(), b_c);
-        try yy.copy(y_m.toConst());
+        try sub(yy, a.toConst(), yy.toConst());
+        try yy.divTrunc(&r, yy.toConst(), b_c);
+        // try yy.copy(y_m.toConst());
     }
     if (x) |xx| {
-        try xx.copy(ua.toConst());
+        xx.swap(&ua);
         if (!a_c.positive) {
             xx.negate();
         }
@@ -863,19 +863,19 @@ fn lehmerUpdate(
     t.setSign(even);
     s.setSign(!even);
 
-    try t.mul(a.toConst(), t.toConst());
-    try s.mul(b.toConst(), s.toConst());
+    try mul(t, a.toConst(), t.toConst());
+    try mul(s, b.toConst(), s.toConst());
 
     try r.set(@"u1");
     try q.set(v1);
     r.setSign(!even);
     q.setSign(even);
 
-    try r.mul(a.toConst(), r.toConst());
-    try q.mul(b.toConst(), q.toConst());
+    try mul(r, a.toConst(), r.toConst());
+    try mul(q, b.toConst(), q.toConst());
 
-    try a.add(t.toConst(), s.toConst());
-    try b.add(r.toConst(), q.toConst());
+    try add(a, t.toConst(), s.toConst());
+    try add(b, r.toConst(), q.toConst());
 }
 
 /// euclidUpdate performs a single step of the Euclidean GCD algorithm
@@ -901,8 +901,8 @@ fn euclidUpdate(
     if (extended) {
         // ua, ub = ub, ua - q*ub
         try t.copy(ub.toConst());
-        try s.mul(ub.toConst(), q.toConst());
-        try ub.sub(ua.toConst(), s.toConst());
+        try mul(s, ub.toConst(), q.toConst());
+        try sub(ub, ua.toConst(), s.toConst());
         try ua.copy(t.toConst());
     }
 }
