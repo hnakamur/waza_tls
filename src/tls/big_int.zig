@@ -244,7 +244,7 @@ fn modInverse(
     defer d.deinit();
     var x = try Managed.init(allocator);
     defer x.deinit();
-    try gcdManaged(&d, &x, null, g2, n2);
+    try gcd(&d, &x, null, g2, n2);
 
     // if and only if d==1, g and n are relatively prime
     if (!d.toConst().eq(one)) {
@@ -365,7 +365,7 @@ fn mod(
 /// a and b may alias each other.
 ///
 /// rma's allocator is used for temporary storage to boost multiplication performance.
-pub fn gcdManaged(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
+pub fn gcd(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
     try rma.ensureCapacity(math.min(a.len(), b.len()));
     var m = rma.toMutable();
     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
@@ -374,7 +374,7 @@ pub fn gcdManaged(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Mana
     rma.setMetadata(m.positive, m.len);
 }
 
-test "gcdManaged" {
+test "gcd" {
     const f = struct {
         fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
             const allocator = testing.allocator;
@@ -394,7 +394,7 @@ test "gcdManaged" {
             {
                 var got_d = try Managed.init(allocator);
                 defer got_d.deinit();
-                try gcdManaged(&got_d, null, null, big_a, big_b);
+                try gcd(&got_d, null, null, big_a, big_b);
                 if (!got_d.eq(want_d)) {
                     var got_d_s = try got_d.toString(allocator, 10, .lower);
                     defer allocator.free(got_d_s);
@@ -407,7 +407,7 @@ test "gcdManaged" {
                 defer got_d.deinit();
                 var got_x = try Managed.init(allocator);
                 defer got_x.deinit();
-                try gcdManaged(&got_d, &got_x, null, big_a, big_b);
+                try gcd(&got_d, &got_x, null, big_a, big_b);
                 if (!got_d.eq(want_d)) {
                     var got_d_s = try got_d.toString(allocator, 10, .lower);
                     defer allocator.free(got_d_s);
@@ -426,7 +426,7 @@ test "gcdManaged" {
                 defer got_d.deinit();
                 var got_y = try Managed.init(allocator);
                 defer got_y.deinit();
-                try gcdManaged(&got_d, null, &got_y, big_a, big_b);
+                try gcd(&got_d, null, &got_y, big_a, big_b);
                 if (!got_d.eq(want_d)) {
                     var got_d_s = try got_d.toString(allocator, 10, .lower);
                     defer allocator.free(got_d_s);
@@ -447,7 +447,7 @@ test "gcdManaged" {
                 defer got_x.deinit();
                 var got_y = try Managed.init(allocator);
                 defer got_y.deinit();
-                try gcdManaged(&got_d, &got_x, &got_y, big_a, big_b);
+                try gcd(&got_d, &got_x, &got_y, big_a, big_b);
                 if (!got_d.eq(want_d)) {
                     var got_d_s = try got_d.toString(allocator, 10, .lower);
                     defer allocator.free(got_d_s);
