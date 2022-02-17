@@ -548,18 +548,15 @@ pub fn verifyGeneric(
         else => @panic("not implemented yet"),
     }
 
-    var q = try math.big.int.Managed.init(allocator);
-    defer q.deinit();
-
     var @"u1" = try math.big.int.Managed.init(allocator);
     defer @"u1".deinit();
-    try @"u1".mul(e.toConst(), w.toConst());
-    try q.divFloor(&@"u1", @"u1".toConst(), n.toConst());
+    try bigint.mul(&@"u1", e.toConst(), w.toConst());
+    try bigint.mod(&@"u1", @"u1".toConst(), n.toConst());
 
     var @"u2" = try math.big.int.Managed.init(allocator);
     defer @"u2".deinit();
-    try @"u2".mul(r.toConst(), w.toConst());
-    try q.divFloor(&@"u2", @"u2".toConst(), n.toConst());
+    try bigint.mul(&@"u2", r.toConst(), w.toConst());
+    try bigint.mod(&@"u2", @"u2".toConst(), n.toConst());
 
     const capacity = bigint.limbsCapacityForBytesLength(P256.scalar.encoded_length);
     var x = try math.big.int.Managed.initCapacity(allocator, capacity);
@@ -569,7 +566,10 @@ pub fn verifyGeneric(
     switch (pub_key.*) {
         .secp256r1 => |*k| {
             const u1_bytes = bigint.managedToBytesLittle(@"u1");
-            const p1 = try P256.basePoint.mulPublic(u1_bytes[0..P256.scalar.encoded_length].*, .Little);
+            const p1 = try P256.basePoint.mulPublic(
+                u1_bytes[0..P256.scalar.encoded_length].*,
+                .Little,
+            );
 
             const u2_bytes = bigint.managedToBytesLittle(@"u2");
             const p2 = try k.point.mulPublic(u2_bytes[0..P256.scalar.encoded_length].*, .Little);
@@ -585,7 +585,7 @@ pub fn verifyGeneric(
         return false;
     }
 
-    try q.divFloor(&x, x.toConst(), n.toConst());
+    try bigint.mod(&x, x.toConst(), n.toConst());
     return x.order(r.*) == .eq;
 }
 
