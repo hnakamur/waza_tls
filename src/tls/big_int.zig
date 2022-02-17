@@ -36,6 +36,21 @@ pub fn managedFromBytes(allocator: Allocator, buf: []const u8, endian: std.built
     };
 }
 
+pub fn mul(out: *Managed, a: Const, b: Const) !void {
+    const is_a_alias = a.limbs.ptr == out.limbs.ptr;
+    const is_b_alias = b.limbs.ptr == out.limbs.ptr;
+    if (is_a_alias or is_b_alias) {
+        try out.ensureMulCapacity(a, b);
+        var a2 = a;
+        var b2 = b;
+        if (is_a_alias) a2.limbs.ptr = out.limbs.ptr;
+        if (is_b_alias) b2.limbs.ptr = out.limbs.ptr;
+        try out.mul(a2, b2);
+    } else {
+        try out.mul(a, b);
+    }
+}
+
 pub fn add(out: *Managed, a: Const, b: Const) !void {
     const is_a_alias = a.limbs.ptr == out.limbs.ptr;
     const is_b_alias = b.limbs.ptr == out.limbs.ptr;
@@ -167,24 +182,26 @@ pub fn expConst(
     m: Const,
 ) !Const {
     // See Knuth, volume 2, section 4.6.3.
-    var x2 = x;
-    var x3: ?Const = null;
-    defer if (x3) |xx3| deinitConst(xx3, allocator);
+    var x2 = try Managed.init(allocator);
+    defer x2.deinit();
+    try x2.copy(x.abs());
     if (!y.positive) {
         if (m.eqZero()) {
             return try cloneConst(allocator, one);
         }
         // for y < 0: x**y mod m == (x**(-1))**|y| mod m
-        x3 = try modInverseConst(allocator, x, m);
-        x2 = x3.?;
-        if (x2.eqZero()) {
+        var inverse = try Managed.init(allocator);
+        defer inverse.deinit();
+        try modInverse(&inverse, x, m);
+        if (inverse.eqZero()) {
             return try cloneConst(allocator, zero);
         }
+        try x2.copy(inverse.toConst().abs());
     }
     const m_abs = m.abs();
     var z = try Managed.init(allocator);
     errdefer z.deinit();
-    try expNn(&z, x2.abs(), y.abs(), m_abs);
+    try expNn(&z, x2.toConst().abs(), y.abs(), m_abs);
     z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
     if (!z.isPositive() and !m.eqZero()) {
         // make modulus result positive
@@ -199,14 +216,16 @@ pub fn deinitConst(c: Const, allocator: Allocator) void {
     allocator.free(c.limbs);
 }
 
-// modInverseConst returns the multiplicative inverse of g in the ring ℤ/nℤ.
+// modInverse returns the multiplicative inverse of g in the ring ℤ/nℤ.
 // If g and n are not relatively prime, g has no multiplicative
 // inverse in the ring ℤ/nℤ.  In this case, returns a zero.
-fn modInverseConst(
-    allocator: Allocator,
+fn modInverse(
+    out: *Managed,
     g: Const,
     n: Const,
-) !Const {
+) !void {
+    const allocator = out.allocator;
+
     // GCD expects parameters a and b to be > 0.
     var n2 = try n.toManaged(allocator);
     defer n2.deinit();
@@ -228,21 +247,20 @@ fn modInverseConst(
 
     // if and only if d==1, g and n are relatively prime
     if (!d.toConst().eq(one)) {
-        return try cloneConst(allocator, zero);
+        try out.set(0);
+        return;
     }
 
     // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
     // but it may be negative, so convert to the range 0 <= z < |n|
-    var z = try Managed.init(allocator);
     if (x.isPositive()) {
-        try z.copy(x.toConst());
+        try out.copy(x.toConst());
     } else {
-        try z.add(x.toConst(), n2.toConst());
+        try add(out, x.toConst(), n2.toConst());
     }
-    return z.toConst();
 }
 
-test "modInverseConst" {
+test "modInverse" {
     const f = struct {
         fn f(element: []const u8, modulus: []const u8) !void {
             const allocator = testing.allocator;
@@ -250,14 +268,13 @@ test "modInverseConst" {
             defer element_m.deinit();
             var modulus_m = try strToManaged(allocator, modulus);
             defer modulus_m.deinit();
-            const inverse_c = try modInverseConst(allocator, element_m.toConst(), modulus_m.toConst());
-            defer deinitConst(inverse_c, allocator);
-            var inverse_m = try inverse_c.toManaged(allocator);
-            defer inverse_m.deinit();
-            try inverse_m.mul(inverse_c, element_m.toConst());
-            try mod(&inverse_m, inverse_m.toConst(), modulus_m.toConst());
-            if (!inverse_m.toConst().eq(one)) {
-                var inverse_s = try inverse_m.toString(allocator, 10, .lower);
+            var inverse = try Managed.init(allocator);
+            defer inverse.deinit();
+            try modInverse(&inverse, element_m.toConst(), modulus_m.toConst());
+            try mul(&inverse, inverse.toConst(), element_m.toConst());
+            try mod(&inverse, inverse.toConst(), modulus_m.toConst());
+            if (!inverse.toConst().eq(one)) {
+                var inverse_s = try inverse.toString(allocator, 10, .lower);
                 defer allocator.free(inverse_s);
                 std.debug.print(
                     "modInverseConst({s}, {s}) * {s} % {s} = {s}, not 1\n",
