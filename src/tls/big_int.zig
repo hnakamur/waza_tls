@@ -1062,7 +1062,7 @@ fn expNnWindowed(
         try p.sqr(p2.toConst());
         try zz.divTrunc(&r, p.toConst(), m_abs);
         p.swap(&r);
-        try p1.mul(p.toConst(), x_abs);
+        try mul(p1, p.toConst(), x_abs);
         try zz.divTrunc(&r, p1.toConst(), m_abs);
         p1.swap(&r);
     }
@@ -1099,7 +1099,7 @@ fn expNnWindowed(
                 z.swap(&r);
             }
 
-            try zz.mul(z.toConst(), powers[yi >> (@bitSizeOf(Limb) - n)].toConst());
+            try mul(&zz, z.toConst(), powers[yi >> (@bitSizeOf(Limb) - n)].toConst());
             zz.swap(&z);
             try zz.divTrunc(&r, z.toConst(), m_abs);
             z.swap(&r);
@@ -1269,8 +1269,7 @@ fn expNnMontgomery(
         .metadata = zz2.len,
     };
     defer zz2m.deinit();
-    var o = zz2m.order(m_abs_m);
-    if (o == .gt or o == .eq) {
+    if (zz2m.order(m_abs_m).compare(.gte)) {
         // Common case is m has high bit set; in that case,
         // since zz is the same length as m, there can be just
         // one multiple of m to remove. Just subtract.
@@ -1278,9 +1277,8 @@ fn expNnMontgomery(
         // so do that unconditionally, but double-check,
         // in case our beliefs are wrong.
         // The div is not expected to be reached.
-        try zz2m.sub(zz2m.toConst(), m_abs);
-        o = zz2m.order(m_abs_m);
-        if (o == .gt or o == .eq) {
+        try sub(&zz2m, zz2m.toConst(), m_abs);
+        if (zz2m.order(m_abs_m).compare(.gte)) {
             try zz.copy(zz2m.toConst());
             try zz2m.divTrunc(&rr, zz.toConst(), m_abs);
         }
