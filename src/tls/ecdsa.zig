@@ -418,19 +418,15 @@ fn hashToInt(
         else => @panic("not implemented yet"),
     };
 
-    const hash2 = if (hash.len > encoded_length)
-        hash[0..encoded_length]
-    else
-        hash;
-
+    const hash2 = hash[0..math.min(hash.len, encoded_length)];
     try bigint.setManagedBytes(out, hash2, .Big);
 
     const field_bits: usize = switch (c) {
         .secp256r1 => P256.Fe.field_bits,
         else => @panic("not implemented yet"),
     };
-    if (hash2.len * 8 > field_bits) {
-        const excess: usize = hash2.len * 8 - field_bits;
+    if (hash2.len * @bitSizeOf(u8) > field_bits) {
+        const excess: usize = hash2.len * @bitSizeOf(u8) - field_bits;
         try out.shiftRight(out.*, excess);
     }
 }
