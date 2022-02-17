@@ -196,7 +196,8 @@ pub fn expConst(
         if (inverse.eqZero()) {
             return try cloneConst(allocator, zero);
         }
-        try x2.copy(inverse.toConst().abs());
+        inverse.abs();
+        x2.swap(&inverse);
     }
     const m_abs = m.abs();
     var z = try Managed.init(allocator);
