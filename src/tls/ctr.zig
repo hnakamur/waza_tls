@@ -94,7 +94,7 @@ fn xorBytes(dst: []u8, a: []const u8, b: []const u8) usize {
 const testing = std.testing;
 
 test "Ctr.xorKeyStream" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const common_counter = &[_]u8{
         0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,

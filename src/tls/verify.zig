@@ -499,7 +499,7 @@ test "mem.split" {
 }
 
 test "matchIpConstraint" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const f = struct {
         fn f(

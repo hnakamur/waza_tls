@@ -45,7 +45,7 @@ test "gimli" {
     const initial = [_]u8{0} ** 48;
     var g = std.crypto.core.Gimli.init(initial);
     g.permute();
-    std.debug.print("g={any}\n", .{g});
+    std.log.debug("g={any}\n", .{g});
 
     const expected1 = [_]u32{
         1684527300, 131921979,  990621908,  455161420,  137638364,  251379342,
@@ -54,7 +54,7 @@ test "gimli" {
     try testing.expectEqualSlices(u32, &expected1, &g.data);
 
     g.permute();
-    std.debug.print("g={any}\n", .{g});
+    std.log.debug("g={any}\n", .{g});
 
     const expected2 = [_]u32{
         4187858519, 4251613304, 2291460841, 4250533253, 2671889682, 644487313,

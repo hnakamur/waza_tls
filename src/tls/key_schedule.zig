@@ -196,7 +196,7 @@ test "X25519Parameters.sharedKey" {
 }
 
 test "NistParameters.sharedKey" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     var p1 = try NistParameters.generate(allocator, .secp256r1, std.crypto.random);

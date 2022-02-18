@@ -239,7 +239,7 @@ pub const Block = struct {
 const testing = std.testing;
 
 test "Block.decode certificate" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const priv_rsa_pem = @embedFile("../../tests/priv-rsa.pem");
     const priv_rsa_der = @embedFile("../../tests/priv-rsa.der");
@@ -252,7 +252,7 @@ test "Block.decode certificate" {
 }
 
 test "Block.decode success with whitespaces" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(want_label: []const u8, want_decoded: []const u8, input: []const u8) !void {
             const allocator = testing.allocator;

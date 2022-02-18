@@ -100,7 +100,7 @@ pub fn x509KeyPair(
 const testing = std.testing;
 
 test "x509KeyPair" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const cert_pem = @embedFile("../../tests/rsa2048.crt.pem");
     const key_pem = @embedFile("../../tests/rsa2048.key.pem");

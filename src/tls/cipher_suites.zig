@@ -731,7 +731,7 @@ test "Aes128Gcm - Message and associated data" {
 }
 
 test "PrefixNonceAeadAes128Gcm" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 
@@ -760,7 +760,7 @@ test "PrefixNonceAeadAes128Gcm" {
 }
 
 test "PrefixNonceAeadAes256Gcm" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 
@@ -789,7 +789,7 @@ test "PrefixNonceAeadAes256Gcm" {
 }
 
 test "XorNonceAeadAes128Gcm" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 
@@ -818,7 +818,7 @@ test "XorNonceAeadAes128Gcm" {
 }
 
 test "XorNonceAeadAes256Gcm" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 
@@ -847,7 +847,7 @@ test "XorNonceAeadAes256Gcm" {
 }
 
 test "XorNonceAeadChaCha20Poly1305" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 
@@ -876,7 +876,7 @@ test "XorNonceAeadChaCha20Poly1305" {
 }
 
 test "AeadXorNonceAeadChaCha20Poly1305" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 

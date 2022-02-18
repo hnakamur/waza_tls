@@ -588,7 +588,7 @@ pub fn verifyGeneric(
 const testing = std.testing;
 
 test "signWithPrivateKey and verifyWithPublicKey" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const initial = [_]u8{0} ** 48;
@@ -630,7 +630,7 @@ test "signWithPrivateKey and verifyWithPublicKey" {
 }
 
 test "StreamRandom" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const key = "\x57\x0a\xb7\x5e\xb8\x7a\xbe\x27\x4b\xc4\x19\xb6\x45\xa6\x0f\xdc\xf8\x18\x05\xee\x0a\x49\xbf\x3d\x7c\xdc\x9a\xf7\xe7\x7f\x4e\x0d";
@@ -663,7 +663,7 @@ test "StreamRandom" {
 }
 
 test "ecdsa.fermatInverse" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     var k = try math.big.int.Managed.initSet(
@@ -727,7 +727,7 @@ test "p256.Scalar.invert" {
 }
 
 test "ecdsa.hashToInt" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
     const hash = "testing";
@@ -745,7 +745,7 @@ test "ecdsa.hashToInt" {
 }
 
 test "ecdsa.PrivateKey.parseAsn1" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
     var offset: usize = 0;
@@ -757,7 +757,7 @@ test "ecdsa.PrivateKey.parseAsn1" {
 }
 
 test "randFieldElement" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const allocator = testing.allocator;
     const initial = [_]u8{0} ** 48;
@@ -778,7 +778,7 @@ test "randFieldElement" {
 }
 
 test "PrivateKey.generate" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const allocator = testing.allocator;
     const initial = [_]u8{0} ** 48;

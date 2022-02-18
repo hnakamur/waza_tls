@@ -211,7 +211,7 @@ const priv_rsa_2_der = @embedFile("../../tests/priv-rsa-2.der");
 const priv_rsa_3_der = @embedFile("../../tests/priv-rsa-3.der");
 
 // test "Pkcs1PrivateKey.parse" {
-//     testing.log_level = .debug;
+//     testing.log_level = .err;
 //     const allocator = testing.allocator;
 //     var s = asn1.String.init(priv_rsa_3_der);
 //     var key = try Pkcs1PrivateKey.parse(&s, allocator);
@@ -220,7 +220,7 @@ const priv_rsa_3_der = @embedFile("../../tests/priv-rsa-3.der");
 // }
 
 // test "parsePkcs1PrivateKey" {
-//     testing.log_level = .debug;
+//     testing.log_level = .err;
 //     const allocator = testing.allocator;
 //     // var s = asn1.String.init(priv_rsa_3_der);
 //     // var key = try Pkcs1PrivateKey.parse(&s, allocator);

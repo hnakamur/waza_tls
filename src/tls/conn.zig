@@ -1238,7 +1238,7 @@ test "supportedVersionsFromMax" {
 }
 
 test "Config.supportedVersions" {
-    // testing.log_level = .debug;
+    // testing.log_level = .err;
     const f = struct {
         fn f(config: Conn.Config, want_versions: []const ProtocolVersion) !void {
             const got_versions = config.supportedVersions();

@@ -262,7 +262,7 @@ fn modInverse(
 }
 
 test "modInverse" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(element: []const u8, modulus: []const u8) !void {
             const allocator = testing.allocator;
@@ -315,7 +315,7 @@ pub fn mod(
 }
 
 test "mod" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
             try noAlias(a_dec, b_dec, want_dec);
@@ -516,7 +516,7 @@ test "gcd" {
         }
     }.f;
 
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     // a <= 0 || b <= 0
     try f("0", "0", "0", "0", "0");
@@ -1451,7 +1451,7 @@ test "std.Const one" {
 }
 
 test "constFromBytes" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
     const allocator = testing.allocator;
     var i = try constFromBytes(allocator, buf, .Big);
@@ -1463,7 +1463,7 @@ test "constFromBytes" {
 }
 
 test "exp" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const f = struct {
         fn f(
@@ -1634,7 +1634,7 @@ test "exp" {
 }
 
 test "sub alias" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const Test = struct {
         fn subWithPriorEnsureAddCapacity(z: *Managed, m: Const) !void {
             try z.ensureAddCapacity(m, z.toConst().abs());
@@ -1732,7 +1732,7 @@ test "sub alias" {
 }
 
 test "expNnMontgomery" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(want: Managed, x: Const, y: Const, m: Const) !void {
             const allocator = want.allocator;
@@ -1820,7 +1820,7 @@ test "expNnMontgomery" {
 }
 
 test "expNnWindowed" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(want: Managed, x: Const, y: Const, m: Const) !void {
             const allocator = want.allocator;

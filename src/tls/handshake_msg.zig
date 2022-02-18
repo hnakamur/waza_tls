@@ -1450,7 +1450,7 @@ fn testingExpectPrintEqual(
 }
 
 test "ClientHelloMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -1725,7 +1725,7 @@ test "ServerHelloMsg.marshal" {
 }
 
 test "ServerHelloMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -1961,7 +1961,7 @@ test "CertificateMsg.marshal" {
 }
 
 test "CertificateMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -2028,7 +2028,7 @@ test "ServerKeyExchangeMsg.marshal" {
 }
 
 test "ServerKeyExchangeMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -2088,7 +2088,7 @@ test "ServerHelloDoneMsg.marshal" {
 }
 
 test "ServerHelloDoneMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -2144,7 +2144,7 @@ test "ClientKeyExchangeMsg.marshal" {
 }
 
 test "ClientKeyExchangeMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
@@ -2203,7 +2203,7 @@ test "FinishedMsg.marshal" {
 }
 
 test "FinishedMsg.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {

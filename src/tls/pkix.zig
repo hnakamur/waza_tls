@@ -145,7 +145,7 @@ pub const Extension = struct {
 const testing = std.testing;
 
 // test "Extension unmarshal" {
-//     testing.log_level = .debug;
+//     testing.log_level = .err;
 //     var ext = Extension{};
 //     var input = asn1.String.init("");
 //     try Extension.field_parameters[1].parseField(&input, &ext.critical);
@@ -153,7 +153,7 @@ const testing = std.testing;
 // }
 
 test "FieldParameters.getSlice" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     var parameter_id: ?*const asn1.FieldParameters = undefined;
     const param_critical = comptime blk: {
         const params = asn1.FieldParameters.getSlice(Extension);
@@ -167,7 +167,7 @@ test "FieldParameters.getSlice" {
 }
 
 test "TypeInfo" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const ext = Extension{ .id = undefined, .critical = undefined };
     // const Type = @TypeOf(ext);
     // inline for (std.meta.fields(Extension)) |field| {

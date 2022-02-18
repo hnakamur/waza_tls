@@ -603,7 +603,7 @@ pub const FieldParameters = struct {
 };
 
 test "FieldParameters.setDefaultValue" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     {
         const MyStruct = struct {
@@ -1196,7 +1196,7 @@ pub fn parseField(
 }
 
 test "out two types" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     try struct {
         fn f(out: anytype) void {
             const OutType = @TypeOf(out);
@@ -1239,7 +1239,7 @@ test "out two types" {
 }
 
 // test "parseField all" {
-//     testing.log_level = .debug;
+//     testing.log_level = .err;
 
 //     const T1 = struct {
 //         const Self = @This();
@@ -1354,7 +1354,7 @@ const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
 
 test "TagAndLength.parse" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(input: []const u8, want: anyerror!TagAndLength) !void {
             var got: TagAndLength = undefined;
@@ -1452,7 +1452,7 @@ test "TagAndLength.parse" {
 }
 
 test "readOptionalAsn1" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(want: ?String, input: []const u8, tag: TagAndClass) !void {
             var s = String.init(input);
@@ -1702,7 +1702,7 @@ fn toInt(comptime T: type, val: anytype) T {
 }
 
 test "readOptionalAsn1Integer" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(comptime T: type, want_str: []const u8, input: []const u8, tag: TagAndClass, default_value: T) !void {
             const allocator = testing.allocator;
@@ -1766,7 +1766,7 @@ test "readOptionalAsn1Integer" {
 }
 
 test "readAsn1Integer" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const f = struct {
         fn f(comptime T: type, want_str: []const u8, input: []const u8) !void {
@@ -1802,7 +1802,7 @@ test "readAsn1Integer" {
 }
 
 test "readAsn1BigInt" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(want_str: anyerror![]const u8, input: []const u8) !void {
             const allocator = testing.allocator;
@@ -1847,7 +1847,7 @@ test "readAsn1BigInt" {
 }
 
 test "parseBigInt" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(want_str: anyerror![]const u8, input: []const u8) !void {
             const allocator = testing.allocator;

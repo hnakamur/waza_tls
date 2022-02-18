@@ -86,7 +86,7 @@ pub const EcPrivateKey = struct {
 const testing = std.testing;
 
 test "EcPrivateKey.parse" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
     var offset: usize = 0;

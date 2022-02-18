@@ -130,7 +130,7 @@ const testing = std.testing;
 const assert = std.debug.assert;
 
 test "elliptic.generateKey" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const initial = [_]u8{0} ** 48;

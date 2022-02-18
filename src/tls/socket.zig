@@ -82,7 +82,7 @@ const Client = struct {
 const testing = std.testing;
 
 test "socket ClientServer" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     try struct {
         fn testServer(server: *Server) !void {
             var client = try server.accept();
@@ -130,7 +130,7 @@ test "Conn ClientServer rsa2048" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -207,7 +207,7 @@ test "Conn ClientServer p256" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -325,7 +325,7 @@ test "Conn ClientServer p256" {
 test "Connect to localhost" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -361,7 +361,7 @@ test "Connect to localhost" {
 test "Connect to Internet" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {

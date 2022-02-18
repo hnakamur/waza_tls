@@ -22,7 +22,7 @@ const cert_directories = &[_][]const u8{
 
 const testing = std.testing;
 test "read_cert_file" {
-    // testing.log_level = .debug;
+    // testing.log_level = .err;
 
     const allocator = testing.allocator;
     const max_bytes = 1024 * 1024 * 1024;
