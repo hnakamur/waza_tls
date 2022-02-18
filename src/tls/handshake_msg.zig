@@ -195,6 +195,7 @@ pub const ClientHelloMsg = struct {
         if (self.supported_signature_algorithms_cert.len > 0) {
             allocator.free(self.supported_signature_algorithms_cert);
         }
+        if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
         if (self.supported_versions.len > 0) allocator.free(self.supported_versions);
         if (self.cookie.len > 0) allocator.free(self.cookie);
         if (self.key_shares.len > 0) {
@@ -575,7 +576,7 @@ pub const ServerHelloMsg = struct {
     ticket_supported: bool = false,
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
-    alpn_protocol: ?[]const u8 = null,
+    alpn_protocol: []const u8 = "",
     scts: []const []const u8 = &[_][]u8{},
     supported_version: ?ProtocolVersion = null,
     server_share: ?KeyShare = null,
@@ -588,12 +589,14 @@ pub const ServerHelloMsg = struct {
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
         allocator.free(self.random);
-        if (self.server_share) |*server_share| server_share.deinit(allocator);
-        if (self.supported_points.len > 0) allocator.free(self.supported_points);
+        if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
+        if (self.alpn_protocol.len > 0) allocator.free(self.alpn_protocol);
         if (self.scts.len > 0) {
             for (self.scts) |sct| allocator.free(sct);
             allocator.free(self.scts);
         }
+        if (self.server_share) |*server_share| server_share.deinit(allocator);
+        if (self.supported_points.len > 0) allocator.free(self.supported_points);
         if (self.cookie.len > 0) allocator.free(self.cookie);
         freeOptionalField(self, allocator, "raw");
     }
@@ -662,13 +665,13 @@ pub const ServerHelloMsg = struct {
                 .StatusRequest => self.ocsp_stapling = true,
                 .SessionTicket => self.ticket_supported = true,
                 .RenegotiationInfo => {
-                    self.secure_renegotiation = try readString(u8, bv);
+                    self.secure_renegotiation = try allocator.dupe(u8, try readString(u8, bv));
                     self.secure_renegotiation_supported = true;
                 },
                 .Alpn => {
                     const protos_len = try bv.readIntBig(u16);
                     const protos_end_pos = bv.pos + protos_len;
-                    self.alpn_protocol = try readString(u8, bv);
+                    self.alpn_protocol = try allocator.dupe(u8, try readString(u8, bv));
                     if (bv.pos < protos_end_pos) {
                         return error.TooManyProtocols;
                     }
@@ -750,11 +753,11 @@ pub const ServerHelloMsg = struct {
             try writeInt(u16, ExtensionType.RenegotiationInfo, writer);
             try writeLenLenAndBytes(u16, u8, self.secure_renegotiation, writer);
         }
-        if (self.alpn_protocol) |protocol| {
+        if (self.alpn_protocol.len > 0) {
             try writeInt(u16, ExtensionType.Alpn, writer);
-            const ext_len = intTypeLen(u16) + intTypeLen(u8) + protocol.len;
+            const ext_len = intTypeLen(u16) + intTypeLen(u8) + self.alpn_protocol.len;
             try writeInt(u16, ext_len, writer);
-            try writeLenLenAndBytes(u16, u8, protocol, writer);
+            try writeLenLenAndBytes(u16, u8, self.alpn_protocol, writer);
         }
         if (self.scts.len > 0) {
             try writeInt(u16, ExtensionType.Sct, writer);
@@ -1873,6 +1876,10 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
         &[_]EcPointFormat{.uncompressed},
     );
     errdefer allocator.free(supported_points);
+    const secure_renegotiation = try allocator.dupe(u8, "renegoation");
+    errdefer allocator.free(secure_renegotiation);
+    const alpn_protocol = try allocator.dupe(u8, "http/1.1");
+    errdefer allocator.free(alpn_protocol);
     const key_share_data = try allocator.dupe(u8, "public key here");
     errdefer allocator.free(key_share_data);
     return ServerHelloMsg{
@@ -1884,8 +1891,8 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
         .ocsp_stapling = true,
         .ticket_supported = true,
         .secure_renegotiation_supported = true,
-        .secure_renegotiation = "renegoation",
-        .alpn_protocol = "http/1.1",
+        .secure_renegotiation = secure_renegotiation,
+        .alpn_protocol = alpn_protocol,
         .scts = scts,
         .supported_version = .v1_3,
         .server_share = .{ .group = .x25519, .data = key_share_data },
@@ -1951,13 +1958,15 @@ fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHell
         &[_][]const u8{ sct1, sct2 },
     );
     errdefer allocator.free(scts);
+    const alpn_protocol = try allocator.dupe(u8, "http/1.1");
+    errdefer allocator.free(alpn_protocol);
+    const key_share_data = try allocator.dupe(u8, "public key here");
+    errdefer allocator.free(key_share_data);
     const supported_points = try allocator.dupe(
         EcPointFormat,
         &[_]EcPointFormat{.uncompressed},
     );
     errdefer allocator.free(supported_points);
-    const key_share_data = try allocator.dupe(u8, "public key here");
-    errdefer allocator.free(key_share_data);
     return ServerHelloMsg{
         .vers = .v1_3,
         .random = random,
@@ -1968,7 +1977,7 @@ fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHell
         .ticket_supported = true,
         .secure_renegotiation_supported = true,
         .secure_renegotiation = "",
-        .alpn_protocol = "http/1.1",
+        .alpn_protocol = alpn_protocol,
         .scts = scts,
         .supported_version = .v1_3,
         .server_share = .{ .group = .x25519, .data = key_share_data },
