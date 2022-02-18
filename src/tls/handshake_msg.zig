@@ -187,6 +187,7 @@ pub const ClientHelloMsg = struct {
         if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
         if (self.session_ticket.len > 0) allocator.free(self.session_ticket);
         if (self.supported_points.len > 0) allocator.free(self.supported_points);
+        if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
         if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
         if (self.supported_signature_algorithms.len > 0) {
             allocator.free(self.supported_signature_algorithms);
@@ -343,7 +344,7 @@ pub const ClientHelloMsg = struct {
                 },
                 .RenegotiationInfo => {
                     // RFC 5746, Section 3.2
-                    self.secure_renegotiation = try readString(u8, bv);
+                    self.secure_renegotiation = try allocator.dupe(u8, try readString(u8, bv));
                     self.secure_renegotiation_supported = true;
                 },
                 .Alpn => {
