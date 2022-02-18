@@ -10,9 +10,9 @@ const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const freeOptionalField = @import("handshake_msg.zig").freeOptionalField;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
-const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
-const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
-const mutualCipherSuite12 = @import("cipher_suites.zig").mutualCipherSuite12;
+const CipherSuiteTls12 = @import("cipher_suites.zig").CipherSuiteTls12;
+const cipherSuiteTls12ById = @import("cipher_suites.zig").cipherSuiteTls12ById;
+const mutualCipherSuiteTls12 = @import("cipher_suites.zig").mutualCipherSuiteTls12;
 const x509 = @import("x509.zig");
 const prfForVersion = @import("prf.zig").prfForVersion;
 const master_secret_length = @import("prf.zig").master_secret_length;
@@ -65,7 +65,7 @@ pub const ClientHandshakeStateTls12 = struct {
     conn: *Conn,
     hello: ClientHelloMsg,
     server_hello: ServerHelloMsg,
-    suite: ?*const CipherSuite12 = null,
+    suite: ?*const CipherSuiteTls12 = null,
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
 
@@ -364,9 +364,10 @@ pub const ClientHandshakeStateTls12 = struct {
     }
 
     fn pickCipherSuite(self: *ClientHandshakeStateTls12) !void {
-        if (mutualCipherSuite12(self.hello.cipher_suites, self.server_hello.cipher_suite)) |suite| {
+        if (mutualCipherSuiteTls12(self.hello.cipher_suites, self.server_hello.cipher_suite)) |suite| {
             self.suite = suite;
             std.log.debug("ClientHandshakeStateTls12.pickCipherSuite, suite={}", .{suite});
+            self.conn.cipher_suite_id = suite.id;
         } else {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.ServerChoseAnUnconfiguredCipherSuite;

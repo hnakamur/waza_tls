@@ -15,10 +15,13 @@ const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
-const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
-const selectCipherSuite12 = @import("cipher_suites.zig").selectCipherSuite12;
-const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
-const cipherSuite12ById = @import("cipher_suites.zig").cipherSuite12ById;
+const CipherSuiteTls12 = @import("cipher_suites.zig").CipherSuiteTls12;
+const selectCipherSuiteTls12 = @import("cipher_suites.zig").selectCipherSuiteTls12;
+const cipherSuiteTls12ById = @import("cipher_suites.zig").cipherSuiteTls12ById;
+const has_aes_gcm_hardware_support = @import("cipher_suites.zig").has_aes_gcm_hardware_support;
+const aesgcmPreferred = @import("cipher_suites.zig").aesgcmPreferred;
+const cipher_suites_preference_order = @import("cipher_suites.zig").cipher_suites_preference_order;
+const cipher_suites_preference_order_no_aes = @import("cipher_suites.zig").cipher_suites_preference_order_no_aes;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const SessionState = @import("ticket.zig").SessionState;
 const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
@@ -67,7 +70,7 @@ pub const ServerHandshakeStateTls12 = struct {
     conn: *Conn,
     client_hello: ClientHelloMsg,
     hello: ?ServerHelloMsg = null,
-    suite: ?*const CipherSuite12 = null,
+    suite: ?*const CipherSuiteTls12 = null,
     ecdhe_ok: bool = false,
     ec_sign_ok: bool = false,
     rsa_decrypt_ok: bool = false,
@@ -181,14 +184,31 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     pub fn pickCipherSuite(self: *ServerHandshakeStateTls12) !void {
-        // TODO: stop hardcoding.
         const allocator = self.conn.allocator;
-        var preference_list = try makeCipherPreferenceList12(
-            allocator,
-            self.conn.config.cipher_suites,
-        );
+
+        var preference_list = blk: {
+            const config_cipher_suites = self.conn.config.cipher_suites;
+            var cipher_suites = try std.ArrayListUnmanaged(CipherSuiteId).initCapacity(
+                allocator,
+                config_cipher_suites.len,
+            );
+            errdefer cipher_suites.deinit(allocator);
+
+            const preference_order = if (has_aes_gcm_hardware_support and
+                aesgcmPreferred(self.client_hello.cipher_suites))
+                &cipher_suites_preference_order
+            else
+                &cipher_suites_preference_order_no_aes;
+            for (preference_order) |suite_id| {
+                if (memx.containsScalar(CipherSuiteId, config_cipher_suites, suite_id)) {
+                    try cipher_suites.append(allocator, suite_id);
+                }
+            }
+            break :blk cipher_suites.toOwnedSlice(allocator);
+        };
         defer allocator.free(preference_list);
-        self.suite = selectCipherSuite12(
+
+        self.suite = selectCipherSuiteTls12(
             preference_list,
             self.client_hello.cipher_suites,
             self,
@@ -198,6 +218,7 @@ pub const ServerHandshakeStateTls12 = struct {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.CipherNegotiationFailed;
         }
+        self.conn.cipher_suite_id = self.suite.?.id;
 
         if (memx.containsScalar(
             CipherSuiteId,
@@ -215,7 +236,7 @@ pub const ServerHandshakeStateTls12 = struct {
         }
     }
 
-    fn cipherSuiteOk(self: *const ServerHandshakeStateTls12, c: *const CipherSuite12) bool {
+    fn cipherSuiteOk(self: *const ServerHandshakeStateTls12, c: *const CipherSuiteTls12) bool {
         if (c.flags.ecdhe) {
             if (!self.ecdhe_ok) {
                 return false;
@@ -252,7 +273,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
             const cert_msg_bytes = try cert_msg.marshal(allocator);
             try self.finished_hash.?.write(cert_msg_bytes);
-        try self.finished_hash.?.debugLogClientHash(allocator, "server: cert");
+            try self.finished_hash.?.debugLogClientHash(allocator, "server: cert");
             try self.conn.writeRecord(allocator, .handshake, cert_msg_bytes);
         }
 

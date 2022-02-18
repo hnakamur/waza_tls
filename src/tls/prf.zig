@@ -2,7 +2,7 @@ const std = @import("std");
 const math = std.math;
 const mem = std.mem;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
-const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const CipherSuiteTls12 = @import("cipher_suites.zig").CipherSuiteTls12;
 const fmtx = @import("../fmtx.zig");
 
 pub const master_secret_length = 48; // Length of a master secret in TLS 1.1.
@@ -13,7 +13,7 @@ pub const key_expansion_label = "key expansion";
 pub const client_finished_label = "client finished";
 pub const server_finished_label = "server finished";
 
-pub fn prfForVersion(version: ProtocolVersion, suite: *const CipherSuite12) fn (
+pub fn prfForVersion(version: ProtocolVersion, suite: *const CipherSuiteTls12) fn (
     allocator: mem.Allocator,
     secret: []const u8,
     label: []const u8,
@@ -77,7 +77,7 @@ fn pHash(comptime HashType: type, secret: []const u8, seed: []const u8, out: []u
 pub fn masterFromPreMasterSecret(
     allocator: mem.Allocator,
     version: ProtocolVersion,
-    suite: *const CipherSuite12,
+    suite: *const CipherSuiteTls12,
     pre_master_secret: []const u8,
     client_random: []const u8,
     server_random: []const u8,
@@ -105,7 +105,7 @@ pub const ConnectionKeys = struct {
     pub fn fromMasterSecret(
         allocator: mem.Allocator,
         version: ProtocolVersion,
-        suite: *const CipherSuite12,
+        suite: *const CipherSuiteTls12,
         master_secret: []const u8,
         client_random: []const u8,
         server_random: []const u8,

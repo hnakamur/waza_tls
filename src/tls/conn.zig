@@ -157,6 +157,7 @@ pub const Conn = struct {
     // connection so far. If renegotiation is disabled then this is either
     // zero or one.
     handshakes: usize = 0,
+    cipher_suite_id: ?CipherSuiteId = null,
     role: Role,
     allocator: mem.Allocator,
     stream: net.Stream,

@@ -19,9 +19,42 @@ pub const has_aes_gcm_hardware_support =
     (builtin.cpu.arch == .x86_64 and has_aesni and has_avx) or
     (builtin.cpu.arch == .aarch64 and has_armaes);
 
+pub const aes_gcm_ciphers = [_]CipherSuiteId{
+    // TLS 1.2
+    .tls_ecdhe_rsa_with_aes_128_gcm_sha256,
+    .tls_ecdhe_rsa_with_aes_256_gcm_sha384,
+    .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
+    .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
+    // TLS 1.3
+    .tls_aes_128_gcm_sha256,
+    .tls_aes_256_gcm_sha384,
+};
+
+pub const non_aes_gcm_ciphers = [_]CipherSuiteId{
+    // TLS 1.2
+    .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
+    .tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256,
+    // TLS 1.3
+    .tls_chacha20_poly1305_sha256,
+};
+
+// aesgcmPreferred returns whether the first known cipher in the preference list
+// is an AES-GCM cipher, implying the peer has hardware support for it.
+pub fn aesgcmPreferred(ciphers: []const CipherSuiteId) bool {
+    for (ciphers) |cipher_id| {
+        if (cipherSuiteTls12ById(cipher_id)) |_| {
+            return true;
+        }
+        if (cipherSuiteTls13ById(cipher_id)) |_| {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub const CipherSuite = union(ProtocolVersion) {
     v1_3: CipherSuiteTls13,
-    v1_2: CipherSuite12,
+    v1_2: CipherSuiteTls12,
     v1_1: void,
     v1_0: void,
 };
@@ -56,7 +89,31 @@ const cipher_suites_tls13 = [_]CipherSuiteTls13{
     },
 };
 
-pub const CipherSuite12 = struct {
+fn cipherSuiteTls13ById(id:CipherSuiteId) ?*const CipherSuiteTls13 {
+    for (cipher_suites_tls13) |*suite| {
+        if (suite.id == id) {
+            return suite;
+        }
+    }
+    return null;
+}
+
+// defaultCipherSuitesTLS13 is also the preference order, since there are no
+// disabled by default TLS 1.3 cipher suites. The same AES vs ChaCha20 logic as
+// cipherSuitesPreferenceOrder applies.
+const default_cipher_suites_tls13 = [_]CipherSuiteId{
+    .tls_aes_128_gcm_sha256,
+    .tls_aes_256_gcm_sha384,
+    .tls_chacha20_poly1305_sha256,
+};
+
+const default_cipher_suites_tls13_no_aes = [_]CipherSuiteId{
+    .tls_chacha20_poly1305_sha256,
+    .tls_aes_128_gcm_sha256,
+    .tls_aes_256_gcm_sha384,
+};
+
+pub const CipherSuiteTls12 = struct {
     pub const Flags = packed struct {
         ecdhe: bool = false,
         ec_sign: bool = false,
@@ -77,7 +134,7 @@ pub const CipherSuite12 = struct {
 
 pub const default_cipher_suites = cipher_suites_preference_order;
 
-const cipher_suites_preference_order = [_]CipherSuiteId{
+pub const cipher_suites_preference_order = [_]CipherSuiteId{
     .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
     .tls_ecdhe_rsa_with_aes_128_gcm_sha256,
     .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
@@ -86,7 +143,7 @@ const cipher_suites_preference_order = [_]CipherSuiteId{
     .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
 };
 
-const cipher_suites_preference_order_no_aes = [_]CipherSuiteId{
+pub const cipher_suites_preference_order_no_aes = [_]CipherSuiteId{
     .tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256,
     .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
     .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
@@ -95,7 +152,7 @@ const cipher_suites_preference_order_no_aes = [_]CipherSuiteId{
     .tls_ecdhe_rsa_with_aes_256_gcm_sha384,
 };
 
-pub const cipher_suites12 = [_]CipherSuite12{
+pub const cipher_suites_tls12 = [_]CipherSuiteTls12{
     .{
         .id = .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
         .key_len = 32,
@@ -179,27 +236,27 @@ pub fn makeCipherPreferenceList12(
     else
         &cipher_suites_preference_order_no_aes;
     for (preference_order) |suite_id| {
-        if (mutualCipherSuite12(config_cipher_suites, suite_id)) |_| {
+        if (mutualCipherSuiteTls12(config_cipher_suites, suite_id)) |_| {
             try cipher_suites.append(allocator, suite_id);
         }
     }
     return cipher_suites.toOwnedSlice(allocator);
 }
 
-pub fn mutualCipherSuite12(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuite12 {
-    return if (memx.containsScalar(CipherSuiteId, have, want)) cipherSuite12ById(want) else null;
+pub fn mutualCipherSuiteTls12(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuiteTls12 {
+    return if (memx.containsScalar(CipherSuiteId, have, want)) cipherSuiteTls12ById(want) else null;
 }
 
-// selectCipherSuite12 returns the first TLS 1.0–1.2 cipher suite from ids which
+// selectCipherSuiteTls12 returns the first TLS 1.0–1.2 cipher suite from ids which
 // is also in supportedIDs and passes the ok filter.
-pub fn selectCipherSuite12(
+pub fn selectCipherSuiteTls12(
     ids: []const CipherSuiteId,
     supported_ids: []const CipherSuiteId,
     context: anytype,
-    ok: fn (@TypeOf(context), *const CipherSuite12) bool,
-) ?*const CipherSuite12 {
+    ok: fn (@TypeOf(context), *const CipherSuiteTls12) bool,
+) ?*const CipherSuiteTls12 {
     for (ids) |id| {
-        if (cipherSuite12ById(id)) |candidate| {
+        if (cipherSuiteTls12ById(id)) |candidate| {
             if (!ok(context, candidate)) {
                 continue;
             }
@@ -212,8 +269,8 @@ pub fn selectCipherSuite12(
     return null;
 }
 
-pub fn cipherSuite12ById(id: CipherSuiteId) ?*const CipherSuite12 {
-    for (cipher_suites12) |*suite| {
+pub fn cipherSuiteTls12ById(id: CipherSuiteId) ?*const CipherSuiteTls12 {
+    for (cipher_suites_tls12) |*suite| {
         if (suite.id == id) {
             return suite;
         }
@@ -630,20 +687,20 @@ fn XorNonceAead(comptime InnerAead: type) type {
 const testing = std.testing;
 const fmtx = @import("../fmtx.zig");
 
-test "mutualCipherSuite12" {
+test "mutualCipherSuiteTls12" {
     const have = [_]CipherSuiteId{
         .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
         .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
     };
 
     try testing.expectEqual(
-        cipherSuite12ById(.tls_ecdhe_ecdsa_with_aes_256_gcm_sha384),
-        mutualCipherSuite12(&have, .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384),
+        cipherSuiteTls12ById(.tls_ecdhe_ecdsa_with_aes_256_gcm_sha384),
+        mutualCipherSuiteTls12(&have, .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384),
     );
 
     try testing.expectEqual(
-        @as(?*const CipherSuite12, null),
-        mutualCipherSuite12(&have, .tls_aes_128_gcm_sha256),
+        @as(?*const CipherSuiteTls12, null),
+        mutualCipherSuiteTls12(&have, .tls_aes_128_gcm_sha256),
     );
 }
 

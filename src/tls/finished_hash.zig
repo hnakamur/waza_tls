@@ -7,7 +7,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const crypto = @import("crypto.zig");
 const Sha256Hash = @import("crypto.zig").Sha256Hash;
 const Sha384Hash = @import("crypto.zig").Sha384Hash;
-const CipherSuite12 = @import("cipher_suites.zig").CipherSuite12;
+const CipherSuiteTls12 = @import("cipher_suites.zig").CipherSuiteTls12;
 const Prf12 = @import("prf.zig").Prf12;
 const finished_verify_length = @import("prf.zig").finished_verify_length;
 const client_finished_label = @import("prf.zig").client_finished_label;
@@ -38,7 +38,7 @@ pub const FinishedHash = struct {
     pub fn new(
         allocator: mem.Allocator,
         version: ProtocolVersion,
-        cipher_suite: *const CipherSuite12,
+        cipher_suite: *const CipherSuiteTls12,
     ) FinishedHash {
         std.log.info(
             "FinishedHash.new, version={}, suite={}",
