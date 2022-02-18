@@ -89,6 +89,13 @@ const cipher_suites_tls13 = [_]CipherSuiteTls13{
     },
 };
 
+pub fn mutualCipherSuiteTls13(
+    have: []const CipherSuiteId,
+    want: CipherSuiteId,
+) ?*const CipherSuiteTls13 {
+    return if (memx.containsScalar(CipherSuiteId, have, want)) cipherSuiteTls13ById(want) else null;
+}
+
 fn cipherSuiteTls13ById(id: CipherSuiteId) ?*const CipherSuiteTls13 {
     for (cipher_suites_tls13) |*suite| {
         if (suite.id == id) {
@@ -101,13 +108,13 @@ fn cipherSuiteTls13ById(id: CipherSuiteId) ?*const CipherSuiteTls13 {
 // defaultCipherSuitesTLS13 is also the preference order, since there are no
 // disabled by default TLS 1.3 cipher suites. The same AES vs ChaCha20 logic as
 // cipherSuitesPreferenceOrder applies.
-const default_cipher_suites_tls13 = [_]CipherSuiteId{
+pub const default_cipher_suites_tls13 = [_]CipherSuiteId{
     .tls_aes_128_gcm_sha256,
     .tls_aes_256_gcm_sha384,
     .tls_chacha20_poly1305_sha256,
 };
 
-const default_cipher_suites_tls13_no_aes = [_]CipherSuiteId{
+pub const default_cipher_suites_tls13_no_aes = [_]CipherSuiteId{
     .tls_chacha20_poly1305_sha256,
     .tls_aes_128_gcm_sha256,
     .tls_aes_256_gcm_sha384,
@@ -253,7 +260,10 @@ pub fn makeCipherPreferenceList(
     return cipher_suites.toOwnedSlice(allocator);
 }
 
-pub fn mutualCipherSuiteTls12(have: []const CipherSuiteId, want: CipherSuiteId) ?*const CipherSuiteTls12 {
+pub fn mutualCipherSuiteTls12(
+    have: []const CipherSuiteId,
+    want: CipherSuiteId,
+) ?*const CipherSuiteTls12 {
     return if (memx.containsScalar(CipherSuiteId, have, want)) cipherSuiteTls12ById(want) else null;
 }
 
