@@ -175,7 +175,7 @@ pub const ClientHelloMsg = struct {
     key_shares: []KeyShare = &[_]KeyShare{},
     early_data: bool = false,
     psk_modes: []const PskMode = &[_]PskMode{},
-    psk_identities: ?[]const PskIdentity = null,
+    psk_identities: []const PskIdentity = &[_]PskIdentity{},
     psk_binders: ?[]const []const u8 = null,
 
     pub fn deinit(self: *ClientHelloMsg, allocator: mem.Allocator) void {
@@ -198,7 +198,7 @@ pub const ClientHelloMsg = struct {
             allocator.free(self.key_shares);
         }
         if (self.psk_modes.len > 0) allocator.free(self.psk_modes);
-        freeOptionalField(self, allocator, "psk_identities");
+        if (self.psk_identities.len > 0) allocator.free(self.psk_identities);
         freeOptionalField(self, allocator, "psk_binders");
         freeOptionalField(self, allocator, "raw");
     }
@@ -522,11 +522,11 @@ pub const ClientHelloMsg = struct {
             try writeInt(u16, ExtensionType.PskModes, writer);
             try writeLenLenAndIntSlice(u16, u8, u8, PskMode, self.psk_modes, writer);
         }
-        if (self.psk_identities) |identities| { // pre_shared_key must be the last extension
+        if (self.psk_identities.len > 0) { // pre_shared_key must be the last extension
             // RFC 8446, Section 4.2.11
             try writeInt(u16, ExtensionType.PreSharedKey, writer);
             var len2i: usize = 0;
-            for (identities) |*psk| {
+            for (self.psk_identities) |*psk| {
                 len2i += intTypeLen(u16) + psk.label.len + intTypeLen(u32);
             }
             var len2b: usize = 0;
@@ -538,7 +538,7 @@ pub const ClientHelloMsg = struct {
             const len1 = intTypeLen(u16) * 2 + len2i + len2b;
             try writeInt(u16, len1, writer);
             try writeInt(u16, len2i, writer);
-            for (identities) |*psk| {
+            for (self.psk_identities) |*psk| {
                 try writeLenAndBytes(u16, psk.label, writer);
                 try writeInt(u32, psk.obfuscated_ticket_age, writer);
             }
