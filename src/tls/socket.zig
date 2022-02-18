@@ -81,51 +81,7 @@ const Client = struct {
 
 const testing = std.testing;
 
-test "socket ClientServer" {
-    testing.log_level = .err;
-    try struct {
-        fn testServer(server: *Server) !void {
-            var client = try server.accept();
-            var writer = client.conn.stream.writer();
-            try writer.print("hello from server\n", .{});
-            client.conn.stream.close();
-        }
-
-        fn testClient(allocator: mem.Allocator, addr: net.Address) !void {
-            var client = try Client.init(allocator, addr, .{ .max_version = .v1_2 });
-            defer client.close() catch {};
-
-            var buf: [100]u8 = undefined;
-            const len = try client.conn.raw_input.read(&buf);
-            const msg = buf[0..len];
-            try testing.expect(mem.eql(u8, msg, "hello from server\n"));
-        }
-
-        fn runTest() !void {
-            const allocator = testing.allocator;
-
-            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{ .max_version = .v1_2 },
-            );
-            defer server.deinit();
-
-            const t = try std.Thread.spawn(
-                .{},
-                testClient,
-                .{ allocator, server.server.listen_address },
-            );
-            defer t.join();
-
-            try testServer(&server);
-        }
-    }.runTest();
-}
-
-test "Conn ClientServer rsa2048" {
+test "ClientServer_tls12_rsa2048" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
@@ -202,7 +158,7 @@ test "Conn ClientServer rsa2048" {
     }.runTest();
 }
 
-test "Conn ClientServer p256" {
+test "ClientServer_tls12_p256" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
@@ -279,50 +235,165 @@ test "Conn ClientServer p256" {
     }.runTest();
 }
 
-// test "Conn ClientServer pickTlsVersion error" {
-//     try struct {
-//         fn testServer(server: *Server) !void {
-//             var client = try server.accept();
-//             const allocator = server.allocator;
-//             defer client.deinit(allocator);
-//             defer client.close() catch {};
-//             var buffer = [_]u8{0} ** 1024;
-//             try testing.expectError(error.ProtocolVersionMismatch, client.conn.read(&buffer));
-//         }
+test "ClientServer_tls12_p256" {
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-//         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-//             var client = try Client.init(allocator, addr, .{ .max_version = .v1_2 });
-//             defer client.deinit(allocator);
-//             defer client.close() catch {};
+    testing.log_level = .err;
 
-//             try testing.expectError(error.Eof, client.conn.write("hello"));
-//         }
+    try struct {
+        fn testServer(server: *Server) !void {
+            var client = try server.accept();
+            const allocator = server.allocator;
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("hello", buffer[0..n]);
 
-//         fn runTest() !void {
-//             const allocator = testing.allocator;
+            _ = try client.conn.write("How do you do?");
+        }
 
-//             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-//             var server = try Server.init(
-//                 allocator,
-//                 listen_addr,
-//                 .{},
-//                 .{ .min_version = .v1_3 },
-//             );
-//             defer server.deinit();
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{
+                .max_version = .v1_2,
+                .insecure_skip_verify = true,
+            });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
 
-//             const t = try std.Thread.spawn(
-//                 .{},
-//                 testClient,
-//                 .{ server.server.listen_address, allocator },
-//             );
-//             defer t.join();
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("hello");
 
-//             try testServer(&server);
-//         }
-//     }.runTest();
-// }
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+
+            const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
+            const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
+
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var certificates = try allocator.alloc(CertificateChain, 1);
+            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{
+                    .certificates = certificates,
+                    .max_version = .v1_2,
+                },
+            );
+            defer server.deinit();
+
+            const t = try std.Thread.spawn(
+                .{},
+                testClient,
+                .{ server.server.listen_address, allocator },
+            );
+            defer t.join();
+
+            try testServer(&server);
+        }
+    }.runTest();
+}
+
+test "ClientServer_tls13_p256" {
+    if (true) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
+
+    testing.log_level = .err;
+
+    try struct {
+        fn testServer(server: *Server) !void {
+            var client = try server.accept();
+            const allocator = server.allocator;
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            try testing.expectEqualStrings("hello", buffer[0..n]);
+
+            _ = try client.conn.write("How do you do?");
+        }
+
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{
+                .max_version = .v1_3,
+                .insecure_skip_verify = true,
+            });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("hello");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+
+            const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
+            const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
+
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var certificates = try allocator.alloc(CertificateChain, 1);
+            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{
+                    .certificates = certificates,
+                    .max_version = .v1_3,
+                },
+            );
+            defer server.deinit();
+
+            const t = try std.Thread.spawn(
+                .{},
+                testClient,
+                .{ server.server.listen_address, allocator },
+            );
+            defer t.join();
+
+            try testServer(&server);
+        }
+    }.runTest();
+}
 
 test "Connect to localhost" {
+    if (true) return error.SkipZigTest;
+
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
     testing.log_level = .err;
@@ -359,6 +430,8 @@ test "Connect to localhost" {
 }
 
 test "Connect to Internet" {
+    if (true) return error.SkipZigTest;
+
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
     testing.log_level = .err;

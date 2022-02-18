@@ -483,7 +483,7 @@ pub const Conn = struct {
             @panic("not implemented yet");
         }
 
-        if (client_hello.supported_versions.?[0] == .v1_3) {
+        if (client_hello.supported_versions[0] == .v1_3) {
             const curve_id = self.config.curve_preferences[0];
             ecdhe_params.* = try EcdheParameters.generate(allocator, curve_id, self.config.random);
 
@@ -625,14 +625,10 @@ pub const Conn = struct {
             },
         };
 
-        const client_versions = blk: {
-            if (client_hello.supported_versions) |cli_sup_vers| {
-                if (cli_sup_vers.len > 0) {
-                    break :blk cli_sup_vers;
-                }
-            }
-            break :blk supportedVersionsFromMax(client_hello.vers);
-        };
+        const client_versions = if (client_hello.supported_versions.len > 0)
+            client_hello.supported_versions
+        else
+            supportedVersionsFromMax(client_hello.vers);
         self.version = self.config.mutualVersion(client_versions);
         if (self.version) |ver| {
             self.in.ver = ver;

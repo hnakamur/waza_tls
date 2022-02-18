@@ -170,7 +170,7 @@ pub const ClientHelloMsg = struct {
     secure_renegotiation: []const u8 = "",
     alpn_protocols: []const []const u8 = &[_][]u8{},
     scts: bool = false,
-    supported_versions: ?[]const ProtocolVersion = null,
+    supported_versions: []const ProtocolVersion = &[_]ProtocolVersion{},
     cookie: []const u8 = "",
     key_shares: []KeyShare = &[_]KeyShare{},
     early_data: bool = false,
@@ -188,7 +188,7 @@ pub const ClientHelloMsg = struct {
         if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
         freeOptionalField(self, allocator, "supported_signature_algorithms");
         freeOptionalField(self, allocator, "supported_signature_algorithms_cert");
-        freeOptionalField(self, allocator, "supported_versions");
+        if (self.supported_versions.len > 0) allocator.free(self.supported_versions);
         if (self.key_shares.len > 0) {
             for (self.key_shares) |*key_share| key_share.deinit(allocator);
             allocator.free(self.key_shares);
@@ -462,10 +462,17 @@ pub const ClientHelloMsg = struct {
             try writeInt(u16, ExtensionType.Sct, writer);
             try writeInt(u16, 0, writer); // empty extension_data
         }
-        if (self.supported_versions) |versions| {
+        if (self.supported_versions.len > 0) {
             // RFC 8446, Section 4.2.1
             try writeInt(u16, ExtensionType.SupportedVersions, writer);
-            try writeLenLenAndIntSlice(u16, u8, u16, ProtocolVersion, versions, writer);
+            try writeLenLenAndIntSlice(
+                u16,
+                u8,
+                u16,
+                ProtocolVersion,
+                self.supported_versions,
+                writer,
+            );
         }
         if (self.cookie.len > 0) {
             // RFC 8446, Section 4.2.2

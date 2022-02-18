@@ -23,8 +23,22 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        // For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
+        try self.processClientHello(allocator);
+    }
+
+    pub fn processClientHello(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        // if (self.client_hello.supported_versions) {
+
+        // }
         _ = self;
         _ = allocator;
+        // self.hello = ServerHelloMsg{
+        //     // TLS 1.3 froze the ServerHello.legacy_version field, and uses
+        //     // supported_versions instead. See RFC 8446, sections 4.1.3 and 4.2.1.
+        //     .vers = .v1_2,
+        //     .supported_version = self.conn.version.?,
+        // };
         @panic("not implemented yet");
     }
 };
