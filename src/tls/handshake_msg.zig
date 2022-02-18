@@ -188,7 +188,10 @@ pub const ClientHelloMsg = struct {
         if (self.session_ticket.len > 0) allocator.free(self.session_ticket);
         if (self.supported_points.len > 0) allocator.free(self.supported_points);
         if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
-        if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
+        if (self.alpn_protocols.len > 0) {
+            for (self.alpn_protocols) |protocol| allocator.free(protocol);
+            allocator.free(self.alpn_protocols);
+        }
         if (self.supported_signature_algorithms.len > 0) {
             allocator.free(self.supported_signature_algorithms);
         }
@@ -814,10 +817,13 @@ pub const ServerHelloMsg = struct {
 
 pub const CertificateMsg = struct {
     raw: ?[]const u8 = null,
-    certificates: []const []const u8 = undefined,
+    certificates: []const []const u8 = &[_][]u8{},
 
     pub fn deinit(self: *CertificateMsg, allocator: mem.Allocator) void {
-        allocator.free(self.certificates);
+        if (self.certificates.len > 0) {
+            for (self.certificates) |certificate| allocator.free(certificate);
+            allocator.free(self.certificates);
+        }
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -1187,10 +1193,16 @@ fn readStringList(
     bv.pos = start_pos;
 
     var list = try allocator.alloc([]const u8, n);
-    errdefer allocator.free(list);
+    errdefer {
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            allocator.free(list[i]);
+        }
+        allocator.free(list);
+    }
     n = 0;
     while (bv.pos < end_pos) {
-        list[n] = try readString(LenType2, bv);
+        list[n] = try allocator.dupe(u8, try readString(LenType2, bv));
         n += 1;
     }
     return list;
@@ -1615,9 +1627,13 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]SignatureScheme{.pkcs1_with_sha256},
     );
     errdefer allocator.free(supported_signature_algorithms_cert);
+    const protocol1 = try allocator.dupe(u8, "http/1.1");
+    errdefer allocator.free(protocol1);
+    const protocol2 = try allocator.dupe(u8, "spdy/1");
+    errdefer allocator.free(protocol2);
     const alpn_protocols = try allocator.dupe(
         []const u8,
-        &[_][]const u8{ "http/1.1", "spdy/1" },
+        &[_][]const u8{ protocol1, protocol2 },
     );
     errdefer allocator.free(alpn_protocols);
     const supported_versions = try allocator.dupe(
@@ -2080,9 +2096,13 @@ test "CertificateMsg.unmarshal" {
 }
 
 fn testCreateCertificateMsg(allocator: mem.Allocator) !CertificateMsg {
+    const cert1 = try allocator.dupe(u8, "cert1");
+    errdefer allocator.free(cert1);
+    const cert2 = try allocator.dupe(u8, "cert2");
+    errdefer allocator.free(cert2);
     const certificates = try allocator.dupe(
         []const u8,
-        &[_][]const u8{ "cert1", "cert2" },
+        &[_][]const u8{ cert1, cert2 },
     );
     return CertificateMsg{
         .certificates = certificates,

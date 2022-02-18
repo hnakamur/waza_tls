@@ -82,7 +82,7 @@ pub const ServerHandshakeStateTls12 = struct {
     session_state: ?SessionState = null,
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
-    cert_chain: ?*CertificateChain = null,
+    cert_chain: ?*const CertificateChain = null,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls12 {
         return .{ .conn = conn, .client_hello = client_hello };
@@ -314,8 +314,8 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.conn.writeRecord(allocator, .handshake, server_hello_bytes);
 
         {
-            const certificates = try allocator.dupe(
-                []const u8,
+            const certificates = try memx.dupeStringList(
+                allocator,
                 self.cert_chain.?.certificate_chain,
             );
             var cert_msg = CertificateMsg{ .certificates = certificates };

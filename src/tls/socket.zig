@@ -391,8 +391,10 @@ test "ClientServer_tls13_p256" {
     }.runTest();
 }
 
+const skip_communicate_to_outside = false;
+
 test "Connect to localhost" {
-    if (true) return error.SkipZigTest;
+    if (skip_communicate_to_outside) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
@@ -430,7 +432,7 @@ test "Connect to localhost" {
 }
 
 test "Connect to Internet" {
-    if (true) return error.SkipZigTest;
+    if (skip_communicate_to_outside) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 

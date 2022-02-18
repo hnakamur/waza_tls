@@ -20,6 +20,26 @@ pub fn containsScalarFn(
     return false;
 }
 
+pub fn dupeStringList(
+    allocator: mem.Allocator,
+    string_list: []const []const u8,
+) ![]const []const u8 {
+    var ret_list = try allocator.alloc([]const u8, string_list.len);
+    var n: usize = 0;
+    errdefer {
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            allocator.free(ret_list[i]);
+        }
+        allocator.free(ret_list);
+    }
+    for (string_list) |s, i| {
+        ret_list[i] = try allocator.dupe(u8, s);
+        n += 1;
+    }
+    return ret_list;
+}
+
 pub fn deinitArrayListAndElems(
     comptime T: type,
     list: *std.ArrayListUnmanaged(T),

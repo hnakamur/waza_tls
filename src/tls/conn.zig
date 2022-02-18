@@ -518,11 +518,14 @@ pub const Conn = struct {
             else
                 &[_]SignatureScheme{};
 
+            var server_name = try allocator.dupe(u8, hostnameInSni(self.config.server_name));
+            errdefer allocator.free(server_name);
+
             break :blk ClientHelloMsg{
                 .vers = cli_hello_ver,
                 .random = random[0..random_length],
                 .session_id = session_id[0..random_length],
-                .server_name = hostnameInSni(self.config.server_name),
+                .server_name = server_name,
                 .cipher_suites = cipher_suites,
                 .compression_methods = compression_methods,
                 .supported_curves = supported_curves,
