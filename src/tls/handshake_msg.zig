@@ -193,6 +193,7 @@ pub const ClientHelloMsg = struct {
             allocator.free(self.supported_signature_algorithms_cert);
         }
         if (self.supported_versions.len > 0) allocator.free(self.supported_versions);
+        if (self.cookie.len > 0) allocator.free(self.cookie);
         if (self.key_shares.len > 0) {
             for (self.key_shares) |*key_share| key_share.deinit(allocator);
             allocator.free(self.key_shares);
@@ -356,7 +357,7 @@ pub const ClientHelloMsg = struct {
                     if (cookie.len == 0) {
                         return error.EmptyCookie;
                     }
-                    self.cookie = cookie;
+                    self.cookie = try allocator.dupe(u8, cookie);
                 },
                 .KeyShare => {
                     // RFC 8446, Section 4.2.
@@ -574,7 +575,7 @@ pub const ServerHelloMsg = struct {
     supported_points: []const EcPointFormat = &[_]EcPointFormat{},
 
     // HelloRetryRequest extensions
-    cookie: ?[]const u8 = null,
+    cookie: []const u8 = "",
     selected_group: ?CurveId = null,
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
@@ -585,6 +586,7 @@ pub const ServerHelloMsg = struct {
             for (self.scts) |sct| allocator.free(sct);
             allocator.free(self.scts);
         }
+        if (self.cookie.len > 0) allocator.free(self.cookie);
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -670,7 +672,7 @@ pub const ServerHelloMsg = struct {
                     if (cookie.len == 0) {
                         return error.EmptyCookie;
                     }
-                    self.cookie = cookie;
+                    self.cookie = try allocator.dupe(u8, cookie);
                 },
                 .KeyShare => {
                     // This extension has different formats in SH and HRR, accept either
@@ -778,11 +780,11 @@ pub const ServerHelloMsg = struct {
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, selected_identity, writer);
         }
-        if (self.cookie) |cookie| {
+        if (self.cookie.len > 0) {
             try writeInt(u16, ExtensionType.Cookie, writer);
-            const ext_len = intTypeLen(u16) + cookie.len;
+            const ext_len = intTypeLen(u16) + self.cookie.len;
             try writeInt(u16, ext_len, writer);
-            try writeLenAndBytes(u16, cookie, writer);
+            try writeLenAndBytes(u16, self.cookie, writer);
         }
         if (self.selected_group) |curve| {
             try writeInt(u16, ExtensionType.KeyShare, writer);
@@ -1608,6 +1610,8 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]ProtocolVersion{ .v1_3, .v1_2 },
     );
     errdefer allocator.free(supported_versions);
+    const cookie = try allocator.dupe(u8, "my cookie");
+    errdefer allocator.free(cookie);
     var key_share_data = try allocator.dupe(u8, "public key here");
     errdefer allocator.free(key_share_data);
     const key_shares = try allocator.dupe(
@@ -1653,7 +1657,7 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         .alpn_protocols = alpn_protocols,
         .scts = true,
         .supported_versions = supported_versions,
-        .cookie = "my cookie",
+        .cookie = cookie,
         .key_shares = key_shares,
         .early_data = true,
         .psk_modes = psk_modes,
