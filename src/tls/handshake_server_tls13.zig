@@ -4,6 +4,8 @@ const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
+const CurveId = @import("handshake_msg.zig").CurveId;
+const KeyShare = @import("handshake_msg.zig").KeyShare;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
@@ -12,6 +14,8 @@ const has_aes_gcm_hardware_support = @import("cipher_suites.zig").has_aes_gcm_ha
 const aesgcmPreferred = @import("cipher_suites.zig").aesgcmPreferred;
 const default_cipher_suites_tls13 = @import("cipher_suites.zig").default_cipher_suites_tls13;
 const default_cipher_suites_tls13_no_aes = @import("cipher_suites.zig").default_cipher_suites_tls13_no_aes;
+const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
+const crypto = @import("crypto.zig");
 const memx = @import("../memx.zig");
 
 pub const ServerHandshakeStateTls13 = struct {
@@ -20,6 +24,8 @@ pub const ServerHandshakeStateTls13 = struct {
     hello: ?ServerHelloMsg = null,
     master_secret: ?[]const u8 = null,
     cert_chain: ?*CertificateChain = null,
+    shared_key: []const u8 = "",
+    transcript: crypto.Hash = undefined,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls13 {
         return .{ .conn = conn, .client_hello = client_hello };
@@ -29,6 +35,7 @@ pub const ServerHandshakeStateTls13 = struct {
         self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.master_secret) |s| allocator.free(s);
+        if (self.shared_key.len > 0) allocator.free(self.shared_key);
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -112,27 +119,55 @@ pub const ServerHandshakeStateTls13 = struct {
             return error.NoCipherSuiteSupported;
         }
         self.conn.cipher_suite_id = suite.?.id;
+        self.transcript = crypto.Hash.init(suite.?.hash_type);
 
-        // pub const ServerHelloMsg = struct {
-        //     raw: ?[]const u8 = null,
-        //     vers: ProtocolVersion = undefined,
-        //     random: []const u8 = undefined,
-        //     session_id: []const u8 = undefined,
-        //     cipher_suite: ?CipherSuiteId = null,
-        //     compression_method: CompressionMethod,
-        //     ocsp_stapling: bool = undefined,
-        //     ticket_supported: bool = false,
-        //     secure_renegotiation_supported: bool = false,
-        //     secure_renegotiation: []const u8 = "",
-        //     alpn_protocol: ?[]const u8 = null,
-        //     scts: ?[]const []const u8 = null,
-        //     supported_version: ?ProtocolVersion = null,
-        //     server_share: ?KeyShare = null,
-        //     selected_identity: ?u16 = null,
-        //     supported_points: ?[]const EcPointFormat = null,
-        //     // HelloRetryRequest extensions
-        //     cookie: ?[]const u8 = null,
-        //     selected_group: ?CurveId = null,
+        // Pick the ECDHE group in server preference order, but give priority to
+        // groups with a key share, to avoid a HelloRetryRequest round-trip.
+        var selected_group: ?CurveId = null;
+        var client_key_share: ?*const KeyShare = null;
+        group_selection: for (self.conn.config.curve_preferences) |preferred_group| {
+            for (self.client_hello.key_shares) |*ks| {
+                if (ks.group == preferred_group) {
+                    selected_group = ks.group;
+                    client_key_share = ks;
+                    break :group_selection;
+                }
+            }
+            if (selected_group != null) {
+                continue;
+            }
+            if (memx.containsScalar(CurveId, self.client_hello.supported_curves, preferred_group)) {
+                selected_group = preferred_group;
+            }
+        }
+        if (selected_group == null) {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.NoCurveSupported;
+        }
+        if (client_key_share == null) {
+            @panic("not implemented yet");
+        }
+
+        if (!selected_group.?.isSupported()) {
+            self.conn.sendAlert(.internal_error) catch {};
+            return error.UnsupportedCurveInPreferences;
+        }
+
+        var params = EcdheParameters.generate(
+            allocator,
+            selected_group.?,
+            self.conn.config.random,
+        ) catch |err| {
+            self.conn.sendAlert(.internal_error) catch {};
+            return err;
+        };
+        defer params.deinit(allocator);
+
+        var server_share = KeyShare{
+            .group = selected_group.?,
+            .data = try allocator.dupe(u8, params.publicKey()),
+        };
+        errdefer server_share.deinit(allocator);
 
         self.hello = ServerHelloMsg{
             // TLS 1.3 froze the ServerHello.legacy_version field, and uses
@@ -143,7 +178,13 @@ pub const ServerHandshakeStateTls13 = struct {
             .cipher_suite = suite.?.id,
             .compression_method = .none,
             .supported_version = self.conn.version.?,
+            .server_share = server_share,
         };
-        @panic("not implemented yet");
+
+        self.shared_key = try params.sharedKey(allocator, client_key_share.?.data);
+
+        if (self.client_hello.server_name) |server_name| {
+            self.conn.server_name = try allocator.dupe(u8, server_name);
+        }
     }
 };

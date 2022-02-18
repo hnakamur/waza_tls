@@ -576,6 +576,7 @@ pub const ServerHelloMsg = struct {
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
         allocator.free(self.random);
+        if (self.server_share) |*server_share| server_share.deinit(allocator);
         freeOptionalField(self, allocator, "supported_points");
         freeOptionalField(self, allocator, "scts");
         freeOptionalField(self, allocator, "raw");
@@ -672,7 +673,7 @@ pub const ServerHelloMsg = struct {
                         self.selected_group = try readEnum(CurveId, bv);
                     } else {
                         const group = try readEnum(CurveId, bv);
-                        const data = try readString(u16, bv);
+                        const data = try allocator.dupe(u8, try readString(u16, bv));
                         self.server_share = .{ .group = group, .data = data };
                     }
                 },
@@ -1070,6 +1071,7 @@ pub const CurveId = enum(u16) {
     secp384r1 = 24,
     secp521r1 = 25,
     x25519 = 29,
+    _,
 
     pub fn fromOid(oid: asn1.ObjectIdentifier) ?CurveId {
         if (oid.eql(oid_named_curve_p256)) {
@@ -1080,6 +1082,14 @@ pub const CurveId = enum(u16) {
             return CurveId.secp521r1;
         }
         return null;
+    }
+
+    pub fn isSupported(id: CurveId) bool {
+        return switch (id) {
+            .secp256r1, .x25519 => true,
+            .secp384r1, .secp521r1 => @panic("not implmented yet"),
+            else => false,
+        };
     }
 };
 
@@ -1829,6 +1839,8 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
         &[_]EcPointFormat{.uncompressed},
     );
     errdefer allocator.free(supported_points);
+    const key_share_data = try allocator.dupe(u8, "public key here");
+    errdefer allocator.free(key_share_data);
     return ServerHelloMsg{
         .vers = .v1_3,
         .random = random,
@@ -1842,7 +1854,7 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
         .alpn_protocol = "http/1.1",
         .scts = scts,
         .supported_version = .v1_3,
-        .server_share = .{ .group = .x25519, .data = "public key here" },
+        .server_share = .{ .group = .x25519, .data = key_share_data },
         .selected_identity = 0x4321,
         .supported_points = supported_points,
     };
@@ -1906,6 +1918,8 @@ fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHell
         &[_]EcPointFormat{.uncompressed},
     );
     errdefer allocator.free(supported_points);
+    const key_share_data = try allocator.dupe(u8, "public key here");
+    errdefer allocator.free(key_share_data);
     return ServerHelloMsg{
         .vers = .v1_3,
         .random = random,
@@ -1919,7 +1933,7 @@ fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHell
         .alpn_protocol = "http/1.1",
         .scts = scts,
         .supported_version = .v1_3,
-        .server_share = .{ .group = .x25519, .data = "public key here" },
+        .server_share = .{ .group = .x25519, .data = key_share_data },
         .selected_identity = 0x4321,
         .supported_points = supported_points,
     };

@@ -485,6 +485,10 @@ pub const Conn = struct {
 
         if (client_hello.supported_versions[0] == .v1_3) {
             const curve_id = self.config.curve_preferences[0];
+            if (!curve_id.isSupported()) {
+                return error.UnsupportedCurveInPreferences;
+            }
+
             ecdhe_params.* = try EcdheParameters.generate(allocator, curve_id, self.config.random);
 
             var key_share_data = try allocator.dupe(u8, ecdhe_params.*.?.publicKey());
