@@ -165,7 +165,7 @@ pub const ClientHelloMsg = struct {
     ticket_supported: bool = false,
     session_ticket: []const u8 = "",
     supported_signature_algorithms: []const SignatureScheme = &[_]SignatureScheme{},
-    supported_signature_algorithms_cert: ?[]const SignatureScheme = null,
+    supported_signature_algorithms_cert: []const SignatureScheme = &[_]SignatureScheme{},
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
     alpn_protocols: []const []const u8 = &[_][]u8{},
@@ -189,7 +189,9 @@ pub const ClientHelloMsg = struct {
         if (self.supported_signature_algorithms.len > 0) {
             allocator.free(self.supported_signature_algorithms);
         }
-        freeOptionalField(self, allocator, "supported_signature_algorithms_cert");
+        if (self.supported_signature_algorithms_cert.len > 0) {
+            allocator.free(self.supported_signature_algorithms_cert);
+        }
         if (self.supported_versions.len > 0) allocator.free(self.supported_versions);
         if (self.key_shares.len > 0) {
             for (self.key_shares) |*key_share| key_share.deinit(allocator);
@@ -442,10 +444,17 @@ pub const ClientHelloMsg = struct {
                 writer,
             );
         }
-        if (self.supported_signature_algorithms_cert) |sig_and_algs| {
+        if (self.supported_signature_algorithms_cert.len > 0) {
             // RFC 8446, Section 4.2.3
             try writeInt(u16, ExtensionType.SignatureAlgorithmsCert, writer);
-            try writeLenLenAndIntSlice(u16, u16, u16, SignatureScheme, sig_and_algs, writer);
+            try writeLenLenAndIntSlice(
+                u16,
+                u16,
+                u16,
+                SignatureScheme,
+                self.supported_signature_algorithms_cert,
+                writer,
+            );
         }
         if (self.secure_renegotiation_supported) {
             // RFC 5746, Section 3.2
