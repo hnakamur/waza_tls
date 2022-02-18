@@ -184,8 +184,8 @@ pub const ServerHandshakeStateTls13 = struct {
 
         self.shared_key = try params.sharedKey(allocator, client_key_share.?.data);
 
-        if (self.client_hello.server_name) |server_name| {
-            self.conn.server_name = try allocator.dupe(u8, server_name);
+        if (self.client_hello.server_name.len > 0) {
+            self.conn.server_name = try allocator.dupe(u8, self.client_hello.server_name);
         }
     }
 

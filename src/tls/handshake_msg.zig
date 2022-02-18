@@ -158,7 +158,7 @@ pub const ClientHelloMsg = struct {
     session_id: []const u8 = undefined,
     cipher_suites: []const CipherSuiteId,
     compression_methods: []const CompressionMethod,
-    server_name: ?[]const u8 = null,
+    server_name: []const u8 = "",
     ocsp_stapling: bool = undefined,
     supported_curves: []const CurveId = &[_]CurveId{},
     supported_points: []const EcPointFormat = &[_]EcPointFormat{},
@@ -183,6 +183,7 @@ pub const ClientHelloMsg = struct {
         allocator.free(self.session_id);
         allocator.free(self.cipher_suites);
         allocator.free(self.compression_methods);
+        if (self.server_name.len > 0) allocator.free(self.server_name);
         if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
         if (self.supported_points.len > 0) allocator.free(self.supported_points);
         if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
@@ -282,7 +283,7 @@ pub const ClientHelloMsg = struct {
                         if (name_type != 0) {
                             continue;
                         }
-                        if (self.server_name) |_| {
+                        if (self.server_name.len > 0) {
                             // Multiple names of the same name_type are prohibited.
                             return error.MultipleSameNameTypeServerName;
                         }
@@ -290,7 +291,7 @@ pub const ClientHelloMsg = struct {
                         if (mem.endsWith(u8, server_name, ".")) {
                             return error.SniWithTrailingDot;
                         }
-                        self.server_name = server_name;
+                        self.server_name = try allocator.dupe(u8, server_name);
                     }
                 },
                 .StatusRequest => {
@@ -402,15 +403,15 @@ pub const ClientHelloMsg = struct {
     }
 
     fn writeExtensions(self: *const ClientHelloMsg, writer: anytype) !void {
-        if (self.server_name) |server_name| {
+        if (self.server_name.len > 0) {
             // RFC 6066, Section 3
             try writeInt(u16, ExtensionType.ServerName, writer);
-            const len2 = intTypeLen(u8) + intTypeLen(u16) + server_name.len;
+            const len2 = intTypeLen(u8) + intTypeLen(u16) + self.server_name.len;
             const len1 = intTypeLen(u16) + len2;
             try writeInt(u16, len1, writer);
             try writeInt(u16, len2, writer);
             try writeInt(u8, 0, writer); // name_type = host_name;
-            try writeLenAndBytes(u16, server_name, writer);
+            try writeLenAndBytes(u16, self.server_name, writer);
         }
         if (self.ocsp_stapling) {
             // RFC 4366, Section 3.6
@@ -1583,6 +1584,8 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]CompressionMethod{.none},
     );
     errdefer allocator.free(compression_methods);
+    const server_name = try allocator.dupe(u8, "example.com");
+    errdefer allocator.free(server_name);
     const supported_curves = try allocator.dupe(CurveId, &[_]CurveId{.x25519});
     errdefer allocator.free(supported_curves);
     const supported_points = try allocator.dupe(
@@ -1644,7 +1647,7 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         .session_id = session_id,
         .cipher_suites = cipher_suites,
         .compression_methods = compression_methods,
-        .server_name = "example.com",
+        .server_name = server_name,
         .ocsp_stapling = true,
         .supported_curves = supported_curves,
         .supported_points = supported_points,

@@ -61,7 +61,7 @@ pub const ServerHandshakeState = union(ProtocolVersion) {
 
     pub fn handshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
         switch (self.*) {
-            .v1_3 =>|*hs| try hs.handshake(allocator),
+            .v1_3 => |*hs| try hs.handshake(allocator),
             .v1_2 => |*hs| try hs.handshake(allocator),
             .v1_1, .v1_0 => @panic("unsupported version"),
         }
@@ -159,10 +159,8 @@ pub const ServerHandshakeStateTls12 = struct {
             .ocsp_stapling = false,
         };
 
-        if (self.client_hello.server_name) |server_name| {
-            if (server_name.len > 0) {
-                self.conn.server_name = try allocator.dupe(u8, server_name);
-            }
+        if (self.client_hello.server_name.len > 0) {
+            self.conn.server_name = try allocator.dupe(u8, self.client_hello.server_name);
         }
 
         if (negotiateAlpn(
