@@ -11,7 +11,7 @@ const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const CertPool = @import("cert_pool.zig").CertPool;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
-const makeCipherPreferenceList12 = @import("cipher_suites.zig").makeCipherPreferenceList12;
+const makeCipherPreferenceList = @import("cipher_suites.zig").makeCipherPreferenceList;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
@@ -325,7 +325,8 @@ pub const Conn = struct {
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
         self.handshake_state = blk: {
-            var client_hello = try self.makeClientHello(allocator);
+            var ecdhe_params: EcdheParameters = undefined;
+            var client_hello = try self.makeClientHello(allocator, &ecdhe_params);
 
             const client_hello_bytes = try client_hello.marshal(allocator);
             errdefer client_hello.deinit(allocator);
@@ -360,8 +361,6 @@ pub const Conn = struct {
                 return error.DowngradeAttemptDetected;
             }
 
-            // TODO: implement
-            var ecdhe_params: EcdheParameters = undefined;
 
             break :blk HandshakeState{
                 .client = if (self.version.? == .v1_3)
@@ -395,7 +394,11 @@ pub const Conn = struct {
         try self.handshake_state.?.server.handshake(allocator);
     }
 
-    fn makeClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
+    fn makeClientHello(
+        self: *Conn,
+        allocator: mem.Allocator,
+        ecdhe_params: *EcdheParameters,
+    ) !ClientHelloMsg {
         const config = self.config;
         if (config.server_name.len == 0 and !config.insecure_skip_verify) {
             return error.EitherServerNameOrInsecureSkipVerifyMustBeSpecified;
@@ -432,8 +435,9 @@ pub const Conn = struct {
             const session_id = try generateRandom(allocator, self.config.random);
             errdefer allocator.free(session_id);
 
-            const cipher_suites = try makeCipherPreferenceList12(
+            const cipher_suites = try makeCipherPreferenceList(
                 allocator,
+                sup_vers[0],
                 self.config.cipher_suites,
             );
 
@@ -479,6 +483,8 @@ pub const Conn = struct {
         }
 
         if (client_hello.supported_versions.?[0] == .v1_3) {
+            const curve_id = self.config.curve_preferences[0];
+            ecdhe_params.* = try EcdheParameters.generate(allocator, curve_id, self.config.random);
             @panic("not implemented yet");
         }
 

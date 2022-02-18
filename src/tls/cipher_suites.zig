@@ -89,7 +89,7 @@ const cipher_suites_tls13 = [_]CipherSuiteTls13{
     },
 };
 
-fn cipherSuiteTls13ById(id:CipherSuiteId) ?*const CipherSuiteTls13 {
+fn cipherSuiteTls13ById(id: CipherSuiteId) ?*const CipherSuiteTls13 {
     for (cipher_suites_tls13) |*suite| {
         if (suite.id == id) {
             return suite;
@@ -221,8 +221,9 @@ fn ecdheRsaKa(version: ProtocolVersion) KeyAgreement {
     return .{ .ecdhe = EcdheKeyAgreement{ .is_rsa = true, .version = version } };
 }
 
-pub fn makeCipherPreferenceList12(
+pub fn makeCipherPreferenceList(
     allocator: mem.Allocator,
+    max_supported_version: ProtocolVersion,
     config_cipher_suites: []const CipherSuiteId,
 ) ![]const CipherSuiteId {
     var cipher_suites = try std.ArrayListUnmanaged(CipherSuiteId).initCapacity(
@@ -240,6 +241,15 @@ pub fn makeCipherPreferenceList12(
             try cipher_suites.append(allocator, suite_id);
         }
     }
+
+    if (max_supported_version == .v1_3) {
+        const suite_tls13 = if (has_aes_gcm_hardware_support)
+            &default_cipher_suites_tls13
+        else
+            &default_cipher_suites_tls13_no_aes;
+        try cipher_suites.appendSlice(allocator, suite_tls13);
+    }
+
     return cipher_suites.toOwnedSlice(allocator);
 }
 

@@ -172,7 +172,7 @@ pub const ClientHelloMsg = struct {
     scts: bool = false,
     supported_versions: ?[]const ProtocolVersion = null,
     cookie: []const u8 = "",
-    key_shares: ?[]const KeyShare = null,
+    key_shares: []KeyShare = &[_]KeyShare{},
     early_data: bool = false,
     psk_modes: ?[]const PskMode = null,
     psk_identities: ?[]const PskIdentity = null,
@@ -189,7 +189,10 @@ pub const ClientHelloMsg = struct {
         freeOptionalField(self, allocator, "supported_signature_algorithms");
         freeOptionalField(self, allocator, "supported_signature_algorithms_cert");
         freeOptionalField(self, allocator, "supported_versions");
-        freeOptionalField(self, allocator, "key_shares");
+        if (self.key_shares.len > 0) {
+            for (self.key_shares) |*key_share| key_share.deinit(allocator);
+            allocator.free(self.key_shares);
+        }
         freeOptionalField(self, allocator, "psk_modes");
         freeOptionalField(self, allocator, "psk_identities");
         freeOptionalField(self, allocator, "psk_binders");
@@ -469,17 +472,17 @@ pub const ClientHelloMsg = struct {
             try writeInt(u16, ExtensionType.Cookie, writer);
             try writeLenLenAndBytes(u16, u16, self.cookie, writer);
         }
-        if (self.key_shares) |key_shares| {
+        if (self.key_shares.len > 0) {
             // RFC 8446, Section 4.2.8
             try writeInt(u16, ExtensionType.KeyShare, writer);
             var len2: usize = 0;
-            for (key_shares) |*ks| {
+            for (self.key_shares) |*ks| {
                 len2 += intTypeLen(u16) * 2 + ks.data.len;
             }
             const len1 = intTypeLen(u16) + len2;
             try writeInt(u16, len1, writer);
             try writeInt(u16, len2, writer);
-            for (key_shares) |*ks| {
+            for (self.key_shares) |*ks| {
                 try writeInt(u16, ks.group, writer);
                 try writeLenAndBytes(u16, ks.data, writer);
             }
@@ -1065,7 +1068,11 @@ pub const EcPointFormat = enum(u8) {
 // TLS 1.3 Key Share. See RFC 8446, Section 4.2.8.
 pub const KeyShare = struct {
     group: CurveId,
-    data: []const u8,
+    data: []const u8 = "",
+
+    pub fn deinit(self: *KeyShare, allocator: mem.Allocator) void {
+        if (self.data.len > 0) allocator.free(self.data);
+    }
 };
 
 // TLS 1.3 PSK Key Exchange Modes. See RFC 8446, Section 4.2.9.
@@ -1180,7 +1187,7 @@ test "readString empty" {
     try testing.expectEqualStrings("", try readString(u8, &bv));
 }
 
-fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare {
+fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]KeyShare {
     const list_len = try bv.readIntBig(u16);
     try bv.ensureRestLen(list_len);
 
@@ -1205,7 +1212,7 @@ fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]const KeyShare 
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const group = try bv.readEnum(CurveId, .Big);
-        const data = try readString(u16, bv);
+        const data = try allocator.dupe(u8, try readString(u16, bv));
         values[i] = .{ .group = group, .data = data };
     }
     return values;
@@ -1556,9 +1563,11 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]ProtocolVersion{ .v1_3, .v1_2 },
     );
     errdefer allocator.free(supported_versions);
+    var key_share_data = try allocator.dupe(u8, "public key here");
+    errdefer allocator.free(key_share_data);
     const key_shares = try allocator.dupe(
         KeyShare,
-        &[_]KeyShare{.{ .group = .x25519, .data = "public key here" }},
+        &[_]KeyShare{.{ .group = .x25519, .data = key_share_data }},
     );
     errdefer allocator.free(key_shares);
     const psk_modes = try allocator.dupe(

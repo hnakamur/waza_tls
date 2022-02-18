@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 
 // supportedSignatureAlgorithms contains the signature and hash algorithms that
