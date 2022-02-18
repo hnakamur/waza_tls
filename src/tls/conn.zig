@@ -96,6 +96,8 @@ pub const Conn = struct {
         insecure_skip_verify: bool = false,
         server_name: []const u8 = "",
 
+        random: std.rand.Random = std.crypto.random,
+
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
         }
@@ -397,9 +399,9 @@ pub const Conn = struct {
         }
 
         var client_hello: ClientHelloMsg = blk: {
-            const random = try generateRandom(allocator);
+            const random = try generateRandom(allocator, self.config.random);
             errdefer allocator.free(random);
-            const session_id = try generateRandom(allocator);
+            const session_id = try generateRandom(allocator, self.config.random);
             errdefer allocator.free(session_id);
 
             const cipher_suites = try makeCipherPreferenceList12(

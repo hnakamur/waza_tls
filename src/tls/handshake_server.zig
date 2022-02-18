@@ -98,6 +98,7 @@ pub const ServerHandshakeStateTls12 = struct {
         self.conn.buffering = true;
         if (self.checkForResumption()) {
             // TODO: implement
+            @panic("not implemented yet");
         } else {
             // The client didn't include a session ticket, or it wasn't
             // valid so we do a full handshake.
@@ -125,7 +126,8 @@ pub const ServerHandshakeStateTls12 = struct {
             return error.ClientNotSupportUncompressedMethod;
         }
 
-        const random = try generateRandom(allocator);
+        const random = try generateRandom(allocator, self.conn.config.random);
+
         // TODO: stop hardcoding field values.
         var hello = ServerHelloMsg{
             .vers = self.conn.version.?,

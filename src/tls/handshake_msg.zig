@@ -1399,14 +1399,17 @@ fn toInt(comptime T: type, val: anytype) T {
     };
 }
 
-pub fn generateRandom(allocator: mem.Allocator) !*[random_length]u8 {
-    var random = try allocator.alloc(u8, random_length);
-    fillRandomBytes(random[0..random_length]);
-    return random[0..random_length];
+pub fn generateRandom(
+    allocator: mem.Allocator,
+    random: std.rand.Random,
+) !*[random_length]u8 {
+    var random_bytes = try allocator.alloc(u8, random_length);
+    fillRandomBytes(random, random_bytes[0..random_length]);
+    return random_bytes[0..random_length];
 }
 
-pub fn fillRandomBytes(out: *[random_length]u8) void {
-    crypto.random.bytes(out[0..random_length]);
+pub fn fillRandomBytes(random: std.rand.Random, out: *[random_length]u8) void {
+    random.bytes(out[0..random_length]);
 }
 
 const testing = std.testing;
