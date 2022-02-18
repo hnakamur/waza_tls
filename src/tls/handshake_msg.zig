@@ -529,7 +529,7 @@ pub const ServerHelloMsg = struct {
     vers: ProtocolVersion = undefined,
     random: []const u8 = undefined,
     session_id: []const u8 = undefined,
-    cipher_suite: CipherSuiteId,
+    cipher_suite: ?CipherSuiteId = null,
     compression_method: CompressionMethod,
     ocsp_stapling: bool = undefined,
     ticket_supported: bool = false,
@@ -682,7 +682,7 @@ pub const ServerHelloMsg = struct {
         assert(self.random.len == random_length);
         try writeBytes(self.random, writer);
         try writeLenAndBytes(u8, self.session_id, writer);
-        try writeInt(u16, self.cipher_suite, writer);
+        try writeInt(u16, self.cipher_suite.?, writer);
         try writeInt(u8, self.compression_method, writer);
 
         const ext_len: usize = try countLength(*const ServerHelloMsg, writeExtensions, self);
@@ -1404,12 +1404,8 @@ pub fn generateRandom(
     random: std.rand.Random,
 ) !*[random_length]u8 {
     var random_bytes = try allocator.alloc(u8, random_length);
-    fillRandomBytes(random, random_bytes[0..random_length]);
+    random.bytes(random_bytes[0..random_length]);
     return random_bytes[0..random_length];
-}
-
-pub fn fillRandomBytes(random: std.rand.Random, out: *[random_length]u8) void {
-    random.bytes(out[0..random_length]);
 }
 
 const testing = std.testing;

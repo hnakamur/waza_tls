@@ -68,7 +68,7 @@ const default_curve_preferences = [_]CurveId{
 // downgrade_canary_tls12 or downgrade_canary_tls11 is embedded in the server
 // random as a downgrade protection if the server would be capable of
 // negotiating a higher version. See RFC 8446, Section 4.1.3.
-const downgrade_canary_tls12 = "DOWNGRD\x01";
+pub const downgrade_canary_tls12 = "DOWNGRD\x01";
 const downgrade_canary_tls11 = "DOWNGRD\x00";
 
 // Currently Conn is not thread-safe.
@@ -154,18 +154,23 @@ pub const Conn = struct {
     };
 
     const FifoType = fifo.LinearFifo(u8, .{ .Static = max_plain_text });
-    config: Config,
-    // handshakes counts the number of handshakes performed on the
-    // connection so far. If renegotiation is disabled then this is either
-    // zero or one.
-    handshakes: usize = 0,
-    cipher_suite_id: ?CipherSuiteId = null,
+
     role: Role,
     allocator: mem.Allocator,
     stream: net.Stream,
     in: HalfConn,
     out: HalfConn,
+
     version: ?ProtocolVersion = null,
+    config: Config,
+
+    // handshakes counts the number of handshakes performed on the
+    // connection so far. If renegotiation is disabled then this is either
+    // zero or one.
+    handshakes: usize = 0,
+    cipher_suite_id: ?CipherSuiteId = null,
+    server_name: []const u8 = "",
+
     buffering: bool = false,
     send_buf: std.ArrayListUnmanaged(u8) = .{},
     packets_sent: usize = 0,
@@ -211,6 +216,7 @@ pub const Conn = struct {
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
         self.config.deinit(allocator);
         self.send_buf.deinit(allocator);
+        if (self.server_name.len > 0) allocator.free(self.server_name);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
         if (self.handshake_state) |*hs| hs.deinit(allocator);
         if (self.client_protocol.len > 0) allocator.free(self.client_protocol);

@@ -14,6 +14,7 @@ const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+const random_length = @import("handshake_msg.zig").random_length;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuiteTls12 = @import("cipher_suites.zig").CipherSuiteTls12;
 const selectCipherSuiteTls12 = @import("cipher_suites.zig").selectCipherSuiteTls12;
@@ -30,6 +31,7 @@ const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
+const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 
@@ -126,23 +128,54 @@ pub const ServerHandshakeStateTls12 = struct {
             return error.ClientNotSupportUncompressedMethod;
         }
 
-        const random = try generateRandom(allocator, self.conn.config.random);
+        var random = try allocator.alloc(u8, random_length);
+        errdefer allocator.free(random);
 
-        // TODO: stop hardcoding field values.
-        var hello = ServerHelloMsg{
-            .vers = self.conn.version.?,
-            .random = random,
-            .session_id = &[_]u8{0} ** 32,
-            .cipher_suite = .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256, // updated in doFullHandshake
-            .compression_method = .none,
-            .ocsp_stapling = false,
-        };
+        // Downgrade protection canaries. See RFC 8446, Section 4.1.3.
+        const max_vers = self.conn.config.maxSupportedVersion();
+        if (@enumToInt(max_vers) >= @enumToInt(ProtocolVersion.v1_2) and
+            @enumToInt(self.conn.version.?) < @enumToInt(max_vers) and
+            self.conn.version.? == .v1_2)
+        {
+            mem.copy(u8, random[24..], downgrade_canary_tls12);
+            self.conn.config.random.bytes(random[0..24]);
+        } else {
+            self.conn.config.random.bytes(random);
+        }
 
         if (self.client_hello.secure_renegotiation.len > 0) {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.InitialHandshakeWithRenegotiation;
         }
-        hello.secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported;
+
+        var hello = ServerHelloMsg{
+            .vers = self.conn.version.?,
+            .random = random,
+            .session_id = &[_]u8{0} ** 32,
+            .secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported,
+            .compression_method = .none,
+            .ocsp_stapling = false,
+        };
+
+        if (self.client_hello.server_name) |server_name| {
+            if (server_name.len > 0) {
+                self.conn.server_name = try allocator.dupe(u8, server_name);
+            }
+        }
+
+        if (negotiateAlpn(
+            self.conn.config.next_protos,
+            self.client_hello.alpn_protocols,
+        )) |selected_proto| {
+            hello.alpn_protocol = try allocator.dupe(u8, selected_proto);
+            self.conn.client_protocol = try allocator.dupe(u8, selected_proto);
+        } else |err| {
+            self.conn.sendAlert(.no_application_protocol) catch {};
+            return err;
+        }
+
+        // TODO: check client_hello
+        self.cert_chain = self.conn.config.getCertificate();
 
         self.ecdhe_ok = supportsEcdHe(
             &self.conn.config,
@@ -162,20 +195,22 @@ pub const ServerHandshakeStateTls12 = struct {
             );
         }
 
-        if (negotiateAlpn(
-            self.conn.config.next_protos,
-            self.client_hello.alpn_protocols,
-        )) |selected_proto| {
-            hello.alpn_protocol = try allocator.dupe(u8, selected_proto);
-            self.conn.client_protocol = try allocator.dupe(u8, selected_proto);
-        } else |err| {
-            self.conn.sendAlert(.no_application_protocol) catch {};
-            return err;
-        }
-
         self.hello = hello;
 
-        self.cert_chain = self.conn.config.getCertificate();
+        if (self.cert_chain) |cert_chain| {
+            // TODO: check private_key implements sing or decrypt method.
+            switch (cert_chain.private_key.?) {
+                .ecdsa, .ed25519 => self.ec_sign_ok = true,
+                .rsa => {
+                    self.rsa_sign_ok = true;
+                    self.rsa_decrypt_ok = true;
+                },
+                else => {
+                    self.conn.sendAlert(.internal_error) catch {};
+                    return error.UnsupportedSignKeyType;
+                },
+            }
+        }
     }
 
     // checkForResumption reports whether we should perform resumption on this connection.

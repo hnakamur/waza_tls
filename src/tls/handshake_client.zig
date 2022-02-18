@@ -364,7 +364,10 @@ pub const ClientHandshakeStateTls12 = struct {
     }
 
     fn pickCipherSuite(self: *ClientHandshakeStateTls12) !void {
-        if (mutualCipherSuiteTls12(self.hello.cipher_suites, self.server_hello.cipher_suite)) |suite| {
+        if (mutualCipherSuiteTls12(
+            self.hello.cipher_suites,
+            self.server_hello.cipher_suite.?,
+        )) |suite| {
             self.suite = suite;
             std.log.debug("ClientHandshakeStateTls12.pickCipherSuite, suite={}", .{suite});
             self.conn.cipher_suite_id = suite.id;
