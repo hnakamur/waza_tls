@@ -463,7 +463,7 @@ pub const Conn = struct {
             var sig_algs = if (@enumToInt(cli_hello_ver) > @enumToInt(ProtocolVersion.v1_2))
                 try allocator.dupe(SignatureScheme, supported_signature_algorithms)
             else
-                null;
+                &[_]SignatureScheme{};
 
             break :blk ClientHelloMsg{
                 .vers = cli_hello_ver,

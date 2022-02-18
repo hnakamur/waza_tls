@@ -164,7 +164,7 @@ pub const ClientHelloMsg = struct {
     supported_points: []const EcPointFormat = &[_]EcPointFormat{},
     ticket_supported: bool = false,
     session_ticket: []const u8 = "",
-    supported_signature_algorithms: ?[]const SignatureScheme = null,
+    supported_signature_algorithms: []const SignatureScheme = &[_]SignatureScheme{},
     supported_signature_algorithms_cert: ?[]const SignatureScheme = null,
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
@@ -186,7 +186,9 @@ pub const ClientHelloMsg = struct {
         if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
         if (self.supported_points.len > 0) allocator.free(self.supported_points);
         if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
-        freeOptionalField(self, allocator, "supported_signature_algorithms");
+        if (self.supported_signature_algorithms.len > 0) {
+            allocator.free(self.supported_signature_algorithms);
+        }
         freeOptionalField(self, allocator, "supported_signature_algorithms_cert");
         if (self.supported_versions.len > 0) allocator.free(self.supported_versions);
         if (self.key_shares.len > 0) {
@@ -428,10 +430,17 @@ pub const ClientHelloMsg = struct {
             try writeInt(u16, ExtensionType.SessionTicket, writer);
             try writeLenAndBytes(u16, self.session_ticket, writer);
         }
-        if (self.supported_signature_algorithms) |sig_and_algs| {
+        if (self.supported_signature_algorithms.len > 0) {
             // RFC 5246, Section 7.4.1.4.1
             try writeInt(u16, ExtensionType.SignatureAlgorithms, writer);
-            try writeLenLenAndIntSlice(u16, u16, u16, SignatureScheme, sig_and_algs, writer);
+            try writeLenLenAndIntSlice(
+                u16,
+                u16,
+                u16,
+                SignatureScheme,
+                self.supported_signature_algorithms,
+                writer,
+            );
         }
         if (self.supported_signature_algorithms_cert) |sig_and_algs| {
             // RFC 8446, Section 4.2.3
