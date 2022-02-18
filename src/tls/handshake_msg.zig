@@ -176,7 +176,7 @@ pub const ClientHelloMsg = struct {
     early_data: bool = false,
     psk_modes: []const PskMode = &[_]PskMode{},
     psk_identities: []const PskIdentity = &[_]PskIdentity{},
-    psk_binders: ?[]const []const u8 = null,
+    psk_binders: []const []const u8 = &[_][]u8{},
 
     pub fn deinit(self: *ClientHelloMsg, allocator: mem.Allocator) void {
         allocator.free(self.random);
@@ -199,7 +199,10 @@ pub const ClientHelloMsg = struct {
         }
         if (self.psk_modes.len > 0) allocator.free(self.psk_modes);
         if (self.psk_identities.len > 0) allocator.free(self.psk_identities);
-        freeOptionalField(self, allocator, "psk_binders");
+        if (self.psk_binders.len > 0) {
+            for (self.psk_binders) |psk_binder| allocator.free(psk_binder);
+            allocator.free(self.psk_binders);
+        }
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -530,8 +533,8 @@ pub const ClientHelloMsg = struct {
                 len2i += intTypeLen(u16) + psk.label.len + intTypeLen(u32);
             }
             var len2b: usize = 0;
-            if (self.psk_binders) |binders| {
-                for (binders) |binder| {
+            if (self.psk_binders.len > 0) {
+                for (self.psk_binders) |binder| {
                     len2b += intTypeLen(u8) + binder.len;
                 }
             }
@@ -543,8 +546,8 @@ pub const ClientHelloMsg = struct {
                 try writeInt(u32, psk.obfuscated_ticket_age, writer);
             }
             try writeInt(u16, len2b, writer);
-            if (self.psk_binders) |binders| {
-                for (binders) |binder| {
+            if (self.psk_binders.len > 0) {
+                for (self.psk_binders) |binder| {
                     try writeLenAndBytes(u8, binder, writer);
                 }
             }
@@ -564,7 +567,7 @@ pub const ServerHelloMsg = struct {
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
     alpn_protocol: ?[]const u8 = null,
-    scts: ?[]const []const u8 = null,
+    scts: []const []const u8 = &[_][]u8{},
     supported_version: ?ProtocolVersion = null,
     server_share: ?KeyShare = null,
     selected_identity: ?u16 = null,
@@ -578,7 +581,10 @@ pub const ServerHelloMsg = struct {
         allocator.free(self.random);
         if (self.server_share) |*server_share| server_share.deinit(allocator);
         freeOptionalField(self, allocator, "supported_points");
-        freeOptionalField(self, allocator, "scts");
+        if (self.scts.len > 0) {
+            for (self.scts) |sct| allocator.free(sct);
+            allocator.free(self.scts);
+        }
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -742,16 +748,16 @@ pub const ServerHelloMsg = struct {
             try writeInt(u16, ext_len, writer);
             try writeLenLenAndBytes(u16, u8, protocol, writer);
         }
-        if (self.scts) |scts| {
+        if (self.scts.len > 0) {
             try writeInt(u16, ExtensionType.Sct, writer);
             var scts_len: usize = 0;
-            for (scts) |sct| {
+            for (self.scts) |sct| {
                 scts_len += intTypeLen(u16) + sct.len;
             }
             const ext_len = intTypeLen(u16) + scts_len;
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, scts_len, writer);
-            for (scts) |sct| {
+            for (self.scts) |sct| {
                 try writeLenAndBytes(u16, sct, writer);
             }
         }
@@ -1203,10 +1209,16 @@ fn readNonEmptyStringList(
     bv.pos = start_pos;
 
     var list = try allocator.alloc([]const u8, n);
-    errdefer allocator.free(list);
+    errdefer {
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            allocator.free(list[i]);
+        }
+        allocator.free(list);
+    }
     n = 0;
     while (bv.pos < end_pos) {
-        list[n] = try readString(LenType2, bv);
+        list[n] = try allocator.dupe(u8, try readString(LenType2, bv));
         n += 1;
     }
     return list;
@@ -1615,9 +1627,13 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]PskIdentity{.{ .label = "my id 1", .obfuscated_ticket_age = 0x778899aa }},
     );
     errdefer allocator.free(psk_identities);
+    const binder1 = try allocator.dupe(u8, "binder1");
+    errdefer allocator.free(binder1);
+    const binder2 = try allocator.dupe(u8, "binder2");
+    errdefer allocator.free(binder2);
     const psk_binders = try allocator.dupe(
         []const u8,
-        &[_][]const u8{ "binder1", "binder2" },
+        &[_][]const u8{ binder1, binder2 },
     );
     errdefer allocator.free(psk_binders);
     return ClientHelloMsg{
@@ -1829,9 +1845,13 @@ const test_marshaled_server_hello_msg = "\x02" ++ // ServerHello
 fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHelloMsg {
     const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
     errdefer allocator.free(random);
+    const sct1 = try allocator.dupe(u8, "sct1");
+    errdefer allocator.free(sct1);
+    const sct2 = try allocator.dupe(u8, "sct2");
+    errdefer allocator.free(sct2);
     const scts = try allocator.dupe(
         []const u8,
-        &[_][]const u8{ "sct1", "sct2" },
+        &[_][]const u8{ sct1, sct2 },
     );
     errdefer allocator.free(scts);
     const supported_points = try allocator.dupe(
@@ -1908,9 +1928,13 @@ const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
 fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHelloMsg {
     const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
     errdefer allocator.free(random);
+    const sct1 = try allocator.dupe(u8, "sct1");
+    errdefer allocator.free(sct1);
+    const sct2 = try allocator.dupe(u8, "sct2");
+    errdefer allocator.free(sct2);
     const scts = try allocator.dupe(
         []const u8,
-        &[_][]const u8{ "sct1", "sct2" },
+        &[_][]const u8{ sct1, sct2 },
     );
     errdefer allocator.free(scts);
     const supported_points = try allocator.dupe(
