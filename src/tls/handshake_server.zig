@@ -278,8 +278,19 @@ pub const ServerHandshakeStateTls12 = struct {
             if (!self.ecdhe_ok) {
                 return false;
             }
+            if (c.flags.ec_sign) {
+                if (!self.ec_sign_ok) {
+                    return false;
+                }
+            } else if (!self.rsa_sign_ok) {
+                return false;
+            }
+        } else if (!self.rsa_decrypt_ok) {
+            return false;
         }
-        // TODO: implement
+        if (@enumToInt(self.conn.version.?) < @enumToInt(ProtocolVersion.v1_2) and c.flags.tls12) {
+            return false;
+        }
         return true;
     }
 
