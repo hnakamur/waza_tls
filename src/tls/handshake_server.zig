@@ -3,6 +3,7 @@ const crypto = std.crypto;
 const fmt = std.fmt;
 const math = std.math;
 const mem = std.mem;
+const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
@@ -297,14 +298,16 @@ pub const ServerHandshakeStateTls12 = struct {
     pub fn doFullHandshake(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
         self.hello.?.cipher_suite = self.suite.?.id;
 
-        self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
+        if (self.client_hello.ocsp_stapling and self.cert_chain.?.ocsp_staple.len > 0) {
+            self.hello.?.ocsp_stapling = true;
+        }
 
-        if (false) { // TODO: stop hardcoding
+        self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
+        if (self.conn.config.client_auth == .no_client_cert) {
             // No need to keep a full record of the handshake if client
             // certificates won't be used.
             self.finished_hash.?.discardHandshakeBuffer();
         }
-
         try self.finished_hash.?.write(try self.client_hello.marshal(allocator));
         const server_hello_bytes = try self.hello.?.marshal(allocator);
         try self.finished_hash.?.write(server_hello_bytes);
@@ -326,7 +329,7 @@ pub const ServerHandshakeStateTls12 = struct {
         }
 
         if (self.hello.?.ocsp_stapling) {
-            // TODO: implement
+            @panic("not implemented yet");
         }
 
         var key_agreement = self.suite.?.ka(self.conn.version.?);
@@ -345,6 +348,12 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.debugLogClientHash(allocator, "server: skx");
         try self.conn.writeRecord(allocator, .handshake, skx_bytes);
 
+        if (@enumToInt(self.conn.config.client_auth) >
+            @enumToInt(ClientAuthType.request_client_cert))
+        {
+            @panic("not implemented yet");
+        }
+
         var hello_done = ServerHelloDoneMsg{};
         defer hello_done.deinit(allocator);
         const hello_done_bytes = try hello_done.marshal(allocator);
@@ -360,7 +369,7 @@ pub const ServerHandshakeStateTls12 = struct {
         var ckx_msg = switch (hs_msg) {
             .ClientKeyExchange => |c| c,
             else => {
-                // TODO: send alert
+                self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         };
@@ -368,12 +377,15 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(try ckx_msg.marshal(allocator));
         try self.finished_hash.?.debugLogClientHash(allocator, "server: ckx");
 
-        const pre_master_secret = try key_agreement.processClientKeyExchange(
+        const pre_master_secret = key_agreement.processClientKeyExchange(
             allocator,
             self.cert_chain.?,
             &ckx_msg,
             self.conn.version.?,
-        );
+        ) catch |err| {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return err;
+        };
         defer allocator.free(pre_master_secret);
 
         self.master_secret = try masterFromPreMasterSecret(
@@ -389,7 +401,9 @@ pub const ServerHandshakeStateTls12 = struct {
             .{fmtx.fmtSliceHexEscapeLower(self.master_secret.?)},
         );
 
-        // TODO: implement
+        if (self.conn.peer_certificates.len > 0) {
+            @panic("not implemented yet");
+        }
 
         self.finished_hash.?.discardHandshakeBuffer();
     }

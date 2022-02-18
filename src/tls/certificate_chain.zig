@@ -18,7 +18,7 @@ pub const CertificateChain = struct {
     supported_signature_algorithms: ?[]const SignatureScheme = null,
     // OCSPStaple contains an optional OCSP response which will be served
     // to clients that request it.
-    ocsp_staple: ?[]const u8 = null,
+    ocsp_staple: []const u8 = "",
     // SignedCertificateTimestamps contains an optional list of Signed
     // Certificate Timestamps which will be served to clients that request it.
     signed_certificate_timestamps: ?[]const []const u8 = null,
@@ -35,6 +35,7 @@ pub const CertificateChain = struct {
         if (self.private_key) |*key| {
             key.deinit(allocator);
         }
+        if (self.ocsp_staple.len > 0) allocator.free(self.ocsp_staple);
         if (self.leaf) |leaf| {
             leaf.deinit(allocator);
         }

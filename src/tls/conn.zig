@@ -7,6 +7,7 @@ const mem = std.mem;
 const net = std.net;
 const datetime = @import("datetime");
 const memx = @import("../memx.zig");
+const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const CertPool = @import("cert_pool.zig").CertPool;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
@@ -95,6 +96,10 @@ pub const Conn = struct {
 
         insecure_skip_verify: bool = false,
         server_name: []const u8 = "",
+
+        // ClientAuth determines the server's policy for
+        // TLS Client Authentication. The default is NoClientCert.
+        client_auth: ClientAuthType = .no_client_cert,
 
         random: std.rand.Random = std.crypto.random,
 
