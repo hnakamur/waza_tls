@@ -21,32 +21,18 @@ const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
+const ClientHandshakeStateTls13 = @import("handshake_client_tls13.zig").ClientHandshakeStateTls13;
 const fmtx = @import("../fmtx.zig");
 
 pub const ClientHandshakeState = union(ProtocolVersion) {
-    v1_3: void,
+    v1_3: ClientHandshakeStateTls13,
     v1_2: ClientHandshakeStateTls12,
     v1_1: void,
     v1_0: void,
 
-    pub fn init(
-        ver: ProtocolVersion,
-        conn: *Conn,
-        client_hello: ClientHelloMsg,
-        server_hello: ServerHelloMsg,
-    ) ClientHandshakeState {
-        return switch (ver) {
-            .v1_3 => @panic("not implemented yet"),
-            .v1_2 => ClientHandshakeState{
-                .v1_2 = ClientHandshakeStateTls12.init(conn, client_hello, server_hello),
-            },
-            .v1_1, .v1_0 => @panic("unsupported version"),
-        };
-    }
-
     pub fn deinit(self: *ClientHandshakeState, allocator: mem.Allocator) void {
         switch (self.*) {
-            .v1_3 => @panic("not implemented yet"),
+            .v1_3 => |*hs| hs.deinit(allocator),
             .v1_2 => |*hs| hs.deinit(allocator),
             .v1_1, .v1_0 => @panic("unsupported version"),
         }
@@ -54,7 +40,7 @@ pub const ClientHandshakeState = union(ProtocolVersion) {
 
     pub fn handshake(self: *ClientHandshakeState, allocator: mem.Allocator) !void {
         switch (self.*) {
-            .v1_3 => @panic("not implemented yet"),
+            .v1_3 => |*hs| try hs.handshake(allocator),
             .v1_2 => |*hs| try hs.handshake(allocator),
             .v1_1, .v1_0 => @panic("unsupported version"),
         }

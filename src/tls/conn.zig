@@ -29,6 +29,8 @@ const RecordType = @import("record.zig").RecordType;
 const HandshakeState = @import("handshake_state.zig").HandshakeState;
 const ClientHandshakeState = @import("handshake_client.zig").ClientHandshakeState;
 const ServerHandshakeState = @import("handshake_server.zig").ServerHandshakeState;
+const ClientHandshakeStateTls12 = @import("handshake_client.zig").ClientHandshakeStateTls12;
+const ClientHandshakeStateTls13 = @import("handshake_client_tls13.zig").ClientHandshakeStateTls13;
 const Role = @import("handshake_state.zig").Role;
 const Aead = @import("cipher_suites.zig").Aead;
 const fmtx = @import("../fmtx.zig");
@@ -39,6 +41,7 @@ const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const x509 = @import("x509.zig");
 const VerifyOptions = @import("verify.zig").VerifyOptions;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
+const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -357,13 +360,27 @@ pub const Conn = struct {
                 return error.DowngradeAttemptDetected;
             }
 
+            // TODO: implement
+            var ecdhe_params: EcdheParameters = undefined;
+
             break :blk HandshakeState{
-                .client = ClientHandshakeState.init(
-                    self.version.?,
-                    self,
-                    client_hello,
-                    server_hello,
-                ),
+                .client = if (self.version.? == .v1_3)
+                    ClientHandshakeState{
+                        .v1_3 = ClientHandshakeStateTls13.init(
+                            self,
+                            client_hello,
+                            server_hello,
+                            ecdhe_params,
+                        ),
+                    }
+                else
+                    ClientHandshakeState{
+                        .v1_2 = ClientHandshakeStateTls12.init(
+                            self,
+                            client_hello,
+                            server_hello,
+                        ),
+                    },
             };
         };
 

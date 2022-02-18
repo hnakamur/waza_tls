@@ -33,18 +33,19 @@ const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
+const ServerHandshakeStateTls13 = @import("handshake_server_tls13.zig").ServerHandshakeStateTls13;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 
 pub const ServerHandshakeState = union(ProtocolVersion) {
-    v1_3: void,
+    v1_3: ServerHandshakeStateTls13,
     v1_2: ServerHandshakeStateTls12,
     v1_1: void,
     v1_0: void,
 
     pub fn init(ver: ProtocolVersion, conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeState {
         return switch (ver) {
-            .v1_3 => @panic("not implemented yet"),
+            .v1_3 => ServerHandshakeState{ .v1_3 = ServerHandshakeStateTls13.init(conn, client_hello) },
             .v1_2 => ServerHandshakeState{ .v1_2 = ServerHandshakeStateTls12.init(conn, client_hello) },
             .v1_1, .v1_0 => @panic("unsupported version"),
         };
@@ -52,7 +53,7 @@ pub const ServerHandshakeState = union(ProtocolVersion) {
 
     pub fn deinit(self: *ServerHandshakeState, allocator: mem.Allocator) void {
         switch (self.*) {
-            .v1_3 => @panic("not implemented yet"),
+            .v1_3 => |*hs| hs.deinit(allocator),
             .v1_2 => |*hs| hs.deinit(allocator),
             .v1_1, .v1_0 => @panic("unsupported version"),
         }
@@ -60,7 +61,7 @@ pub const ServerHandshakeState = union(ProtocolVersion) {
 
     pub fn handshake(self: *ServerHandshakeState, allocator: mem.Allocator) !void {
         switch (self.*) {
-            .v1_3 => @panic("not implemented yet"),
+            .v1_3 =>|*hs| try hs.handshake(allocator),
             .v1_2 => |*hs| try hs.handshake(allocator),
             .v1_1, .v1_0 => @panic("unsupported version"),
         }
