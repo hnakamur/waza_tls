@@ -17,6 +17,7 @@ const CurveId = @import("handshake_msg.zig").CurveId;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
+const KeyShare = @import("handshake_msg.zig").KeyShare;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const random_length = @import("handshake_msg.zig").random_length;
@@ -325,7 +326,8 @@ pub const Conn = struct {
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
         self.handshake_state = blk: {
-            var ecdhe_params: EcdheParameters = undefined;
+            var ecdhe_params: ?EcdheParameters = null;
+            errdefer if (ecdhe_params) |*params| params.deinit(allocator);
             var client_hello = try self.makeClientHello(allocator, &ecdhe_params);
 
             const client_hello_bytes = try client_hello.marshal(allocator);
@@ -361,7 +363,6 @@ pub const Conn = struct {
                 return error.DowngradeAttemptDetected;
             }
 
-
             break :blk HandshakeState{
                 .client = if (self.version.? == .v1_3)
                     ClientHandshakeState{
@@ -369,7 +370,7 @@ pub const Conn = struct {
                             self,
                             client_hello,
                             server_hello,
-                            ecdhe_params,
+                            ecdhe_params.?,
                         ),
                     }
                 else
@@ -397,7 +398,7 @@ pub const Conn = struct {
     fn makeClientHello(
         self: *Conn,
         allocator: mem.Allocator,
-        ecdhe_params: *EcdheParameters,
+        ecdhe_params: *?EcdheParameters,
     ) !ClientHelloMsg {
         const config = self.config;
         if (config.server_name.len == 0 and !config.insecure_skip_verify) {
@@ -485,7 +486,13 @@ pub const Conn = struct {
         if (client_hello.supported_versions.?[0] == .v1_3) {
             const curve_id = self.config.curve_preferences[0];
             ecdhe_params.* = try EcdheParameters.generate(allocator, curve_id, self.config.random);
-            @panic("not implemented yet");
+
+            var key_share_data = try allocator.dupe(u8, ecdhe_params.*.?.publicKey());
+            errdefer allocator.free(key_share_data);
+            client_hello.key_shares = try allocator.dupe(KeyShare, &[_]KeyShare{.{
+                .group = curve_id,
+                .data = key_share_data,
+            }});
         }
 
         return client_hello;
