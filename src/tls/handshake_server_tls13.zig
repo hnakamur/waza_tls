@@ -41,6 +41,7 @@ pub const ServerHandshakeStateTls13 = struct {
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
         // For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
         try self.processClientHello(allocator);
+        try self.checkForResumption(allocator);
     }
 
     pub fn processClientHello(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -187,4 +188,12 @@ pub const ServerHandshakeStateTls13 = struct {
             self.conn.server_name = try allocator.dupe(u8, server_name);
         }
     }
+
+    pub fn checkForResumption(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        if (self.conn.config.session_tickets_disabled) {
+            return;
+        }
+        _ = allocator;
+    }
+
 };

@@ -174,7 +174,7 @@ pub const ClientHelloMsg = struct {
     cookie: []const u8 = "",
     key_shares: []KeyShare = &[_]KeyShare{},
     early_data: bool = false,
-    psk_modes: ?[]const PskMode = null,
+    psk_modes: []const PskMode = &[_]PskMode{},
     psk_identities: ?[]const PskIdentity = null,
     psk_binders: ?[]const []const u8 = null,
 
@@ -197,7 +197,7 @@ pub const ClientHelloMsg = struct {
             for (self.key_shares) |*key_share| key_share.deinit(allocator);
             allocator.free(self.key_shares);
         }
-        freeOptionalField(self, allocator, "psk_modes");
+        if (self.psk_modes.len > 0) allocator.free(self.psk_modes);
         freeOptionalField(self, allocator, "psk_identities");
         freeOptionalField(self, allocator, "psk_binders");
         freeOptionalField(self, allocator, "raw");
@@ -517,10 +517,10 @@ pub const ClientHelloMsg = struct {
             try writeInt(u16, ExtensionType.EarlyData, writer);
             try writeInt(u16, 0, writer); // empty extension_data
         }
-        if (self.psk_modes) |psk_modes| {
+        if (self.psk_modes.len > 0) {
             // RFC 8446, Section 4.2.9
             try writeInt(u16, ExtensionType.PskModes, writer);
-            try writeLenLenAndIntSlice(u16, u8, u8, PskMode, psk_modes, writer);
+            try writeLenLenAndIntSlice(u16, u8, u8, PskMode, self.psk_modes, writer);
         }
         if (self.psk_identities) |identities| { // pre_shared_key must be the last extension
             // RFC 8446, Section 4.2.11

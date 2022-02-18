@@ -79,6 +79,12 @@ const downgrade_canary_tls11 = "DOWNGRD\x00";
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     pub const Config = struct {
+        // random provides the source of entropy for nonces and RSA blinding.
+        // If Rand is nil, TLS uses the cryptographic random reader in package
+        // crypto/rand.
+        // The Reader must be safe for use by multiple goroutines.
+        random: std.rand.Random = std.crypto.random,
+
         // Certificates contains one or more certificate chains to present to the
         // other side of the connection. The first certificate compatible with the
         // peer's requirements is selected automatically.
@@ -92,20 +98,67 @@ pub const Conn = struct {
         // per-handshake performance cost.
         certificates: []CertificateChain = &[_]CertificateChain{},
 
-        min_version: ProtocolVersion = .v1_2,
-        max_version: ProtocolVersion = .v1_3,
-        cipher_suites: []const CipherSuiteId = &default_cipher_suites,
-        curve_preferences: []const CurveId = &default_curve_preferences,
+        // NextProtos is a list of supported application level protocols, in
+        // order of preference. If both peers support ALPN, the selected
+        // protocol will be one from this list, and the connection will fail
+        // if there is no mutually supported protocol. If NextProtos is empty
+        // or the peer doesn't support ALPN, the connection will succeed and
+        // ConnectionState.NegotiatedProtocol will be empty.
         next_protos: []const []const u8 = &[_][]u8{},
 
-        insecure_skip_verify: bool = false,
+        // ServerName is used to verify the hostname on the returned
+        // certificates unless InsecureSkipVerify is given. It is also included
+        // in the client's handshake to support virtual hosting unless it is
+        // an IP address.
         server_name: []const u8 = "",
 
         // ClientAuth determines the server's policy for
         // TLS Client Authentication. The default is NoClientCert.
         client_auth: ClientAuthType = .no_client_cert,
 
-        random: std.rand.Random = std.crypto.random,
+        // InsecureSkipVerify controls whether a client verifies the server's
+        // certificate chain and host name. If InsecureSkipVerify is true, crypto/tls
+        // accepts any certificate presented by the server and any host name in that
+        // certificate. In this mode, TLS is susceptible to machine-in-the-middle
+        // attacks unless custom verification is used. This should be used only for
+        // testing or in combination with VerifyConnection or VerifyPeerCertificate.
+        insecure_skip_verify: bool = false,
+
+        // CipherSuites is a list of enabled TLS 1.0–1.2 cipher suites. The order of
+        // the list is ignored. Note that TLS 1.3 ciphersuites are not configurable.
+        //
+        // If CipherSuites is nil, a safe default list is used. The default cipher
+        // suites might change over time.
+        cipher_suites: []const CipherSuiteId = &default_cipher_suites,
+
+        // SessionTicketsDisabled may be set to true to disable session ticket and
+        // PSK (resumption) support. Note that on clients, session ticket support is
+        // also disabled if ClientSessionCache is nil.
+        session_tickets_disabled: bool = false,
+
+        // MinVersion contains the minimum TLS version that is acceptable.
+        //
+        // By default, TLS 1.2 is currently used as the minimum when acting as a
+        // client, and TLS 1.0 when acting as a server. TLS 1.0 is the minimum
+        // supported by this package, both as a client and as a server.
+        //
+        // The client-side default can temporarily be reverted to TLS 1.0 by
+        // including the value "x509sha1=1" in the GODEBUG environment variable.
+        // Note that this option will be removed in Go 1.19 (but it will still be
+        // possible to set this field to VersionTLS10 explicitly).
+        min_version: ProtocolVersion = .v1_2,
+
+        // MaxVersion contains the maximum TLS version that is acceptable.
+        //
+        // By default, the maximum version supported by this package is used,
+        // which is currently TLS 1.3.
+        max_version: ProtocolVersion = .v1_3,
+
+        // CurvePreferences contains the elliptic curves that will be used in
+        // an ECDHE handshake, in preference order. If empty, the default will
+        // be used. The client will use the first preference as the type for
+        // its key share in TLS 1.3. This may change in the future.
+        curve_preferences: []const CurveId = &default_curve_preferences,
 
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
