@@ -31,6 +31,7 @@ pub const CipherSuiteId = enum(u16) {
     tls_ecdhe_ecdsa_with_aes_128_gcm_sha256 = 0xc02b,
     tls_ecdhe_ecdsa_with_aes_256_gcm_sha384 = 0xc02c,
     tls_ecdhe_rsa_with_aes_128_gcm_sha256 = 0xc02f,
+    tls_ecdhe_rsa_with_aes_256_gcm_sha384 = 0xc030,
     tls_ecdhe_rsa_with_chacha20_poly1305_sha256 = 0xcca8,
     tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256 = 0xcca9,
 

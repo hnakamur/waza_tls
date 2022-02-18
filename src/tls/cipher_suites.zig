@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 const mem = std.mem;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
@@ -9,8 +10,17 @@ const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
 const HashType = @import("auth.zig").HashType;
 const memx = @import("../memx.zig");
 
+// Keep in sync with Zig standard library lib/std/crypto/aes.zig
+const has_aesni = std.Target.x86.featureSetHas(builtin.cpu.features, .aes);
+const has_avx = std.Target.x86.featureSetHas(builtin.cpu.features, .avx);
+const has_armaes = std.Target.aarch64.featureSetHas(builtin.cpu.features, .aes);
+
+pub const has_aes_gcm_hardware_support =
+    (builtin.cpu.arch == .x86_64 and has_aesni and has_avx) or
+    (builtin.cpu.arch == .aarch64 and has_armaes);
+
 pub const CipherSuite = union(ProtocolVersion) {
-    v1_3: CipherSuite13,
+    v1_3: CipherSuiteTls13,
     v1_2: CipherSuite12,
     v1_1: void,
     v1_0: void,
@@ -18,14 +28,14 @@ pub const CipherSuite = union(ProtocolVersion) {
 
 // A cipherSuiteTLS13 defines only the pair of the AEAD algorithm and hash
 // algorithm to be used with HKDF. See RFC 8446, Appendix B.4.
-pub const CipherSuite13 = struct {
+pub const CipherSuiteTls13 = struct {
     id: CipherSuiteId,
     key_len: usize,
     aead: fn (key: []const u8, fixed_nonce: []const u8) Aead,
     hash_type: HashType,
 };
 
-const cipher_suites_tls13 = [_]CipherSuite13{
+const cipher_suites_tls13 = [_]CipherSuiteTls13{
     .{
         .id = .tls_aes_128_gcm_sha256,
         .key_len = 16,
@@ -71,8 +81,18 @@ const cipher_suites_preference_order = [_]CipherSuiteId{
     .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
     .tls_ecdhe_rsa_with_aes_128_gcm_sha256,
     .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
+    .tls_ecdhe_rsa_with_aes_256_gcm_sha384,
     .tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256,
     .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
+};
+
+const cipher_suites_preference_order_no_aes = [_]CipherSuiteId{
+    .tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256,
+    .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
+    .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
+    .tls_ecdhe_rsa_with_aes_128_gcm_sha256,
+    .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
+    .tls_ecdhe_rsa_with_aes_256_gcm_sha384,
 };
 
 pub const cipher_suites12 = [_]CipherSuite12{
@@ -121,6 +141,15 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .ka = ecdheEcdsaKa,
         .aead = Aead.initPrefixNonceAeadAes256Gcm,
     },
+    .{
+        .id = .tls_ecdhe_rsa_with_aes_256_gcm_sha384,
+        .key_len = 32,
+        .mac_len = 0,
+        .iv_len = 4,
+        .flags = .{ .ecdhe = true, .tls12 = true, .sha384 = true },
+        .ka = ecdheRsaKa,
+        .aead = Aead.initPrefixNonceAeadAes256Gcm,
+    },
 };
 
 fn rsaKa(_: ProtocolVersion) KeyAgreement {
@@ -145,7 +174,11 @@ pub fn makeCipherPreferenceList12(
     );
     errdefer cipher_suites.deinit(allocator);
 
-    for (cipher_suites_preference_order) |suite_id| {
+    const preference_order = if (has_aes_gcm_hardware_support)
+        &cipher_suites_preference_order
+    else
+        &cipher_suites_preference_order_no_aes;
+    for (preference_order) |suite_id| {
         if (mutualCipherSuite12(config_cipher_suites, suite_id)) |_| {
             try cipher_suites.append(allocator, suite_id);
         }

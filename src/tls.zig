@@ -17,6 +17,7 @@ const certificate_chain = @import("tls/certificate_chain.zig");
 const cipher_suites = @import("tls/cipher_suites.zig");
 const finished_hash = @import("tls/finished_hash.zig");
 const handshake_client = @import("tls/handshake_client.zig");
+const handshake_client_tls13 = @import("tls/handshake_client_tls13.zig");
 const handshake_server = @import("tls/handshake_server.zig");
 const key_agreement = @import("tls/key_agreement.zig");
 const key_schedule = @import("tls/key_schedule.zig");

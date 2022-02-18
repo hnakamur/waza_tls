@@ -365,6 +365,23 @@ pub const Conn = struct {
     }
 
     fn makeClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
+        const config = self.config;
+        if (config.server_name.len == 0 and !config.insecure_skip_verify) {
+            return error.EitherServerNameOrInsecureSkipVerifyMustBeSpecified;
+        }
+
+        var next_protos_length: usize = 0;
+        for (config.next_protos) |proto| {
+            const l = proto.len;
+            if (l == 0 or l > 255) {
+                return error.InvalidNextProto;
+            }
+            next_protos_length += 1;
+        }
+        if (next_protos_length > 0xffff) {
+            return error.TooLargeNextProtos;
+        }
+
         const sup_vers = self.config.supportedVersions();
         if (sup_vers.len == 0) {
             return error.NoSupportedVersion;
@@ -422,8 +439,17 @@ pub const Conn = struct {
                 .supported_curves = supported_curves,
                 .supported_points = supported_points,
                 .supported_signature_algorithms = sig_algs,
+                .supported_versions = try allocator.dupe(ProtocolVersion, sup_vers),
             };
         };
+
+        if (self.handshakes > 0) {
+            @panic("not implemented yet");
+        }
+
+        if (client_hello.supported_versions.?[0] == .v1_3) {
+            @panic("not implemented yet");
+        }
 
         return client_hello;
     }
