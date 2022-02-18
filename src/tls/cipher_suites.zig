@@ -6,15 +6,45 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const RsaKeyAgreement = @import("key_agreement.zig").RsaKeyAgreement;
 const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
+const HashType = @import("auth.zig").HashType;
 const memx = @import("../memx.zig");
 
 pub const CipherSuite = union(ProtocolVersion) {
     v1_3: CipherSuite13,
     v1_2: CipherSuite12,
-    v1_0: CipherSuite12,
+    v1_1: void,
+    v1_0: void,
 };
 
-pub const CipherSuite13 = struct {};
+// A cipherSuiteTLS13 defines only the pair of the AEAD algorithm and hash
+// algorithm to be used with HKDF. See RFC 8446, Appendix B.4.
+pub const CipherSuite13 = struct {
+    id: CipherSuiteId,
+    key_len: usize,
+    aead: fn (key: []const u8, fixed_nonce: []const u8) Aead,
+    hash_type: HashType,
+};
+
+const cipher_suites_tls13 = [_]CipherSuite13{
+    .{
+        .id = .tls_aes_128_gcm_sha256,
+        .key_len = 16,
+        .aead = Aead.initXorNonceAeadAes128Gcm,
+        .hash_type = .sha256,
+    },
+    .{
+        .id = .tls_chacha20_poly1305_sha256,
+        .key_len = 32,
+        .aead = Aead.initXorNonceAeadChaCha20Poly1305,
+        .hash_type = .sha256,
+    },
+    .{
+        .id = .tls_aes_256_gcm_sha384,
+        .key_len = 32,
+        .aead = Aead.initXorNonceAeadAes256Gcm,
+        .hash_type = .sha384,
+    },
+};
 
 pub const CipherSuite12 = struct {
     pub const Flags = packed struct {
@@ -38,16 +68,16 @@ pub const CipherSuite12 = struct {
 pub const default_cipher_suites = cipher_suites_preference_order;
 
 const cipher_suites_preference_order = [_]CipherSuiteId{
-    .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-    .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-    .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-    .TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-    .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+    .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
+    .tls_ecdhe_rsa_with_aes_128_gcm_sha256,
+    .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
+    .tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256,
+    .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
 };
 
 pub const cipher_suites12 = [_]CipherSuite12{
     .{
-        .id = .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+        .id = .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
         .key_len = 32,
         .mac_len = 0,
         .iv_len = 12,
@@ -56,7 +86,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .aead = Aead.initXorNonceAeadChaCha20Poly1305,
     },
     .{
-        .id = .TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+        .id = .tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256,
         .key_len = 32,
         .mac_len = 0,
         .iv_len = 12,
@@ -65,7 +95,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .aead = Aead.initXorNonceAeadChaCha20Poly1305,
     },
     .{
-        .id = .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        .id = .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
         .key_len = 16,
         .mac_len = 0,
         .iv_len = 4,
@@ -74,7 +104,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .aead = Aead.initPrefixNonceAeadAes128Gcm,
     },
     .{
-        .id = .TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        .id = .tls_ecdhe_rsa_with_aes_128_gcm_sha256,
         .key_len = 16,
         .mac_len = 0,
         .iv_len = 4,
@@ -83,7 +113,7 @@ pub const cipher_suites12 = [_]CipherSuite12{
         .aead = Aead.initPrefixNonceAeadAes128Gcm,
     },
     .{
-        .id = .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+        .id = .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
         .key_len = 32,
         .mac_len = 0,
         .iv_len = 4,
@@ -177,21 +207,21 @@ pub const Aead = union(enum) {
         };
     }
 
-    pub fn initXorNonceAeadAes128Gcm(key: []const u8, nonce_prefix: []const u8) Aead {
+    pub fn initXorNonceAeadAes128Gcm(key: []const u8, nonce_mask: []const u8) Aead {
         return .{
-            .xor_nonce_aead_aes128_gcm = XorNonceAeadAes128Gcm.init(key, nonce_prefix),
+            .xor_nonce_aead_aes128_gcm = XorNonceAeadAes128Gcm.init(key, nonce_mask),
         };
     }
 
-    pub fn initXorNonceAeadAes256Gcm(key: []const u8, nonce_prefix: []const u8) Aead {
+    pub fn initXorNonceAeadAes256Gcm(key: []const u8, nonce_mask: []const u8) Aead {
         return .{
-            .xor_nonce_aead_aes256_gcm = XorNonceAeadAes256Gcm.init(key, nonce_prefix),
+            .xor_nonce_aead_aes256_gcm = XorNonceAeadAes256Gcm.init(key, nonce_mask),
         };
     }
 
-    pub fn initXorNonceAeadChaCha20Poly1305(key: []const u8, nonce_prefix: []const u8) Aead {
+    pub fn initXorNonceAeadChaCha20Poly1305(key: []const u8, nonce_mask: []const u8) Aead {
         return .{
-            .xor_nonce_aead_cha_cha20_poly1305 = XorNonceAeadChaCha20Poly1305.init(key, nonce_prefix),
+            .xor_nonce_aead_cha_cha20_poly1305 = XorNonceAeadChaCha20Poly1305.init(key, nonce_mask),
         };
     }
 
@@ -402,7 +432,7 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             const new_len = old_len + ciphertext_len;
             try dest.ensureTotalCapacityPrecise(allocator, new_len);
             dest.expandToCapacity();
-            try self.do_decrypt(
+            try self.doDecrypt(
                 dest.items[old_len..new_len],
                 chiphertext_and_tag[0..ciphertext_len],
                 chiphertext_and_tag[ciphertext_len..][0..tag_length].*,
@@ -411,7 +441,7 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
             );
         }
 
-        pub fn do_decrypt(
+        pub fn doDecrypt(
             self: *Self,
             out_plaintext: []u8,
             ciphertext: []const u8,
@@ -523,7 +553,7 @@ fn XorNonceAead(comptime InnerAead: type) type {
             const new_len = old_len + ciphertext_len;
             try dest.ensureTotalCapacityPrecise(allocator, new_len);
             dest.expandToCapacity();
-            try self.do_decrypt(
+            try self.doDecrypt(
                 dest.items[old_len..new_len],
                 chiphertext_and_tag[0..ciphertext_len],
                 chiphertext_and_tag[ciphertext_len..][0..tag_length].*,
@@ -532,7 +562,7 @@ fn XorNonceAead(comptime InnerAead: type) type {
             );
         }
 
-        fn do_decrypt(
+        fn doDecrypt(
             self: *Self,
             out_plaintext: []u8,
             ciphertext: []const u8,
@@ -569,18 +599,18 @@ const fmtx = @import("../fmtx.zig");
 
 test "mutualCipherSuite12" {
     const have = [_]CipherSuiteId{
-        .TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-        .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+        .tls_ecdhe_rsa_with_chacha20_poly1305_sha256,
+        .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384,
     };
 
     try testing.expectEqual(
-        cipherSuite12ById(.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
-        mutualCipherSuite12(&have, .TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
+        cipherSuite12ById(.tls_ecdhe_ecdsa_with_aes_256_gcm_sha384),
+        mutualCipherSuite12(&have, .tls_ecdhe_ecdsa_with_aes_256_gcm_sha384),
     );
 
     try testing.expectEqual(
         @as(?*const CipherSuite12, null),
-        mutualCipherSuite12(&have, .TLS_AES_128_GCM_SHA256),
+        mutualCipherSuite12(&have, .tls_aes_128_gcm_sha256),
     );
 }
 

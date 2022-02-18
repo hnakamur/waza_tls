@@ -23,14 +23,16 @@ pub const ProtocolVersion = enum(u16) {
 // See https://www.iana.org/assignments/tls-parameters/tls-parameters.xml
 pub const CipherSuiteId = enum(u16) {
     // TLS 1.3 cipher suites.
-    TLS_AES_128_GCM_SHA256 = 0x1301,
+    tls_aes_128_gcm_sha256 = 0x1301,
+    tls_aes_256_gcm_sha384 = 0x1302,
+    tls_chacha20_poly1305_sha256 = 0x1303,
 
     // TLS 1.0 - 1.2 cipher suites.
-    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = 0xc02b,
-    TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xc02c,
-    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = 0xc02f,
-    TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca8,
-    TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = 0xcca9,
+    tls_ecdhe_ecdsa_with_aes_128_gcm_sha256 = 0xc02b,
+    tls_ecdhe_ecdsa_with_aes_256_gcm_sha384 = 0xc02c,
+    tls_ecdhe_rsa_with_aes_128_gcm_sha256 = 0xc02f,
+    tls_ecdhe_rsa_with_chacha20_poly1305_sha256 = 0xcca8,
+    tls_ecdhe_ecdsa_with_chacha20_poly1305_sha256 = 0xcca9,
 
     // TLS signaling cipher suite values
     scsv_renegotiation = 0x00ff,
@@ -1484,7 +1486,7 @@ fn testCreateClientHelloMsg(allocator: mem.Allocator) !ClientHelloMsg {
     errdefer allocator.free(session_id);
     const cipher_suites = try allocator.dupe(
         CipherSuiteId,
-        &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
+        &[_]CipherSuiteId{.tls_aes_128_gcm_sha256},
     );
     errdefer allocator.free(cipher_suites);
     const compression_methods = try allocator.dupe(
@@ -1508,7 +1510,7 @@ const test_marshaled_client_hello_msg = "\x01" ++ // ClientHello
     "\x20" ++ // u8 len 32
     "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
     "\x00\x02" ++ // u16 len 2
-    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.tls_aes_128_gcm_sha256
     "\x01" ++ // u8 len 1
     "\x00"; // CompressionMethod.none
 
@@ -1519,7 +1521,7 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
     errdefer allocator.free(session_id);
     const cipher_suites = try allocator.dupe(
         CipherSuiteId,
-        &[_]CipherSuiteId{.TLS_AES_128_GCM_SHA256},
+        &[_]CipherSuiteId{.tls_aes_128_gcm_sha256},
     );
     errdefer allocator.free(cipher_suites);
     const compression_methods = try allocator.dupe(
@@ -1609,7 +1611,7 @@ const test_marshaled_client_hello_msg_with_extensions = "\x01" ++ // ClientHello
     "\x20" ++ // u8 len 32
     "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ // 32 byte session id
     "\x00\x02" ++ // u16 len 2
-    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.tls_aes_128_gcm_sha256
     "\x01" ++ // u8 len 1
     "\x00" ++ // CompressionMethod.none
     "\x00\xc3" ++ // u16 extensions len
@@ -1765,7 +1767,7 @@ fn testCreateServerHelloMsg(allocator: mem.Allocator) !ServerHelloMsg {
         .vers = .v1_3,
         .random = random,
         .session_id = &[_]u8{0} ** 32,
-        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .cipher_suite = .tls_aes_128_gcm_sha256,
         .compression_method = .none,
         .ocsp_stapling = false,
     };
@@ -1777,7 +1779,7 @@ const test_marshaled_server_hello_msg = "\x02" ++ // ServerHello
     "\x00" ** 32 ++ // 32 byte random
     "\x20" ++ // u8 len 32
     "\x00" ** 32 ++ // 32 byte session id
-    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.tls_aes_128_gcm_sha256
     "\x00"; // CompressionMethod.none
 
 fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHelloMsg {
@@ -1797,7 +1799,7 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
         .vers = .v1_3,
         .random = random,
         .session_id = &[_]u8{0} ** 32,
-        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .cipher_suite = .tls_aes_128_gcm_sha256,
         .compression_method = .none,
         .ocsp_stapling = true,
         .ticket_supported = true,
@@ -1818,7 +1820,7 @@ const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
     "\x00" ** 32 ++ // 32 byte random
     "\x20" ++ // u8 len 32
     "\x00" ** 32 ++ // 32 byte session id
-    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.tls_aes_128_gcm_sha256
     "\x00" ++ // CompressionMethod.none
     "\x00\x62" ++ // u16 extensions_len
     "\x00\x05" ++ // ExtensionType.StatusRequest
@@ -1874,7 +1876,7 @@ fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHell
         .vers = .v1_3,
         .random = random,
         .session_id = &[_]u8{0} ** 32,
-        .cipher_suite = .TLS_AES_128_GCM_SHA256,
+        .cipher_suite = .tls_aes_128_gcm_sha256,
         .compression_method = .none,
         .ocsp_stapling = true,
         .ticket_supported = true,
@@ -1895,7 +1897,7 @@ const test_marshaled_server_hello_msg_with_extensions2 = "\x02" ++ // ServerHell
     "\x00" ** 32 ++ // 32 byte random
     "\x20" ++ // u8 len 32
     "\x00" ** 32 ++ // 32 byte session id
-    "\x13\x01" ++ // CipherSuiteId.TLS_AES_128_GCM_SHA256
+    "\x13\x01" ++ // CipherSuiteId.tls_aes_128_gcm_sha256
     "\x00" ++ // CompressionMethod.none
     "\x00\x57" ++ // u16 extensions_len
     "\x00\x05" ++ // ExtensionType.StatusRequest

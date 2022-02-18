@@ -128,7 +128,7 @@ pub const ServerHandshakeStateTls12 = struct {
             .vers = self.conn.version.?,
             .random = random,
             .session_id = &[_]u8{0} ** 32,
-            .cipher_suite = .TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, // updated in doFullHandshake
+            .cipher_suite = .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256, // updated in doFullHandshake
             .compression_method = .none,
             .ocsp_stapling = false,
         };
