@@ -185,6 +185,7 @@ pub const ClientHelloMsg = struct {
         allocator.free(self.compression_methods);
         if (self.server_name.len > 0) allocator.free(self.server_name);
         if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
+        if (self.session_ticket.len > 0) allocator.free(self.session_ticket);
         if (self.supported_points.len > 0) allocator.free(self.supported_points);
         if (self.alpn_protocols.len > 0) allocator.free(self.alpn_protocols);
         if (self.supported_signature_algorithms.len > 0) {
@@ -320,11 +321,16 @@ pub const ClientHelloMsg = struct {
                 .SessionTicket => {
                     // RFC 5077, Section 3.2
                     self.ticket_supported = true;
-                    self.session_ticket = try bv.sliceBytesNoEof(ext_len);
+                    self.session_ticket = try allocator.dupe(u8, try bv.sliceBytesNoEof(ext_len));
                 },
                 .SignatureAlgorithms => {
                     // RFC 5246, Section 7.4.1.4.1
-                    self.supported_signature_algorithms = try readEnumList(u16, SignatureScheme, allocator, bv);
+                    self.supported_signature_algorithms = try readEnumList(
+                        u16,
+                        SignatureScheme,
+                        allocator,
+                        bv,
+                    );
                 },
                 .SignatureAlgorithmsCert => {
                     // RFC 8446, Section 4.2.3
@@ -1593,6 +1599,8 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]EcPointFormat{.uncompressed},
     );
     errdefer allocator.free(supported_points);
+    const session_ticket = try allocator.dupe(u8, "\x12\x34\x56\x78");
+    errdefer allocator.free(session_ticket);
     const supported_signature_algorithms = try allocator.dupe(
         SignatureScheme,
         &[_]SignatureScheme{.pkcs1_with_sha256},
@@ -1652,7 +1660,7 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         .supported_curves = supported_curves,
         .supported_points = supported_points,
         .ticket_supported = true,
-        .session_ticket = "\x12\x34\x56\x78",
+        .session_ticket = session_ticket,
         .supported_signature_algorithms = supported_signature_algorithms,
         .supported_signature_algorithms_cert = supported_signature_algorithms_cert,
         .secure_renegotiation_supported = true,
