@@ -571,7 +571,7 @@ pub const ServerHelloMsg = struct {
     supported_version: ?ProtocolVersion = null,
     server_share: ?KeyShare = null,
     selected_identity: ?u16 = null,
-    supported_points: ?[]const EcPointFormat = null,
+    supported_points: []const EcPointFormat = &[_]EcPointFormat{},
 
     // HelloRetryRequest extensions
     cookie: ?[]const u8 = null,
@@ -580,7 +580,7 @@ pub const ServerHelloMsg = struct {
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
         allocator.free(self.random);
         if (self.server_share) |*server_share| server_share.deinit(allocator);
-        freeOptionalField(self, allocator, "supported_points");
+        if (self.supported_points.len > 0) allocator.free(self.supported_points);
         if (self.scts.len > 0) {
             for (self.scts) |sct| allocator.free(sct);
             allocator.free(self.scts);
@@ -693,10 +693,8 @@ pub const ServerHelloMsg = struct {
                         allocator,
                         bv,
                     );
-                    if (self.supported_points) |points| {
-                        if (points.len == 0) {
-                            return error.EmptySupportedPoints;
-                        }
+                    if (self.supported_points.len == 0) {
+                        return error.EmptySupportedPoints;
                     }
                 },
                 else => {
@@ -792,11 +790,11 @@ pub const ServerHelloMsg = struct {
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, curve, writer);
         }
-        if (self.supported_points) |points| {
+        if (self.supported_points.len > 0) {
             try writeInt(u16, ExtensionType.SupportedPoints, writer);
-            const ext_len = intTypeLen(u8) + points.len;
+            const ext_len = intTypeLen(u8) + self.supported_points.len;
             try writeInt(u16, ext_len, writer);
-            try writeLenAndIntSlice(u8, u8, EcPointFormat, points, writer);
+            try writeLenAndIntSlice(u8, u8, EcPointFormat, self.supported_points, writer);
         }
     }
 };
