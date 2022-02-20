@@ -6,6 +6,7 @@ const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
+const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
@@ -16,6 +17,7 @@ const default_cipher_suites_tls13 = @import("cipher_suites.zig").default_cipher_
 const default_cipher_suites_tls13_no_aes = @import("cipher_suites.zig").default_cipher_suites_tls13_no_aes;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const crypto = @import("crypto.zig");
+const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 const memx = @import("../memx.zig");
 
 pub const ServerHandshakeStateTls13 = struct {
@@ -24,6 +26,7 @@ pub const ServerHandshakeStateTls13 = struct {
     hello: ?ServerHelloMsg = null,
     master_secret: ?[]const u8 = null,
     cert_chain: ?*CertificateChain = null,
+    sig_alg: ?SignatureScheme = null,
     shared_key: []const u8 = "",
     transcript: crypto.Hash = undefined,
 
@@ -42,6 +45,8 @@ pub const ServerHandshakeStateTls13 = struct {
         // For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
         try self.processClientHello(allocator);
         try self.checkForResumption(allocator);
+        try self.pickCertificate(allocator);
+        self.conn.buffering = true;
     }
 
     pub fn processClientHello(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -194,6 +199,33 @@ pub const ServerHandshakeStateTls13 = struct {
             return;
         }
         _ = allocator;
+        // TODO: implement
     }
 
+    pub fn pickCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        // TODO: implement
+
+        // signature_algorithms is required in TLS 1.3. See RFC 8446, Section 4.2.3.
+        if (self.client_hello.supported_signature_algorithms.len == 0) {
+            return self.conn.sendAlert(.missing_extension);
+        }
+
+        // TODO: check client_hello
+        var cert_chain = self.conn.config.getCertificate();
+        errdefer cert_chain.deinit(allocator);
+
+        self.sig_alg = selectSignatureScheme(
+            allocator,
+            self.conn.version.?,
+            cert_chain,
+            self.client_hello.supported_signature_algorithms,
+        ) catch |err| {
+            // getCertificate returned a certificate that is unsupported or
+            // incompatible with the client's signature algorithms.
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return err;
+        };
+
+        self.cert_chain = cert_chain;
+    }
 };

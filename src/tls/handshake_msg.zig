@@ -571,8 +571,8 @@ pub const ClientHelloMsg = struct {
 pub const ServerHelloMsg = struct {
     raw: ?[]const u8 = null,
     vers: ProtocolVersion = undefined,
-    random: []const u8 = undefined,
-    session_id: []const u8 = undefined,
+    random: []const u8 = "",
+    session_id: []const u8 = "",
     cipher_suite: ?CipherSuiteId = null,
     compression_method: CompressionMethod,
     ocsp_stapling: bool = undefined,
@@ -591,7 +591,8 @@ pub const ServerHelloMsg = struct {
     selected_group: ?CurveId = null,
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
-        allocator.free(self.random);
+        if (self.random.len > 0) allocator.free(self.random);
+        if (self.session_id.len > 0) allocator.free(self.session_id);
         if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
         if (self.alpn_protocol.len > 0) allocator.free(self.alpn_protocol);
         if (self.scts.len > 0) {
@@ -606,8 +607,7 @@ pub const ServerHelloMsg = struct {
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ServerHelloMsg {
         var bv: BytesView = undefined;
-        var msg: ServerHelloMsg = undefined;
-        {
+        var msg: ServerHelloMsg = blk: {
             const raw = try allocator.dupe(u8, msg_data);
             errdefer allocator.free(raw);
             bv = BytesView.init(raw);
@@ -615,12 +615,13 @@ pub const ServerHelloMsg = struct {
             const vers = try readEnum(ProtocolVersion, &bv);
             const random = try allocator.dupe(u8, try bv.sliceBytesNoEof(random_length));
             errdefer allocator.free(random);
-            const session_id = try readString(u8, &bv);
+            const session_id = try allocator.dupe(u8, try readString(u8, &bv));
+            errdefer allocator.free(session_id);
 
             const cipher_suite = try readEnum(CipherSuiteId, &bv);
             const compression_method = try readEnum(CompressionMethod, &bv);
 
-            msg = ServerHelloMsg{
+            break :blk ServerHelloMsg{
                 .raw = raw,
                 .vers = vers,
                 .random = random,
@@ -628,7 +629,7 @@ pub const ServerHelloMsg = struct {
                 .cipher_suite = cipher_suite,
                 .compression_method = compression_method,
             };
-        }
+        };
         errdefer msg.deinit(allocator);
 
         if (bv.restLen() == 0) {
@@ -1856,10 +1857,12 @@ test "ServerHelloMsg.unmarshal" {
 fn testCreateServerHelloMsg(allocator: mem.Allocator) !ServerHelloMsg {
     const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
     errdefer allocator.free(random);
+    const session_id = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(session_id);
     return ServerHelloMsg{
         .vers = .v1_3,
         .random = random,
-        .session_id = &[_]u8{0} ** 32,
+        .session_id = session_id,
         .cipher_suite = .tls_aes_128_gcm_sha256,
         .compression_method = .none,
         .ocsp_stapling = false,
@@ -1878,6 +1881,8 @@ const test_marshaled_server_hello_msg = "\x02" ++ // ServerHello
 fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHelloMsg {
     const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
     errdefer allocator.free(random);
+    const session_id = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(session_id);
     const sct1 = try allocator.dupe(u8, "sct1");
     errdefer allocator.free(sct1);
     const sct2 = try allocator.dupe(u8, "sct2");
@@ -1901,7 +1906,7 @@ fn testCreateServerHelloMsgWithExtensions(allocator: mem.Allocator) !ServerHello
     return ServerHelloMsg{
         .vers = .v1_3,
         .random = random,
-        .session_id = &[_]u8{0} ** 32,
+        .session_id = session_id,
         .cipher_suite = .tls_aes_128_gcm_sha256,
         .compression_method = .none,
         .ocsp_stapling = true,
@@ -1965,6 +1970,8 @@ const test_marshaled_server_hello_msg_with_extensions = "\x02" ++ // ServerHello
 fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHelloMsg {
     const random = try allocator.dupe(u8, &[_]u8{0} ** 32);
     errdefer allocator.free(random);
+    const session_id = try allocator.dupe(u8, &[_]u8{0} ** 32);
+    errdefer allocator.free(session_id);
     const sct1 = try allocator.dupe(u8, "sct1");
     errdefer allocator.free(sct1);
     const sct2 = try allocator.dupe(u8, "sct2");
@@ -1986,7 +1993,7 @@ fn testCreateServerHelloMsgWithExtensions2(allocator: mem.Allocator) !ServerHell
     return ServerHelloMsg{
         .vers = .v1_3,
         .random = random,
-        .session_id = &[_]u8{0} ** 32,
+        .session_id = session_id,
         .cipher_suite = .tls_aes_128_gcm_sha256,
         .compression_method = .none,
         .ocsp_stapling = true,
