@@ -8,6 +8,8 @@ const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const RsaKeyAgreement = @import("key_agreement.zig").RsaKeyAgreement;
 const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
 const HashType = @import("auth.zig").HashType;
+const crypto = @import("crypto.zig");
+const hkdf = @import("hkdf.zig");
 const memx = @import("../memx.zig");
 
 // Keep in sync with Zig standard library lib/std/crypto/aes.zig
@@ -66,7 +68,103 @@ pub const CipherSuiteTls13 = struct {
     key_len: usize,
     aead: fn (key: []const u8, fixed_nonce: []const u8) Aead,
     hash_type: HashType,
+
+    // expandLabel implements HKDF-Expand-Label from RFC 8446, Section 7.1.
+    // fn expandLabel(
+    //     self: *const CipherSuiteTls13,
+    //     allocator: mem.Allocator,
+    //     secret: ?[]const u8,
+    //     label: []const u8,
+    //     context: []const u8,
+    //     length: u16,
+    // ) ![]const u8 {
+    //     const tls13_prefix_label = "tls13 ";
+    //     const tls13_and_label_len = tls13_prefix_label.len + label.len;
+    //     const capacity = @sizeOf(u16) + @sizeOf(u8) + tls13_and_label_len +
+    //         @sizeOf(u8) + context.len;
+    //     if (@as(usize, length) != capacity) {
+    //         @panic("tls: HKDF-Expand-Label invocation failed unexpectedly");
+    //     }
+
+    //     var buf = try std.ArrayListUnmanaged(u8, allocator).initCapacity(capacity);
+    //     errdefer buf.deinit(allocator);
+    //     var writer = buf.writer();
+    //     try writer.writeIntBig(u16, length);
+    //     try writer.writeIntBig(u8, @intCast(u8, tls13_and_label_len));
+    //     try writer.writeAll(tls13_prefix_label);
+    //     try writer.writeAll(label);
+    //     try writer.writeIntBig(u8, @intCast(u8, context.len));
+    //     try writer.writeAll(context);
+    // }
+
+    // extract implements HKDF-Extract with the cipher suite hash.
+    pub fn extract(
+        self: *const CipherSuiteTls13,
+        allocator: mem.Allocator,
+        new_secret: ?[]const u8,
+        current_secret: ?[]const u8,
+    ) ![]const u8 {
+        var new_secret2 = new_secret orelse blk: {
+            var s = try allocator.alloc(u8, self.hash_type.digestLength());
+            mem.set(u8, s, 0);
+            break :blk s;
+        };
+        defer if (new_secret == null) allocator.free(new_secret2);
+
+        return try hkdf.extract(self.hash_type, allocator, new_secret2, current_secret);
+    }
 };
+
+test "CipherSuiteTls13.extract" {
+    testing.log_level = .debug;
+    // const allocator = testing.allocator;
+    // var suite = cipherSuiteTls13ById(.tls_aes_128_gcm_sha256).?;
+    // var got = try suite.extract(allocator, null, null);
+    // defer allocator.free(got);
+    // const want = "\x33\xad\x0a\x1c\x60\x7e\xc0\x3b\x09\xe6\xcd\x98\x93\x68\x0c\xe2\x10\xad\xf3\x00\xaa\x1f\x26\x60\xe1\xb2\x2e\x10\xf1\x70\xf9\x2a";
+    // try testing.expectEqualSlices(u8, want, got);
+
+    const f = struct {
+        fn f(
+            new_secret: ?[]const u8,
+            current_secret: ?[]const u8,
+            want: []const u8,
+        ) !void {
+            const allocator = testing.allocator;
+            var suite = cipherSuiteTls13ById(.tls_aes_128_gcm_sha256).?;
+            var got = try suite.extract(allocator, new_secret, current_secret);
+            defer allocator.free(got);
+            try testing.expectEqualSlices(u8, want, got);
+        }
+    }.f;
+
+    try f(
+        null,
+        null,
+        "\x33\xad\x0a\x1c\x60\x7e\xc0\x3b\x09\xe6\xcd\x98\x93\x68\x0c\xe2\x10\xad\xf3\x00\xaa\x1f\x26\x60\xe1\xb2\x2e\x10\xf1\x70\xf9\x2a",
+    );
+    try f(
+        "\x0b\x03\x4d\x80\x1b\x3d\x39\x9c\xbc\xb6\x10\x78\x44\xb0\xf9\x1e\xff\x99\x8b\x64\xa3\x39\xcb\x21\x72\x43\x74\x26\x93\x47\x92\x38",
+        "\x6f\x26\x15\xa1\x08\xc7\x02\xc5\x67\x8f\x54\xfc\x9d\xba\xb6\x97\x16\xc0\x76\x18\x9c\x48\x25\x0c\xeb\xea\xc3\x57\x6c\x36\x11\xba",
+        "\x57\x55\x23\xbb\xcc\x5b\x2c\x05\xc4\x14\x7b\xe6\x4f\x5d\x4a\xbe\x49\x8b\xd5\x3a\x96\xa4\xfb\xa1\xad\xfd\x47\x58\x53\x48\xf4\xc1",
+    );
+    try f(
+        null,
+        "\xb6\x00\xae\x09\x4c\x43\x9d\xcd\x01\xb1\xff\x96\x58\x85\x6d\xe8\x72\x4e\x3f\x45\xc0\x66\x56\xe8\xe3\xdd\x20\x87\xf4\x98\x7d\xf8",
+        "\xe2\x68\x30\xf9\xc9\xef\x5a\x62\x60\x09\xac\xa2\xec\x93\x38\xdc\xa9\x37\xa1\xca\xdb\x70\x65\x8f\x78\x4b\x29\xa9\x51\x9c\x8f\x9e",
+    );
+}
+
+test "hmacsha256" {
+    testing.log_level = .debug;
+    const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
+    var out: [HmacSha256.mac_length]u8 = undefined;
+    const msg = &[_]u8{0} ** HmacSha256.mac_length;
+    const key = &[_]u8{0} ** HmacSha256.mac_length;
+    HmacSha256.create(&out, msg, key);
+    const want = "\x33\xad\x0a\x1c\x60\x7e\xc0\x3b\x09\xe6\xcd\x98\x93\x68\x0c\xe2\x10\xad\xf3\x00\xaa\x1f\x26\x60\xe1\xb2\x2e\x10\xf1\x70\xf9\x2a";
+    try testing.expectEqualSlices(u8, want, &out);
+}
 
 const cipher_suites_tls13 = [_]CipherSuiteTls13{
     .{
