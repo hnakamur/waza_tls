@@ -70,32 +70,68 @@ pub const CipherSuiteTls13 = struct {
     hash_type: HashType,
 
     // expandLabel implements HKDF-Expand-Label from RFC 8446, Section 7.1.
-    // fn expandLabel(
-    //     self: *const CipherSuiteTls13,
-    //     allocator: mem.Allocator,
-    //     secret: ?[]const u8,
-    //     label: []const u8,
-    //     context: []const u8,
-    //     length: u16,
-    // ) ![]const u8 {
-    //     const tls13_prefix_label = "tls13 ";
-    //     const tls13_and_label_len = tls13_prefix_label.len + label.len;
-    //     const capacity = @sizeOf(u16) + @sizeOf(u8) + tls13_and_label_len +
-    //         @sizeOf(u8) + context.len;
-    //     if (@as(usize, length) != capacity) {
-    //         @panic("tls: HKDF-Expand-Label invocation failed unexpectedly");
-    //     }
+    fn expandLabel(
+        self: *const CipherSuiteTls13,
+        allocator: mem.Allocator,
+        secret: []const u8,
+        label: []const u8,
+        context: []const u8,
+        length: u16,
+    ) ![]const u8 {
+        _ = self;
+        std.log.debug("expandLabel start, secret={}, label={s}, context={}, length={}", .{
+            std.fmt.fmtSliceHexLower(secret),
+            label,
+            std.fmt.fmtSliceHexLower(context),
+            length,
+        });
+        const tls13_prefix_label = "tls13 ";
+        const tls13_and_label_len = tls13_prefix_label.len + label.len;
+        const capacity = @sizeOf(u16) + @sizeOf(u8) + tls13_and_label_len +
+            @sizeOf(u8) + context.len;
 
-    //     var buf = try std.ArrayListUnmanaged(u8, allocator).initCapacity(capacity);
-    //     errdefer buf.deinit(allocator);
-    //     var writer = buf.writer();
-    //     try writer.writeIntBig(u16, length);
-    //     try writer.writeIntBig(u8, @intCast(u8, tls13_and_label_len));
-    //     try writer.writeAll(tls13_prefix_label);
-    //     try writer.writeAll(label);
-    //     try writer.writeIntBig(u8, @intCast(u8, context.len));
-    //     try writer.writeAll(context);
-    // }
+        var hkdf_label = blk: {
+            var buf = try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity);
+            errdefer buf.deinit(allocator);
+            var writer = buf.writer(allocator);
+            try writer.writeIntBig(u16, length);
+            try writer.writeIntBig(u8, @intCast(u8, tls13_and_label_len));
+            try writer.writeAll(tls13_prefix_label);
+            try writer.writeAll(label);
+            try writer.writeIntBig(u8, @intCast(u8, context.len));
+            try writer.writeAll(context);
+            break :blk buf.toOwnedSlice(allocator);
+        };
+        defer allocator.free(hkdf_label);
+
+        var got_err: bool = false;
+        var n: usize = undefined;
+        var out = try allocator.alloc(u8, length);
+        errdefer allocator.free(out);
+        switch (self.hash_type) {
+            .sha256 => {
+                var hdkf_reader = hkdf.Hkdf(std.crypto.hash.sha2.Sha256).expand(secret, hkdf_label);
+                if (hdkf_reader.read(out)) |n2| {
+                    n = n2;
+                } else |_| {
+                    got_err = true;
+                }
+            },
+            .sha384 => {
+                var hdkf_reader = hkdf.Hkdf(std.crypto.hash.sha2.Sha384).expand(secret, hkdf_label);
+                if (hdkf_reader.read(out)) |n2| {
+                    n = n2;
+                } else |_| {
+                    got_err = true;
+                }
+            },
+            else => @panic("unsupported hash_type"),
+        }
+        if (got_err or n != length) {
+            @panic("tls: HKDF-Expand-Label invocation failed unexpectedly");
+        }
+        return out;
+    }
 
     // extract implements HKDF-Extract with the cipher suite hash.
     pub fn extract(
@@ -115,15 +151,48 @@ pub const CipherSuiteTls13 = struct {
     }
 };
 
+test "CipherSuiteTls13.expandLabel" {
+    testing.log_level = .debug;
+    const test_cases = [_]struct {
+        secret: []const u8,
+        label: []const u8,
+        context: []const u8,
+        length: u16,
+        want: []const u8,
+    }{
+        .{
+            .secret = "\x56\xbc\x08\x69\xe1\x4d\xd4\x00\xca\x53\x9f\x09\x04\x66\x62\xb8\x24\x63\x66\xf9\xfd\x41\xf4\x11\x80\xde\x07\xab\x5b\x50\x4c\x70",
+            .label = "c hs traffic",
+            .context = "\x41\x44\x4f\x05\x04\x2e\x45\x58\xd3\x9c\x02\x0a\xb3\x49\x33\x08\x79\x75\x4b\xf8\x7a\xab\x30\x88\x3b\xa3\x70\xee\x2f\xad\x31\x2b",
+            .length = 32,
+            .want = "\x82\x05\x2b\xb2\x02\x21\xf4\x1b\x89\x5b\xd6\xb4\x9f\xd1\x67\x9f\xe8\x38\xde\x55\xc8\xab\x3f\x9c\x17\xc4\x50\x56\x15\xe9\x7b\x61",
+        },
+        .{
+            .secret = "\x82\x05\x2b\xb2\x02\x21\xf4\x1b\x89\x5b\xd6\xb4\x9f\xd1\x67\x9f\xe8\x38\xde\x55\xc8\xab\x3f\x9c\x17\xc4\x50\x56\x15\xe9\x7b\x61",
+            .label = "key",
+            .context = "",
+            .length = 16,
+            .want = "\xf2\x11\x66\xd1\xdd\xc5\x11\x45\x64\x7a\x8b\xed\x90\x65\x83\xdb",
+        },
+        .{
+            .secret = "\x82\x05\x2b\xb2\x02\x21\xf4\x1b\x89\x5b\xd6\xb4\x9f\xd1\x67\x9f\xe8\x38\xde\x55\xc8\xab\x3f\x9c\x17\xc4\x50\x56\x15\xe9\x7b\x61",
+            .label = "iv",
+            .context = "",
+            .length = 12,
+            .want = "\xd3\xef\x7f\x99\x93\x16\xd5\xdb\x7e\xdd\x3a\xab",
+        },
+    };
+    for (test_cases) |c| {
+        const allocator = testing.allocator;
+        var suite = cipherSuiteTls13ById(.tls_aes_128_gcm_sha256).?;
+        var got = try suite.expandLabel(allocator, c.secret, c.label, c.context, c.length);
+        defer allocator.free(got);
+        try testing.expectEqualSlices(u8, c.want, got);
+    }
+}
+
 test "CipherSuiteTls13.extract" {
     testing.log_level = .debug;
-    // const allocator = testing.allocator;
-    // var suite = cipherSuiteTls13ById(.tls_aes_128_gcm_sha256).?;
-    // var got = try suite.extract(allocator, null, null);
-    // defer allocator.free(got);
-    // const want = "\x33\xad\x0a\x1c\x60\x7e\xc0\x3b\x09\xe6\xcd\x98\x93\x68\x0c\xe2\x10\xad\xf3\x00\xaa\x1f\x26\x60\xe1\xb2\x2e\x10\xf1\x70\xf9\x2a";
-    // try testing.expectEqualSlices(u8, want, got);
-
     const f = struct {
         fn f(
             new_secret: ?[]const u8,

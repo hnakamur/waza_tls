@@ -60,6 +60,16 @@ pub const HashType = enum {
             else => @panic("Unsupported HashType"),
         };
     }
+
+    pub fn hmacType(hash_type: HashType) type {
+        return switch (hash_type) {
+            .sha256 => std.crypto.auth.hmac.sha2.HmacSha256,
+            .sha384 => std.crypto.auth.hmac.sha2.HmacSha384,
+            .sha512 => std.crypto.auth.hmac.sha2.HmacSha512,
+            .sha1 => std.crypto.auth.hmac.HmacSha1,
+            else => @panic("Unsupported HashType"),
+        };
+    }
 };
 
 // selectSignatureScheme picks a SignatureScheme from the peer's preference list

@@ -24,9 +24,12 @@ pub const ServerHandshakeStateTls13 = struct {
     conn: *Conn,
     client_hello: ClientHelloMsg,
     hello: ?ServerHelloMsg = null,
+    sent_dummy_ccs: bool = false,
     master_secret: ?[]const u8 = null,
+    suite: ?*const CipherSuiteTls13 = null,
     cert_chain: ?*CertificateChain = null,
     sig_alg: ?SignatureScheme = null,
+    early_secret: ?[]const u8 = null,
     shared_key: []const u8 = "",
     transcript: crypto.Hash = undefined,
 
@@ -38,6 +41,7 @@ pub const ServerHandshakeStateTls13 = struct {
         self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.master_secret) |s| allocator.free(s);
+        if (self.early_secret) |s| allocator.free(s);
         if (self.shared_key.len > 0) allocator.free(self.shared_key);
     }
 
@@ -46,10 +50,23 @@ pub const ServerHandshakeStateTls13 = struct {
         try self.processClientHello(allocator);
         try self.checkForResumption(allocator);
         try self.pickCertificate(allocator);
+
         self.conn.buffering = true;
+        try self.sendServerParameters(allocator);
+        try self.sendServerCertificate(allocator);
+        try self.sendServerFinished(allocator);
+        // Note that at this point we could start sending application data without
+        // waiting for the client's second flight, but the application might not
+        // expect the lack of replay protection of the ClientHello parameters.
+        try self.conn.flush();
+        std.log.debug("ServerHandshakeStateTls13 after sendFinished, flush", .{});
+        try self.readClientCertificate(allocator);
+        try self.readClientFinished(allocator);
+
+        self.conn.handshake_complete = true;
     }
 
-    pub fn processClientHello(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+    fn processClientHello(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
         if (self.client_hello.supported_versions.len == 0) {
             self.conn.sendAlert(.illegal_parameter) catch {};
             return error.InvalidVersionToNegotiateTls13;
@@ -115,17 +132,16 @@ pub const ServerHandshakeStateTls13 = struct {
         else
             default_cipher_suites_tls13_no_aes;
 
-        var suite: ?*const CipherSuiteTls13 = null;
         for (preference_list) |suite_id| {
-            suite = mutualCipherSuiteTls13(self.client_hello.cipher_suites, suite_id);
-            if (suite != null) break;
+            self.suite = mutualCipherSuiteTls13(self.client_hello.cipher_suites, suite_id);
+            if (self.suite != null) break;
         }
-        if (suite == null) {
+        if (self.suite == null) {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.NoCipherSuiteSupported;
         }
-        self.conn.cipher_suite_id = suite.?.id;
-        self.transcript = crypto.Hash.init(suite.?.hash_type);
+        self.conn.cipher_suite_id = self.suite.?.id;
+        self.transcript = crypto.Hash.init(self.suite.?.hash_type);
 
         // Pick the ECDHE group in server preference order, but give priority to
         // groups with a key share, to avoid a HelloRetryRequest round-trip.
@@ -181,7 +197,7 @@ pub const ServerHandshakeStateTls13 = struct {
             .vers = .v1_2,
             .random = random,
             .session_id = session_id,
-            .cipher_suite = suite.?.id,
+            .cipher_suite = self.suite.?.id,
             .compression_method = .none,
             .supported_version = self.conn.version.?,
             .server_share = server_share,
@@ -194,7 +210,7 @@ pub const ServerHandshakeStateTls13 = struct {
         }
     }
 
-    pub fn checkForResumption(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+    fn checkForResumption(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
         if (self.conn.config.session_tickets_disabled) {
             return;
         }
@@ -202,7 +218,7 @@ pub const ServerHandshakeStateTls13 = struct {
         // TODO: implement
     }
 
-    pub fn pickCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+    fn pickCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
         // TODO: implement
 
         // signature_algorithms is required in TLS 1.3. See RFC 8446, Section 4.2.3.
@@ -227,5 +243,52 @@ pub const ServerHandshakeStateTls13 = struct {
         };
 
         self.cert_chain = cert_chain;
+    }
+
+    fn sendServerParameters(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        self.transcript.update(try self.client_hello.marshal(allocator));
+        const server_hello_bytes = try self.hello.?.marshal(allocator);
+        self.transcript.update(server_hello_bytes);
+        try self.conn.writeRecord(allocator, .handshake, server_hello_bytes);
+
+        try self.sendDummyChangeCipherSpec(allocator);
+
+        const early_secret = self.early_secret orelse try self.suite.extract(allocator, null, null);
+        defer if (self.early_secret == null) allocator.free(early_secret);
+    }
+
+    // sendDummyChangeCipherSpec sends a ChangeCipherSpec record for compatibility
+    // with middleboxes that didn't implement TLS correctly. See RFC 8446, Appendix D.4.
+    fn sendDummyChangeCipherSpec(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        if (self.sent_dummy_ccs) {
+            return;
+        }
+
+        try self.conn.writeRecord(allocator, .change_cipher_spec, &[_]u8{1});
+        self.sent_dummy_ccs = true;
+    }
+
+    fn sendServerCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
+    }
+
+    fn sendServerFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
+    }
+
+    fn readClientCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
+    }
+
+    fn readClientFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
     }
 };
