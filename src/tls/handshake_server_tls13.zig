@@ -3,6 +3,7 @@ const mem = std.mem;
 const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
+const EncryptedExtensionsMsg = @import("handshake_msg.zig").EncryptedExtensionsMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
@@ -22,6 +23,7 @@ const server_handshake_traffic_label = @import("key_schedule.zig").server_handsh
 const negotiateAlpn = @import("handshake_server.zig").negotiateAlpn;
 const crypto = @import("crypto.zig");
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
+const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const memx = @import("../memx.zig");
 
 pub const ServerHandshakeStateTls13 = struct {

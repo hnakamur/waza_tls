@@ -339,13 +339,6 @@ func GenerateRnadomCertificateMsgTLS13(rand *rand.Rand) *certificateMsgTLS13 {
 }
 
 func TestCertificateMsgTLS13MarshalUnmarshal(t *testing.T) {
-	// 2022/02/21 21:34:42 cert=240adede3d3ba435bc02f887180a61
-	// 2022/02/21 21:34:42 cert=52bb1f7f74183174963391ac1aa329fda7b7560272bb16d9bec78173d4018061181a1e
-	// 2022/02/21 21:34:42 OCSPStaple=4dab72656e8d
-	// 2022/02/21 21:34:42 sct=4981ed501d4d4d0e042debcbcf
-	// 2022/02/21 21:34:42 sct=309d61f4abebb1f57c
-	// 2022/02/21 21:34:42 marshaled CertificateMsgTLS13=0b00006e0000006a00000f240adede3d3ba435bc02f887180a61002e0005000a010000064dab72656e8d0012001c001a000d4981ed501d4d4d0e042debcbcf0009309d61f4abebb1f57c00002352bb1f7f74183174963391ac1aa329fda7b7560272bb16d9bec78173d4018061181a1e0000
-
 	// msg := GenerateRnadomCertificateMsgTLS13(rand.New(rand.NewSource(time.Now().UnixNano())))
 	msg := certificateMsgTLS13{
 		certificate: tls.Certificate{

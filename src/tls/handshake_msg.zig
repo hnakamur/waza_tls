@@ -7,6 +7,7 @@ const fmt = std.fmt;
 const io = std.io;
 const mem = std.mem;
 
+const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const BytesView = @import("../BytesView.zig");
 const asn1 = @import("asn1.zig");
 
@@ -1485,6 +1486,10 @@ pub fn generateRandom(
     return random_bytes[0..random_length];
 }
 
+const u8_size = @typeInfo(u8).Int.bits / 8;
+const u16_size = @typeInfo(u16).Int.bits / 8;
+const u24_size = @typeInfo(u24).Int.bits / 8;
+
 pub const EncryptedExtensionsMsg = struct {
     raw: ?[]const u8 = null,
     alpn_protocol: []const u8 = "",
@@ -1523,7 +1528,6 @@ pub const EncryptedExtensionsMsg = struct {
             }
         }
 
-        // const alpn_protocol = try allocator.dupe(u8, try readString(u8, &bv));
         return EncryptedExtensionsMsg{
             .raw = raw,
             .alpn_protocol = alpn_protocol,
@@ -1535,9 +1539,6 @@ pub const EncryptedExtensionsMsg = struct {
             return raw;
         }
 
-        const u8_size = @typeInfo(u8).Int.bits / 8;
-        const u16_size = @typeInfo(u16).Int.bits / 8;
-        const u24_size = @typeInfo(u24).Int.bits / 8;
         var msg_len: usize = u8_size + u24_size + u16_size;
         if (self.alpn_protocol.len > 0) {
             msg_len += u16_size * 3 + u8_size + self.alpn_protocol.len;
@@ -1563,6 +1564,114 @@ pub const EncryptedExtensionsMsg = struct {
             rest_len -= u8_size;
             try writeInt(u8, rest_len, writer);
             try writeBytes(self.alpn_protocol, writer);
+        }
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
+// TLS CertificateStatusType (RFC 3546)
+const status_type_ocsp: u8 = 1;
+
+pub const CertificateMsgTls13 = struct {
+    raw: ?[]const u8 = null,
+    cert_chain: CertificateChain,
+    ocsp_stapling: bool = false,
+    scts: bool = false,
+
+    pub fn deinit(self: *CertificateMsgTls13, allocator: mem.Allocator) void {
+        self.cert_chain.deinit(allocator);
+        if (self.raw) |raw| allocator.free(raw);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsgTls13 {
+        var bv: BytesView = undefined;
+        const raw = try allocator.dupe(u8, msg_data);
+        errdefer allocator.free(raw);
+        bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        var cert_chain = CertificateChain{
+            .certificate_chain = &[_][]const u8{
+                "\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61",
+                "\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e",
+            },
+        };
+
+        return CertificateMsgTls13{
+            .cert_chain = cert_chain,
+            .raw = raw,
+        };
+    }
+
+    pub fn marshal(self: *CertificateMsgTls13, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        var msg_len: usize = u8_size + u24_size + u8_size + u24_size;
+        var ocsp_stapling_marshaled_len: usize = 0;
+        var scts_marshaled_len: usize = 0;
+        for (self.cert_chain.certificate_chain) |cert, i| {
+            msg_len += u24_size + cert.len + u16_size;
+            if (i == 0) {
+                if (self.cert_chain.ocsp_staple.len > 0) {
+                    ocsp_stapling_marshaled_len = u16_size * 2 + u8_size + u24_size +
+                        self.cert_chain.ocsp_staple.len;
+                    msg_len += ocsp_stapling_marshaled_len;
+                }
+                if (self.cert_chain.signed_certificate_timestamps) |scts| {
+                    scts_marshaled_len = u16_size * 3;
+                    for (scts) |sct| {
+                        scts_marshaled_len += u16_size + sct.len;
+                    }
+                    msg_len += scts_marshaled_len;
+                }
+            }
+        }
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var rest_len = msg_len;
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.Certificate, writer);
+        rest_len -= u8_size + u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u8, 0, writer); // certificate_request_context
+        rest_len -= u8_size + u24_size;
+
+        try writeInt(u24, rest_len, writer);
+        for (self.cert_chain.certificate_chain) |cert, i| {
+            try writeInt(u24, cert.len, writer);
+            try writeBytes(cert, writer);
+            const ext_len = if (i == 0) ocsp_stapling_marshaled_len + scts_marshaled_len else 0;
+            try writeInt(u16, ext_len, writer);
+            // This library only supports OCSP and SCT for leaf certificates.
+            if (i == 0) {
+                if (self.ocsp_stapling) {
+                    try writeInt(u16, ExtensionType.StatusRequest, writer);
+                    try writeInt(u16, u8_size + u24_size + self.cert_chain.ocsp_staple.len, writer);
+                    try writeInt(u8, status_type_ocsp, writer);
+                    try writeInt(u24, self.cert_chain.ocsp_staple.len, writer);
+                    try writeBytes(self.cert_chain.ocsp_staple, writer);
+                }
+                if (self.scts) {
+                    if (self.cert_chain.signed_certificate_timestamps) |scts| {
+                        try writeInt(u16, ExtensionType.Sct, writer);
+                        rest_len = scts_marshaled_len - u16_size * 2;
+                        try writeInt(u16, rest_len, writer);
+                        rest_len -= u16_size;
+                        try writeInt(u16, rest_len, writer);
+                        for (scts) |sct| {
+                            try writeInt(u16, sct.len, writer);
+                            try writeBytes(sct, writer);
+                        }
+                    }
+                }
+            }
         }
 
         self.raw = raw;
@@ -2458,4 +2567,53 @@ test "EncryptedExtensionsMsg.marshal" {
     defer msg2.deinit(allocator);
 
     try testing.expectEqualStrings(msg.alpn_protocol, msg2.alpn_protocol);
+}
+
+test "CertificateMsgTls13.marshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    var msg = CertificateMsgTls13{
+        .cert_chain = CertificateChain{
+            .certificate_chain = &[_][]const u8{
+                "\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61",
+                "\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e",
+            },
+            .ocsp_staple = "\x4d\xab\x72\x65\x6e\x8d",
+            .signed_certificate_timestamps = &[_][]const u8{
+                "\x49\x81\xed\x50\x1d\x4d\x4d\x0e\x04\x2d\xeb\xcb\xcf",
+                "\x30\x9d\x61\xf4\xab\xeb\xb1\xf5\x7c",
+            },
+        },
+        .ocsp_stapling = true,
+        .scts = true,
+    };
+
+    const got = try msg.marshal(allocator);
+    defer allocator.free(got);
+    // std.log.debug("marshaled={}", .{std.fmt.fmtSliceHexLower(got)});
+
+    const want = "\x0b\x00\x00\x6e\x00\x00\x00\x6a\x00\x00\x0f\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61\x00\x2e\x00\x05\x00\x0a\x01\x00\x00\x06\x4d\xab\x72\x65\x6e\x8d\x00\x12\x00\x1c\x00\x1a\x00\x0d\x49\x81\xed\x50\x1d\x4d\x4d\x0e\x04\x2d\xeb\xcb\xcf\x00\x09\x30\x9d\x61\xf4\xab\xeb\xb1\xf5\x7c\x00\x00\x23\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e\x00\x00";
+    try testing.expectEqualSlices(u8, want, got);
+
+    // var msg2 = try CertificateMsgTls13.unmarshal(allocator, want);
+    // defer msg2.deinit(allocator);
+
+    // try testing.expectEqual(
+    //     msg.cert_chain.certificate_chain.len,
+    //     msg2.cert_chain.certificate_chain.len,
+    // );
+    // for (msg.cert_chain.certificate_chain) |cert, i| {
+    //     try testing.expectEqualStrings(cert, msg2.cert_chain.certificate_chain[i]);
+    // }
+
+    // try testing.expectEqualStrings(msg.cert_chain.ocsp_staple, msg2.cert_chain.ocsp_staple);
+
+    // try testing.expectEqual(
+    //     msg.cert_chain.signed_certificate_timestamps.?.len,
+    //     msg2.cert_chain.signed_certificate_timestamps.?.len,
+    // );
+    // for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
+    //     try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
+    // }
 }
