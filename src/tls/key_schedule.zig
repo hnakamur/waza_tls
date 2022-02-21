@@ -8,6 +8,16 @@ const elliptic = @import("elliptic.zig");
 const ecdsa = @import("ecdsa.zig");
 const bigint = @import("big_int.zig");
 
+pub const derived_label = "derived";
+pub const resumption_binder_label = "res binder";
+pub const client_handshake_traffic_label = "c hs traffic";
+pub const server_handshake_traffic_label = "s hs traffic";
+pub const client_application_traffic_label = "c ap traffic";
+pub const server_application_traffic_label = "s ap traffic";
+pub const exporter_label = "exp master";
+pub const resumption_label = "res master";
+pub const traffic_pdate_label = "traffic upd";
+
 pub const EcdheParameters = union(enum) {
     x25519: X25519Parameters,
     nist: NistParameters,

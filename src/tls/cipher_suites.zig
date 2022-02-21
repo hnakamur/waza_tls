@@ -133,6 +133,20 @@ pub const CipherSuiteTls13 = struct {
         return out;
     }
 
+    // deriveSecret implements Derive-Secret from RFC 8446, Section 7.1.
+    pub fn deriveSecret(
+        self: *const CipherSuiteTls13,
+        allocator: mem.Allocator,
+        secret: []const u8,
+        label: []const u8,
+        transcript: ?crypto.Hash,
+    ) ![]const u8 {
+        var ts = transcript orelse crypto.Hash.init(self.hash_type);
+        var context = try ts.allocFinal(allocator);
+        defer allocator.free(context);
+        return self.expandLabel(allocator, secret, label, context, self.hash_type.digestLength());
+    }
+
     // extract implements HKDF-Extract with the cipher suite hash.
     pub fn extract(
         self: *const CipherSuiteTls13,
@@ -148,6 +162,20 @@ pub const CipherSuiteTls13 = struct {
         defer if (new_secret == null) allocator.free(new_secret2);
 
         return try hkdf.extract(self.hash_type, allocator, new_secret2, current_secret);
+    }
+
+    // trafficKey generates traffic keys according to RFC 8446, Section 7.3.
+    pub fn trafficKey(
+        self: *const CipherSuiteTls13,
+        allocator: mem.Allocator,
+        traffic_secret: []const u8,
+        key_out: *[]const u8,
+        iv_out: *[]const u8,
+    ) !void {
+        key_out.* = self.expandLabel(allocator, traffic_secret, "key", "", self.key_len);
+        errdefer allocator.free(key_out.*);
+        iv_out.* = self.expandLabel(allocator, traffic_secret, "iv", "", aead_nonce_length);
+        errdefer allocator.free(iv_out.*);
     }
 };
 

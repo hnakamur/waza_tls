@@ -12,6 +12,7 @@ const CertPool = @import("cert_pool.zig").CertPool;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
 const makeCipherPreferenceList = @import("cipher_suites.zig").makeCipherPreferenceList;
+const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
@@ -283,6 +284,8 @@ pub const Conn = struct {
         if (self.handshake_state) |*hs| hs.deinit(allocator);
         if (self.client_protocol.len > 0) allocator.free(self.client_protocol);
         memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
+        self.in.deinit(allocator);
+        self.out.deinit(allocator);
     }
 
     pub fn write(self: *Conn, bytes: []const u8) !usize {
@@ -983,6 +986,12 @@ const HalfConn = struct {
     next_cipher: ?Aead = null,
     err: ?anyerror = null,
 
+    traffic_secret: []const u8 = "", // current TLS 1.3 traffic secret
+
+    pub fn deinit(self: *HalfConn, allocator: mem.Allocator) void {
+        if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
+    }
+
     fn encrypt(
         self: *HalfConn,
         allocator: mem.Allocator,
@@ -1154,6 +1163,22 @@ const HalfConn = struct {
             .{ @ptrToInt(self), self.cipher },
         );
         self.next_cipher = null;
+        mem.set(u8, &self.seq, 0);
+    }
+
+    fn setTrafficSecret(
+        self: *HalfConn,
+        allocator: mem.Allocator,
+        suite: *const CipherSuiteTls13,
+        secret: []const u8,
+    ) !void {
+        self.traffic_secret = try allocator.dupe(u8, secret);
+        var key: []const u8 = undefined;
+        var iv: []const u8 = undefined;
+        try suite.trafficKey(allocator, secret, &key, &iv);
+        defer allocator.free(key);
+        defer allocator.free(iv);
+        self.cipher = suite.aead(key, iv);
         mem.set(u8, &self.seq, 0);
     }
 

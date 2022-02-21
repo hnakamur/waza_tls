@@ -16,6 +16,10 @@ const aesgcmPreferred = @import("cipher_suites.zig").aesgcmPreferred;
 const default_cipher_suites_tls13 = @import("cipher_suites.zig").default_cipher_suites_tls13;
 const default_cipher_suites_tls13_no_aes = @import("cipher_suites.zig").default_cipher_suites_tls13_no_aes;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
+const derived_label = @import("key_schedule.zig").derived_label;
+const client_handshake_traffic_label = @import("key_schedule.zig").client_handshake_traffic_label;
+const server_handshake_traffic_label = @import("key_schedule.zig").server_handshake_traffic_label;
+const negotiateAlpn = @import("handshake_server.zig").negotiateAlpn;
 const crypto = @import("crypto.zig");
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 const memx = @import("../memx.zig");
@@ -25,12 +29,16 @@ pub const ServerHandshakeStateTls13 = struct {
     client_hello: ClientHelloMsg,
     hello: ?ServerHelloMsg = null,
     sent_dummy_ccs: bool = false,
+    using_psk: bool = false,
     master_secret: ?[]const u8 = null,
     suite: ?*const CipherSuiteTls13 = null,
     cert_chain: ?*CertificateChain = null,
     sig_alg: ?SignatureScheme = null,
     early_secret: ?[]const u8 = null,
     shared_key: []const u8 = "",
+    handshake_secret: []const u8 = "",
+    master_secret: []const u8 = "",
+    traffic_secret: []const u8 = "",
     transcript: crypto.Hash = undefined,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls13 {
@@ -43,6 +51,9 @@ pub const ServerHandshakeStateTls13 = struct {
         if (self.master_secret) |s| allocator.free(s);
         if (self.early_secret) |s| allocator.free(s);
         if (self.shared_key.len > 0) allocator.free(self.shared_key);
+        if (self.handshake_secret.len > 0) allocator.free(self.handshake_secret);
+        if (self.master_secret.len > 0) allocator.free(self.master_secret);
+        if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -253,8 +264,59 @@ pub const ServerHandshakeStateTls13 = struct {
 
         try self.sendDummyChangeCipherSpec(allocator);
 
-        const early_secret = self.early_secret orelse try self.suite.extract(allocator, null, null);
+        const early_secret = self.early_secret orelse try self.suite.?.extract(allocator, null, null);
         defer if (self.early_secret == null) allocator.free(early_secret);
+
+        self.handshake_secret = blk: {
+            const current_secret = self.suite.?.deriveSecret(
+                allocator,
+                early_secret,
+                derived_label,
+                null,
+            );
+            defer allocator.free(current_secret);
+            break :blk self.suite.?.extract(self.shared_key, current_secret);
+        };
+
+        const client_secret = self.suite.?.driveSecret(
+            allocator,
+            self.handshake_secret,
+            client_handshake_traffic_label,
+            self.transcript,
+        );
+        defer allocator.free(client_secret);
+        self.conn.in.setTrafficSecret(allocator, self.suite.?, client_secret);
+
+        const server_secret = self.suite.?.driveSecret(
+            allocator,
+            self.handshake_secret,
+            server_handshake_traffic_label,
+            self.transcript,
+        );
+        defer allocator.free(server_secret);
+        self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+
+        // TODO: implement write key log
+
+        if (negotiateAlpn(
+            self.conn.config.next_protos,
+            self.client_hello.alpn_protocols,
+        )) |selected_proto| {
+            self.conn.client_protocol = try allocator.dupe(u8, selected_proto);
+
+            var encrypted_extensions_msg = EncryptedExtensionsMsg{
+                .alpn_protocol = selected_proto,
+            };
+
+            const encrypted_extensions_msg_bytes = try encrypted_extensions_msg.marshal(allocator);
+            defer allocator.free(encrypted_extensions_msg_bytes);
+
+            self.transcript.update(encrypted_extensions_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, encrypted_extensions_msg_bytes);
+        } else |err| {
+            self.conn.sendAlert(.no_application_protocol) catch {};
+            return err;
+        }
     }
 
     // sendDummyChangeCipherSpec sends a ChangeCipherSpec record for compatibility
@@ -268,10 +330,23 @@ pub const ServerHandshakeStateTls13 = struct {
         self.sent_dummy_ccs = true;
     }
 
+    fn requestClientCert(self: *const ServerHandshakeStateTls13) bool {
+        return (@enumToInt(self.conn.config.client_auth) >=
+            @enumToInt(ClientAuthType.request_client_cert)) and
+            !self.using_psk;
+    }
+
     fn sendServerCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = self;
         _ = allocator;
+
+        // Only one of PSK and certificates are used at a time.
+        if (self.using_psk) {
+            return;
+        }
+
+        if (self.requestClientCert()) {
         // TODO: implement
+        }
     }
 
     fn sendServerFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {

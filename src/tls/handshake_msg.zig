@@ -143,7 +143,6 @@ pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;
 const EndOfEarlyDataMsg = void;
-const EncryptedExtensionsMsg = void;
 const CertificateRequestMsg = void;
 const CertificateVerifyMsg = void;
 const CertificateStatusMsg = void;
@@ -1486,6 +1485,91 @@ pub fn generateRandom(
     return random_bytes[0..random_length];
 }
 
+pub const EncryptedExtensionsMsg = struct {
+    raw: ?[]const u8 = null,
+    alpn_protocol: []const u8 = "",
+
+    pub fn deinit(self: *EncryptedExtensionsMsg, allocator: mem.Allocator) void {
+        if (self.alpn_protocol.len > 0) allocator.free(self.alpn_protocol);
+        if (self.raw) |raw| allocator.free(raw);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !EncryptedExtensionsMsg {
+        var bv: BytesView = undefined;
+        const raw = try allocator.dupe(u8, msg_data);
+        errdefer allocator.free(raw);
+        bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const extensions_len = try bv.readIntBig(u16);
+        try bv.ensureRestLen(extensions_len);
+        const extensions_end_pos = bv.pos + extensions_len;
+        var alpn_protocol: []const u8 = "";
+        errdefer if (alpn_protocol.len > 0) allocator.free(alpn_protocol);
+        while (bv.pos < extensions_end_pos) {
+            const ext_type = try readEnum(ExtensionType, &bv);
+            const ext_len = try bv.readIntBig(u16);
+            try bv.ensureRestLen(ext_len);
+            switch (ext_type) {
+                .Alpn => {
+                    const proto_list_len = try bv.readIntBig(u16);
+                    try bv.ensureRestLen(proto_list_len);
+                    if (bv.restLen() != proto_list_len) {
+                        return error.InvalidEncryptedExtensionsMessage;
+                    }
+                    alpn_protocol = try allocator.dupe(u8, try readString(u8, &bv));
+                },
+                else => bv.skip(ext_len),
+            }
+        }
+
+        // const alpn_protocol = try allocator.dupe(u8, try readString(u8, &bv));
+        return EncryptedExtensionsMsg{
+            .raw = raw,
+            .alpn_protocol = alpn_protocol,
+        };
+    }
+
+    pub fn marshal(self: *EncryptedExtensionsMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        const u8_size = @typeInfo(u8).Int.bits / 8;
+        const u16_size = @typeInfo(u16).Int.bits / 8;
+        const u24_size = @typeInfo(u24).Int.bits / 8;
+        var msg_len: usize = u8_size + u24_size + u16_size;
+        if (self.alpn_protocol.len > 0) {
+            msg_len += u16_size * 3 + u8_size + self.alpn_protocol.len;
+        }
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var rest_len = msg_len;
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.EncryptedExtensions, writer);
+        rest_len -= u8_size + u24_size;
+        try writeInt(u24, rest_len, writer);
+        rest_len -= u16_size;
+        try writeInt(u16, rest_len, writer);
+        if (self.alpn_protocol.len > 0) {
+            try writeInt(u16, ExtensionType.Alpn, writer);
+            rest_len -= u16_size * 2;
+            try writeInt(u16, rest_len, writer);
+            rest_len -= u16_size;
+            try writeInt(u16, rest_len, writer);
+            rest_len -= u8_size;
+            try writeInt(u8, rest_len, writer);
+            try writeBytes(self.alpn_protocol, writer);
+        }
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
 const testing = std.testing;
 
 test "ClientHelloMsg.marshal" {
@@ -2357,3 +2441,21 @@ fn testCreateFinishedMsg() FinishedMsg {
 const test_marshaled_finished_msg = "\x14" ++ // MsgType.Finished
     "\x00\x00\x0b" ++ // u24 msg_len
     "\x76\x65\x72\x69\x66\x79\x20\x64\x61\x74\x61"; // "verify data"
+
+test "EncryptedExtensionsMsg.marshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    var msg = EncryptedExtensionsMsg{ .alpn_protocol = "h2" };
+    const got = try msg.marshal(allocator);
+    defer allocator.free(got);
+    // std.log.debug("marshaled={}", .{std.fmt.fmtSliceHexLower(got)});
+
+    const want = "\x08\x00\x00\x0b\x00\x09\x00\x10\x00\x05\x00\x03\x02\x68\x32";
+    try testing.expectEqualSlices(u8, want, got);
+
+    var msg2 = try EncryptedExtensionsMsg.unmarshal(allocator, want);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqualStrings(msg.alpn_protocol, msg2.alpn_protocol);
+}
