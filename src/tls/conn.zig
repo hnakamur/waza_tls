@@ -1166,7 +1166,7 @@ const HalfConn = struct {
         mem.set(u8, &self.seq, 0);
     }
 
-    fn setTrafficSecret(
+    pub fn setTrafficSecret(
         self: *HalfConn,
         allocator: mem.Allocator,
         suite: *const CipherSuiteTls13,

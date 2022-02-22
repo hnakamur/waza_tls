@@ -144,7 +144,13 @@ pub const CipherSuiteTls13 = struct {
         var ts = transcript orelse crypto.Hash.init(self.hash_type);
         var context = try ts.allocFinal(allocator);
         defer allocator.free(context);
-        return self.expandLabel(allocator, secret, label, context, self.hash_type.digestLength());
+        return self.expandLabel(
+            allocator,
+            secret,
+            label,
+            context,
+            @intCast(u16, self.hash_type.digestLength()),
+        );
     }
 
     // extract implements HKDF-Extract with the cipher suite hash.
@@ -172,9 +178,15 @@ pub const CipherSuiteTls13 = struct {
         key_out: *[]const u8,
         iv_out: *[]const u8,
     ) !void {
-        key_out.* = self.expandLabel(allocator, traffic_secret, "key", "", self.key_len);
+        key_out.* = try self.expandLabel(
+            allocator,
+            traffic_secret,
+            "key",
+            "",
+            @intCast(u16, self.key_len),
+        );
         errdefer allocator.free(key_out.*);
-        iv_out.* = self.expandLabel(allocator, traffic_secret, "iv", "", aead_nonce_length);
+        iv_out.* = try self.expandLabel(allocator, traffic_secret, "iv", "", aead_nonce_length);
         errdefer allocator.free(iv_out.*);
     }
 };

@@ -36,6 +36,10 @@ pub const CertificateChain = struct {
             key.deinit(allocator);
         }
         if (self.ocsp_staple.len > 0) allocator.free(self.ocsp_staple);
+        if (self.signed_certificate_timestamps) |scts| {
+            for (scts) |sct| allocator.free(sct);
+            allocator.free(scts);
+        }
         if (self.leaf) |leaf| {
             leaf.deinit(allocator);
         }

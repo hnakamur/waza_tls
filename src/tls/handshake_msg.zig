@@ -1171,6 +1171,7 @@ const ExtensionType = enum(u16) {
     SignatureAlgorithmsCert = 50,
     KeyShare = 51,
     RenegotiationInfo = 0xff01,
+    _,
 };
 
 fn readStringList(
@@ -1592,15 +1593,65 @@ pub const CertificateMsgTls13 = struct {
         bv = BytesView.init(raw);
         bv.skip(handshake_msg_header_len);
 
-        var cert_chain = CertificateChain{
-            .certificate_chain = &[_][]const u8{
-                "\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61",
-                "\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e",
-            },
+        const context = try bv.readByte();
+        if (context != 0) {
+            return error.InvalidCertificateMsg;
+        }
+        var certificates_len = try bv.readIntBig(u24);
+        try bv.ensureRestLen(certificates_len);
+        const certificates_end_pos = bv.pos + certificates_len;
+        var certificates = std.ArrayListUnmanaged([]const u8){};
+        errdefer {
+            for (certificates.items) |cert| allocator.free(cert);
+            certificates.deinit(allocator);
+        }
+        var ocsp_staple: []const u8 = "";
+        errdefer if (ocsp_staple.len > 0) allocator.free(ocsp_staple);
+        var scts = std.ArrayListUnmanaged([]const u8){};
+        errdefer {
+            for (scts.items) |sct| allocator.free(sct);
+            scts.deinit(allocator);
+        }
+        while (bv.pos < certificates_end_pos) {
+            try certificates.append(allocator, try allocator.dupe(u8, try readString(u24, &bv)));
+            const extensions_len = try bv.readIntBig(u16);
+            const extensions_end_pos = bv.pos + extensions_len;
+            while (bv.pos < extensions_end_pos) {
+                const ext_type = try readEnum(ExtensionType, &bv);
+                const ext_len = try bv.readIntBig(u16);
+                switch (ext_type) {
+                    .StatusRequest => {
+                        const status_type = try bv.readByte();
+                        if (status_type != status_type_ocsp) {
+                            return error.InvalidCertificateMsg;
+                        }
+                        ocsp_staple = try allocator.dupe(u8, try readString(u24, &bv));
+                    },
+                    .Sct => {
+                        const scts_len = try bv.readIntBig(u16);
+                        const scts_end_pos = bv.pos + scts_len;
+                        while (bv.pos < scts_end_pos) {
+                            try scts.append(
+                                allocator,
+                                try allocator.dupe(u8, try readString(u16, &bv)),
+                            );
+                        }
+                    },
+                    else => bv.skip(ext_len),
+                }
+            }
+        }
+
+        const cert_chain = CertificateChain{
+            .certificate_chain = certificates.toOwnedSlice(allocator),
+            .ocsp_staple = ocsp_staple,
+            .signed_certificate_timestamps = scts.toOwnedSlice(allocator),
         };
 
         return CertificateMsgTls13{
             .cert_chain = cert_chain,
+            .ocsp_stapling = ocsp_staple.len > 0,
+            .scts = scts.items.len > 0,
             .raw = raw,
         };
     }
@@ -2596,24 +2647,24 @@ test "CertificateMsgTls13.marshal" {
     const want = "\x0b\x00\x00\x6e\x00\x00\x00\x6a\x00\x00\x0f\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61\x00\x2e\x00\x05\x00\x0a\x01\x00\x00\x06\x4d\xab\x72\x65\x6e\x8d\x00\x12\x00\x1c\x00\x1a\x00\x0d\x49\x81\xed\x50\x1d\x4d\x4d\x0e\x04\x2d\xeb\xcb\xcf\x00\x09\x30\x9d\x61\xf4\xab\xeb\xb1\xf5\x7c\x00\x00\x23\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e\x00\x00";
     try testing.expectEqualSlices(u8, want, got);
 
-    // var msg2 = try CertificateMsgTls13.unmarshal(allocator, want);
-    // defer msg2.deinit(allocator);
+    var msg2 = try CertificateMsgTls13.unmarshal(allocator, want);
+    defer msg2.deinit(allocator);
 
-    // try testing.expectEqual(
-    //     msg.cert_chain.certificate_chain.len,
-    //     msg2.cert_chain.certificate_chain.len,
-    // );
-    // for (msg.cert_chain.certificate_chain) |cert, i| {
-    //     try testing.expectEqualStrings(cert, msg2.cert_chain.certificate_chain[i]);
-    // }
+    try testing.expectEqual(
+        msg.cert_chain.certificate_chain.len,
+        msg2.cert_chain.certificate_chain.len,
+    );
+    for (msg.cert_chain.certificate_chain) |cert, i| {
+        try testing.expectEqualStrings(cert, msg2.cert_chain.certificate_chain[i]);
+    }
 
-    // try testing.expectEqualStrings(msg.cert_chain.ocsp_staple, msg2.cert_chain.ocsp_staple);
+    try testing.expectEqualStrings(msg.cert_chain.ocsp_staple, msg2.cert_chain.ocsp_staple);
 
-    // try testing.expectEqual(
-    //     msg.cert_chain.signed_certificate_timestamps.?.len,
-    //     msg2.cert_chain.signed_certificate_timestamps.?.len,
-    // );
-    // for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
-    //     try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
-    // }
+    try testing.expectEqual(
+        msg.cert_chain.signed_certificate_timestamps.?.len,
+        msg2.cert_chain.signed_certificate_timestamps.?.len,
+    );
+    for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
+        try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
+    }
 }
