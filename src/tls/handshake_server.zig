@@ -153,7 +153,6 @@ pub const ServerHandshakeStateTls12 = struct {
         var hello = ServerHelloMsg{
             .vers = self.conn.version.?,
             .random = random,
-            .session_id = try allocator.dupe(u8, &[_]u8{0} ** 32),
             .secure_renegotiation_supported = self.client_hello.secure_renegotiation_supported,
             .compression_method = .none,
             .ocsp_stapling = false,
