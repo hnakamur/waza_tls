@@ -4,6 +4,8 @@ const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const EncryptedExtensionsMsg = @import("handshake_msg.zig").EncryptedExtensionsMsg;
+const CertificateMsgTls13 = @import("handshake_msg.zig").CertificateMsgTls13;
+const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
@@ -23,6 +25,10 @@ const server_handshake_traffic_label = @import("key_schedule.zig").server_handsh
 const negotiateAlpn = @import("handshake_server.zig").negotiateAlpn;
 const crypto = @import("crypto.zig");
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
+const SignatureType = @import("auth.zig").SignatureType;
+const HashType = @import("auth.zig").HashType;
+const signedMessage = @import("auth.zig").signedMessage;
+const server_signature_context = @import("auth.zig").server_signature_context;
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const memx = @import("../memx.zig");
 
@@ -309,8 +315,6 @@ pub const ServerHandshakeStateTls13 = struct {
             };
 
             const encrypted_extensions_msg_bytes = try encrypted_extensions_msg.marshal(allocator);
-            defer allocator.free(encrypted_extensions_msg_bytes);
-
             self.transcript.update(encrypted_extensions_msg_bytes);
             try self.conn.writeRecord(allocator, .handshake, encrypted_extensions_msg_bytes);
         } else |err| {
@@ -345,7 +349,89 @@ pub const ServerHandshakeStateTls13 = struct {
         }
 
         if (self.requestClientCert()) {
-        // TODO: implement
+            @panic("not implemented yet");
+        }
+
+        {
+            var cert_msg = blk: {
+                const scts = self.client_hello.scts and
+                    self.cert_chain.?.signed_certificate_timestamps != null and
+                    self.cert_chain.?.signed_certificate_timestamps.?.len > 0;
+                const ocsp_stapling = self.client_hello.ocsp_stapling and
+                    self.cert_chain.?.ocsp_staple.len > 0;
+
+                var cert_chain = CertificateChain{
+                    .certificate_chain = try memx.dupeStringList(
+                        allocator,
+                        self.cert_chain.?.certificate_chain,
+                    ),
+                };
+                errdefer cert_chain.deinit(allocator);
+
+                if (scts) {
+                    cert_chain.signed_certificate_timestamps =
+                        try memx.dupeStringList(
+                        allocator,
+                        self.cert_chain.?.signed_certificate_timestamps.?,
+                    );
+                }
+                if (ocsp_stapling) {
+                    cert_chain.ocsp_staple = try allocator.dupe(u8, self.cert_chain.?.ocsp_staple);
+                }
+
+                break :blk CertificateMsgTls13{
+                    .cert_chain = cert_chain,
+                    .ocsp_stapling = ocsp_stapling,
+                    .scts = scts,
+                };
+            };
+            defer cert_msg.deinit(allocator);
+
+            const cert_msg_bytes = try cert_msg.marshal(allocator);
+            self.transcript.update(cert_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, cert_msg_bytes);
+        }
+
+        {
+            var cert_verify_msg = blk: {
+                const sig_type = try SignatureType.fromSinatureScheme(self.sig_alg.?);
+                _ = sig_type;
+
+                const hash_type = try HashType.fromSinatureScheme(self.sig_alg.?);
+
+                var signed = try signedMessage(
+                    allocator,
+                    hash_type,
+                    server_signature_context,
+                    self.transcript,
+                );
+                defer allocator.free(signed);
+
+                const sign_opts = crypto.SignOpts{ .hash_type = hash_type };
+                var sig = self.cert_chain.?.private_key.?.sign(
+                    allocator,
+                    signed,
+                    sign_opts,
+                ) catch {
+                    // TODO: implement
+                    const alert_desc = if (false)
+                        .handshake_failure
+                    else
+                        .internal_error;
+                    self.conn.sendAlert(alert_desc) catch {};
+                    return error.SignHandshakeFailed;
+                };
+
+                break :blk CertificateVerifyMsg{
+                    .signature_algorithm = self.sig_alg.?,
+                    .signature = sig,
+                };
+            };
+            defer cert_verify_msg.deinit(allocator);
+
+            const cert_verify_msg_bytes = try cert_verify_msg.marshal(allocator);
+            self.transcript.update(cert_verify_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, cert_verify_msg_bytes);
         }
     }
 

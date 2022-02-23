@@ -95,13 +95,18 @@ pub const HandshakeMsg = union(MsgType) {
             .Certificate => |*msg| msg.deinit(allocator),
             .ServerKeyExchange => |*msg| msg.deinit(allocator),
             .ServerHelloDone => |*msg| msg.deinit(allocator),
+            .CertificateVerify => |*msg| msg.deinit(allocator),
             .ClientKeyExchange => |*msg| msg.deinit(allocator),
             .Finished => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
     }
 
-    pub fn unmarshal(allocator: mem.Allocator, data: []const u8) !HandshakeMsg {
+    pub fn unmarshal(
+        allocator: mem.Allocator,
+        data: []const u8,
+        ver: ?ProtocolVersion,
+    ) !HandshakeMsg {
         if (data.len < handshake_msg_header_len) {
             return error.ShortInput;
         }
@@ -120,13 +125,16 @@ pub const HandshakeMsg = union(MsgType) {
                 .ServerHello = try ServerHelloMsg.unmarshal(allocator, msg_data),
             },
             .Certificate => return HandshakeMsg{
-                .Certificate = try CertificateMsg.unmarshal(allocator, msg_data),
+                .Certificate = try CertificateMsg.unmarshal(allocator, msg_data, ver.?),
             },
             .ServerKeyExchange => return HandshakeMsg{
                 .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, msg_data),
             },
             .ServerHelloDone => return HandshakeMsg{
                 .ServerHelloDone = try ServerHelloDoneMsg.unmarshal(allocator, msg_data),
+            },
+            .CertificateVerify => return HandshakeMsg{
+                .CertificateVerify = try CertificateVerifyMsg.unmarshal(allocator, msg_data),
             },
             .ClientKeyExchange => return HandshakeMsg{
                 .ClientKeyExchange = try ClientKeyExchangeMsg.unmarshal(allocator, msg_data),
@@ -815,11 +823,50 @@ pub const ServerHelloMsg = struct {
     }
 };
 
-pub const CertificateMsg = struct {
+pub const CertificateMsg = union(ProtocolVersion) {
+    v1_3: CertificateMsgTls13,
+    v1_2: CertificateMsgTls12,
+    v1_1: void,
+    v1_0: void,
+
+    pub fn deinit(self: *CertificateMsg, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .v1_3 => |*m| m.deinit(allocator),
+            .v1_2 => |*m| m.deinit(allocator),
+            else => {},
+        }
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+        ver: ProtocolVersion,
+    ) !CertificateMsg {
+        return switch (ver) {
+            .v1_3 => CertificateMsg{
+                .v1_3 = try CertificateMsgTls13.unmarshal(allocator, msg_data),
+            },
+            .v1_2 => CertificateMsg{
+                .v1_2 = try CertificateMsgTls12.unmarshal(allocator, msg_data),
+            },
+            else => @panic("unsupported TLS version"),
+        };
+    }
+
+    pub fn marshal(self: *CertificateMsg, allocator: mem.Allocator) ![]const u8 {
+        return switch (self.*) {
+            .v1_3 => |*m| try m.marshal(allocator),
+            .v1_2 => |*m| try m.marshal(allocator),
+            else => {},
+        };
+    }
+};
+
+pub const CertificateMsgTls12 = struct {
     raw: ?[]const u8 = null,
     certificates: []const []const u8 = &[_][]u8{},
 
-    pub fn deinit(self: *CertificateMsg, allocator: mem.Allocator) void {
+    pub fn deinit(self: *CertificateMsgTls12, allocator: mem.Allocator) void {
         if (self.certificates.len > 0) {
             for (self.certificates) |certificate| allocator.free(certificate);
             allocator.free(self.certificates);
@@ -827,7 +874,7 @@ pub const CertificateMsg = struct {
         freeOptionalField(self, allocator, "raw");
     }
 
-    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsg {
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsgTls12 {
         const raw = try allocator.dupe(u8, msg_data);
         errdefer allocator.free(raw);
         var bv = BytesView.init(raw);
@@ -835,13 +882,13 @@ pub const CertificateMsg = struct {
         const certificates = try readStringList(u24, u24, allocator, &bv);
         errdefer allocator.free(certificates);
 
-        return CertificateMsg{
+        return CertificateMsgTls12{
             .raw = raw,
             .certificates = certificates,
         };
     }
 
-    pub fn marshal(self: *CertificateMsg, allocator: mem.Allocator) ![]const u8 {
+    pub fn marshal(self: *CertificateMsgTls12, allocator: mem.Allocator) ![]const u8 {
         if (self.raw) |raw| {
             return raw;
         }
@@ -1594,7 +1641,7 @@ pub const CertificateMsgTls13 = struct {
 
         const context = try bv.readByte();
         if (context != 0) {
-            return error.InvalidCertificateMsg;
+            return error.InvalidCertificateMsgTls12;
         }
         var certificates_len = try bv.readIntBig(u24);
         try bv.ensureRestLen(certificates_len);
@@ -1622,7 +1669,7 @@ pub const CertificateMsgTls13 = struct {
                     .StatusRequest => {
                         const status_type = try bv.readByte();
                         if (status_type != status_type_ocsp) {
-                            return error.InvalidCertificateMsg;
+                            return error.InvalidCertificateMsgTls12;
                         }
                         ocsp_staple = try allocator.dupe(u8, try readString(u24, &bv));
                     },
@@ -1729,7 +1776,7 @@ pub const CertificateMsgTls13 = struct {
     }
 };
 
-const CertificateVerifyMsg = struct {
+pub const CertificateVerifyMsg = struct {
     raw: ?[]const u8 = null,
     signature_algorithm: SignatureScheme = undefined,
     signature: []const u8 = "",
@@ -1832,7 +1879,7 @@ test "ClientHelloMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ClientHelloMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
             var got = msg.ClientHello;
@@ -2123,7 +2170,7 @@ test "ServerHelloMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ServerHelloMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
             var got = msg.ServerHello;
@@ -2352,11 +2399,11 @@ const test_marshaled_server_hello_msg_with_extensions2 = "\x02" ++ // ServerHell
     "\x01" ++ // u8 len
     "\x00"; // EcPointFormat.uncompressed
 
-test "CertificateMsg.marshal" {
+test "CertificateMsgTls12.marshal" {
     const allocator = testing.allocator;
 
     const TestCase = struct {
-        fn run(msg: *CertificateMsg, want: []const u8) !void {
+        fn run(msg: *CertificateMsgTls12, want: []const u8) !void {
             const got = try msg.marshal(allocator);
             if (!mem.eql(u8, got, want)) {
                 std.log.warn("\n got={},\nwant={}\n", .{
@@ -2371,22 +2418,22 @@ test "CertificateMsg.marshal" {
     };
 
     {
-        var msg = try testCreateCertificateMsg(allocator);
+        var msg = try testCreateCertificateMsgTls12(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(&msg, test_marshaled_certificate_msg);
     }
 }
 
-test "CertificateMsg.unmarshal" {
+test "CertificateMsgTls12.unmarshal" {
     testing.log_level = .err;
     const allocator = testing.allocator;
 
     const TestCase = struct {
-        fn run(data: []const u8, want: *CertificateMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+        fn run(data: []const u8, want: *CertificateMsgTls12) !void {
+            var msg = try HandshakeMsg.unmarshal(allocator, data, .v1_2);
             defer msg.deinit(allocator);
 
-            var got = msg.Certificate;
+            var got = msg.Certificate.v1_2;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -2395,13 +2442,13 @@ test "CertificateMsg.unmarshal" {
     };
 
     {
-        var msg = try testCreateCertificateMsg(allocator);
+        var msg = try testCreateCertificateMsgTls12(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(test_marshaled_certificate_msg, &msg);
     }
 }
 
-fn testCreateCertificateMsg(allocator: mem.Allocator) !CertificateMsg {
+fn testCreateCertificateMsgTls12(allocator: mem.Allocator) !CertificateMsgTls12 {
     const cert1 = try allocator.dupe(u8, "cert1");
     errdefer allocator.free(cert1);
     const cert2 = try allocator.dupe(u8, "cert2");
@@ -2410,7 +2457,7 @@ fn testCreateCertificateMsg(allocator: mem.Allocator) !CertificateMsg {
         []const u8,
         &[_][]const u8{ cert1, cert2 },
     );
-    return CertificateMsg{
+    return CertificateMsgTls12{
         .certificates = certificates,
     };
 }
@@ -2454,7 +2501,7 @@ test "ServerKeyExchangeMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ServerKeyExchangeMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
             var got = msg.ServerKeyExchange;
@@ -2514,7 +2561,7 @@ test "ServerHelloDoneMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ServerHelloDoneMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
             var got = msg.ServerHelloDone;
@@ -2570,7 +2617,7 @@ test "ClientKeyExchangeMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *ClientKeyExchangeMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
             var got = msg.ClientKeyExchange;
@@ -2629,7 +2676,7 @@ test "FinishedMsg.unmarshal" {
 
     const TestCase = struct {
         fn run(data: []const u8, want: *FinishedMsg) !void {
-            var msg = try HandshakeMsg.unmarshal(allocator, data);
+            var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
             var got = msg.Finished;

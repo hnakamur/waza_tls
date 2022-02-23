@@ -34,7 +34,7 @@ pub const Hash = union(HashType) {
         }
     }
 
-    pub fn writeFinal(self: *Hash, writer: anytype) !usize {
+    pub fn writeFinal(self: *const Hash, writer: anytype) !usize {
         return switch (self.*) {
             .sha256 => |*s| try s.writeFinal(writer),
             .sha384 => |*s| try s.writeFinal(writer),
@@ -44,7 +44,7 @@ pub const Hash = union(HashType) {
         };
     }
 
-    pub fn finalToSlice(self: *Hash, out: []u8) usize {
+    pub fn finalToSlice(self: *const Hash, out: []u8) usize {
         return switch (self.*) {
             .sha256 => |*s| s.finalToSlice(out),
             .sha384 => |*s| s.finalToSlice(out),
@@ -64,7 +64,7 @@ pub const Hash = union(HashType) {
         };
     }
 
-    pub fn allocFinal(self: *Hash, allocator: mem.Allocator) ![]const u8 {
+    pub fn allocFinal(self: *const Hash, allocator: mem.Allocator) ![]const u8 {
         return switch (self.*) {
             .sha256 => |*s| try s.allocFinal(allocator),
             .sha384 => |*s| try s.allocFinal(allocator),
@@ -83,6 +83,8 @@ pub const Sha1Hash = HashAdapter(std.crypto.hash.Sha1);
 fn HashAdapter(comptime HashImpl: type) type {
     return struct {
         const Self = @This();
+        const WriteError = error{};
+        const Writer = std.io.Writer(*Self, WriteError, write);
 
         pub const digest_length = HashImpl.digest_length;
         inner_hash: HashImpl,
@@ -95,15 +97,26 @@ fn HashAdapter(comptime HashImpl: type) type {
             self.inner_hash.update(b);
         }
 
-        pub fn writeFinal(self: *Self, writer: anytype) !usize {
+        /// Same as `update` except it returns the number of bytes written, which is always the same
+        /// as `b.len`. The purpose of this function existing is to match `std.io.Writer` API.
+        fn write(self: *Self, b: []const u8) WriteError!usize {
+            self.update(b);
+            return b.len;
+        }
+
+        pub fn writer(self: *Self) Writer {
+            return .{ .context = self };
+        }
+
+        pub fn writeFinal(self: *const Self, out_stream: anytype) !usize {
             var d_out: [HashImpl.digest_length]u8 = undefined;
             var inner_hash_copy = self.inner_hash;
             inner_hash_copy.final(&d_out);
-            try writer.writeAll(&d_out);
+            try out_stream.writeAll(&d_out);
             return d_out.len;
         }
 
-        pub fn finalToSlice(self: *Self, out: []u8) usize {
+        pub fn finalToSlice(self: *const Self, out: []u8) usize {
             const len = HashImpl.digest_length;
             var inner_hash_copy = self.inner_hash;
             inner_hash_copy.final(out[0..len]);
@@ -115,7 +128,7 @@ fn HashAdapter(comptime HashImpl: type) type {
             return digest_length;
         }
 
-        pub fn allocFinal(self: *Self, allocator: mem.Allocator) ![]const u8 {
+        pub fn allocFinal(self: *const Self, allocator: mem.Allocator) ![]const u8 {
             var sum = try allocator.alloc(u8, digest_length);
             const sum_len = self.finalToSlice(sum);
             assert(sum_len == digest_length);

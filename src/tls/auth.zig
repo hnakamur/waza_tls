@@ -3,7 +3,42 @@ const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+const crypto = @import("crypto.zig");
 const memx = @import("../memx.zig");
+
+pub const server_signature_context = "TLS 1.3, server CertificateVerify\x00";
+pub const client_signature_context = "TLS 1.3, client CertificateVerify\x00";
+
+const signature_padding = [_]u8{0x20} ** 64;
+
+// signedMessage returns the pre-hashed (if necessary) message to be signed by
+// certificate keys in TLS 1.3. See RFC 8446, Section 4.4.3.
+pub fn signedMessage(
+    allocator: mem.Allocator,
+    sig_hash: HashType,
+    context: []const u8,
+    transcript: crypto.Hash,
+) ![]const u8 {
+    if (sig_hash == .direct_signing) {
+        var buf = std.ArrayList(u8).init(allocator);
+        errdefer buf.deinit();
+        var writer = buf.writer();
+        try writer.writeAll(&signature_padding);
+        try writer.writeAll(context);
+        _ = try transcript.writeFinal(writer);
+        return buf.toOwnedSlice();
+    }
+
+    var h = crypto.Hash.init(sig_hash);
+    h.update(&signature_padding);
+    h.update(context);
+    switch (h) {
+        .sha256 => |*h2| _ = try transcript.writeFinal(h2.writer()),
+        .sha384 => |*h2| _ = try transcript.writeFinal(h2.writer()),
+        else => @panic("invalid hash_type for TLS 1.3"),
+    }    
+    return try h.allocFinal(allocator);
+}
 
 // Signature algorithms (for internal signaling use). Starting at 225 to avoid overlap with
 // TLS 1.2 codepoints (RFC 5246, Appendix A.4.1), with which these have nothing to do.

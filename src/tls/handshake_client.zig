@@ -113,7 +113,7 @@ pub const ClientHandshakeStateTls12 = struct {
     pub fn doFullHandshake(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
         var hs_msg = try self.conn.readHandshake(allocator);
         var cert_msg = switch (hs_msg) {
-            .Certificate => |c| c,
+            .Certificate => |c| c.v1_2,
             else => {
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;

@@ -708,7 +708,7 @@ pub const Conn = struct {
         if (self.handshake_bytes.len < handshake_msg_header_len) {
             try self.readRecord(allocator);
         }
-        var msg = try HandshakeMsg.unmarshal(allocator, self.handshake_bytes);
+        var msg = try HandshakeMsg.unmarshal(allocator, self.handshake_bytes, self.version);
         errdefer msg.deinit(allocator);
         allocator.free(self.handshake_bytes);
         self.handshake_bytes = &[_]u8{};

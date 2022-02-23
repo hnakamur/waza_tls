@@ -7,7 +7,7 @@ const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
-const CertificateMsg = @import("handshake_msg.zig").CertificateMsg;
+const CertificateMsgTls12 = @import("handshake_msg.zig").CertificateMsgTls12;
 const ServerHelloDoneMsg = @import("handshake_msg.zig").ServerHelloDoneMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
@@ -317,7 +317,7 @@ pub const ServerHandshakeStateTls12 = struct {
                 allocator,
                 self.cert_chain.?.certificate_chain,
             );
-            var cert_msg = CertificateMsg{ .certificates = certificates };
+            var cert_msg = CertificateMsgTls12{ .certificates = certificates };
             defer cert_msg.deinit(allocator);
 
             const cert_msg_bytes = try cert_msg.marshal(allocator);
