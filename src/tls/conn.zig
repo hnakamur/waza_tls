@@ -232,6 +232,8 @@ pub const Conn = struct {
     // zero or one.
     handshakes: usize = 0,
     cipher_suite_id: ?CipherSuiteId = null,
+    ocsp_response: []const u8 = "", // stapled OCSP response
+    scts: []const []const u8 = &[_][]u8{}, // signed certificate timestamps from server
     server_name: []const u8 = "",
 
     buffering: bool = false,
@@ -279,6 +281,8 @@ pub const Conn = struct {
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
         self.config.deinit(allocator);
         self.send_buf.deinit(allocator);
+        if (self.ocsp_response.len > 0) allocator.free(self.ocsp_response);
+        if (self.scts.len > 0) memx.freeElemsAndFreeSlice([]const u8, self.scts, allocator);
         if (self.server_name.len > 0) allocator.free(self.server_name);
         if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
         if (self.handshake_state) |*hs| hs.deinit(allocator);
@@ -441,6 +445,8 @@ pub const Conn = struct {
         };
 
         try self.handshake_state.?.client.handshake(allocator);
+
+        // TODO: implement
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {

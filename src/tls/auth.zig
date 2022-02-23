@@ -4,12 +4,40 @@ const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const crypto = @import("crypto.zig");
+const ecdsa = @import("ecdsa.zig");
 const memx = @import("../memx.zig");
 
 pub const server_signature_context = "TLS 1.3, server CertificateVerify\x00";
 pub const client_signature_context = "TLS 1.3, client CertificateVerify\x00";
 
 const signature_padding = [_]u8{0x20} ** 64;
+
+pub fn verifyHandshakeSignature(
+    allocator: mem.Allocator,
+    sig_type: SignatureType,
+    public_key: crypto.PublicKey,
+    sig_hash: HashType,
+    signed: []const u8,
+    signature: []const u8,
+) !void {
+    _ = sig_hash;
+    switch (sig_type) {
+        .pkcs1v15 => @panic("not implemented yet"),
+        .rsa_pss => @panic("not implemented yet"),
+        .ecdsa => {
+            switch (public_key) {
+                .ecdsa => |*pub_key| {
+                    if (!(ecdsa.verifyAsn1(allocator, pub_key, signed, signature) catch false)) {
+                        return error.HandshakeVerifyFailure;
+                    }
+                },
+                else => return error.ExpectedEcdsaPublicKey,
+            }
+        },
+        .ed25519 => @panic("not implemented yet"),
+        else => return error.InvalidSignatureType,
+    }
+}
 
 // signedMessage returns the pre-hashed (if necessary) message to be signed by
 // certificate keys in TLS 1.3. See RFC 8446, Section 4.4.3.
@@ -36,7 +64,7 @@ pub fn signedMessage(
         .sha256 => |*h2| _ = try transcript.writeFinal(h2.writer()),
         .sha384 => |*h2| _ = try transcript.writeFinal(h2.writer()),
         else => @panic("invalid hash_type for TLS 1.3"),
-    }    
+    }
     return try h.allocFinal(allocator);
 }
 
@@ -47,6 +75,7 @@ pub const SignatureType = enum(u8) {
     rsa_pss = 226,
     ecdsa = 227,
     ed25519 = 228,
+    _,
 
     pub fn fromSinatureScheme(s: SignatureScheme) !SignatureType {
         return switch (s) {
@@ -251,7 +280,7 @@ fn signatureSchemesForCertificate(
     }
 }
 
-fn isSupportedSignatureAlgorithm(
+pub fn isSupportedSignatureAlgorithm(
     aig_alg: SignatureScheme,
     supported_algs: []const SignatureScheme,
 ) bool {

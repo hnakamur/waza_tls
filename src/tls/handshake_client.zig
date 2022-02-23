@@ -364,6 +364,23 @@ pub const ClientHandshakeStateTls12 = struct {
     }
 };
 
+// checkAlpn ensure that the server's choice of ALPN protocol is compatible with
+// the protocols that we advertised in the Client Hello.
+pub fn checkAlpn(client_protos: []const []const u8, server_proto: []const u8) !void {
+    if (server_proto.len == 0) {
+        return;
+    }
+    if (client_protos.len == 0) {
+        return error.ServerAdvertisedUnrequestedAlpnExtension;
+    }
+    for (client_protos) |proto| {
+        if (mem.eql(u8, proto, server_proto)) {
+            return;
+        }
+    }
+    return error.ServerSelectedUnadvertisedAlpnProtocol;
+}
+
 test "sha256" {
     const Sha256 = std.crypto.hash.sha2.Sha256;
 

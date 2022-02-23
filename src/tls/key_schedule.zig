@@ -57,6 +57,13 @@ pub const EcdheParameters = union(enum) {
             .nist => |*k| k.publicKey(),
         };
     }
+
+    pub fn curveId(self: *const EcdheParameters) CurveId {
+        return switch (self.*) {
+            .x25519 => .x25519,
+            .nist => |*k| k.curve_id,
+        };
+    }
 };
 
 const X25519Parameters = struct {

@@ -481,12 +481,32 @@ const StreamRandom = struct {
     }
 };
 
+// verifyAsn1 verifies the ASN.1 encoded signature, sig, of hash using the
+// public key, pub. Its return value records whether the signature is valid.
+pub fn verifyAsn1(
+    allocator: mem.Allocator,
+    pub_key: *const PublicKey,
+    hash: []const u8,
+    sig: []const u8,
+) !bool {
+    var input = asn1.String.init(sig);
+    var inner = try input.readAsn1(.sequence);
+    if (!input.empty()) return false;
+    var r = try inner.readAsn1BigInt(allocator);
+    defer bigint.deinitConst(r, allocator);
+    var s = try inner.readAsn1BigInt(allocator);
+    defer bigint.deinitConst(s, allocator);
+    if (!inner.empty()) return false;
+
+    return verifyWithPublicKey(allocator, pub_key, hash, r, s);
+}
+
 pub fn verifyWithPublicKey(
     allocator: mem.Allocator,
     pub_key: *const PublicKey,
     hash: []const u8,
-    r: *math.big.int.Managed,
-    s: *math.big.int.Managed,
+    r: math.big.int.Const,
+    s: math.big.int.Const,
 ) !bool {
     const curve_id: CurveId = switch (pub_key.*) {
         .secp256r1 => .secp256r1,
@@ -498,11 +518,11 @@ pub fn verifyWithPublicKey(
     };
     defer n.deinit();
 
-    if ((r.eqZero() or !r.isPositive()) or (s.eqZero() or !s.isPositive())) {
+    if ((r.eqZero() or !r.positive) or (s.eqZero() or !s.positive)) {
         return false;
     }
 
-    if (s.order(n).compare(.gte) or r.order(n).compare(.gte)) {
+    if (s.order(n.toConst()).compare(.gte) or r.order(n.toConst()).compare(.gte)) {
         return false;
     }
 
@@ -513,8 +533,8 @@ pub fn verifyGeneric(
     allocator: mem.Allocator,
     pub_key: *const PublicKey,
     hash: []const u8,
-    r: *math.big.int.Managed,
-    s: *math.big.int.Managed,
+    r: math.big.int.Const,
+    s: math.big.int.Const,
 ) !bool {
     const curve_id: CurveId = switch (pub_key.*) {
         .secp256r1 => .secp256r1,
@@ -540,7 +560,7 @@ pub fn verifyGeneric(
     );
     defer w.deinit();
     switch (curve_id) {
-        .secp256r1 => try p256Inverse(&w, s.toConst()),
+        .secp256r1 => try p256Inverse(&w, s),
         else => @panic("not implemented yet"),
     }
 
@@ -551,7 +571,7 @@ pub fn verifyGeneric(
 
     var @"u2" = try math.big.int.Managed.init(allocator);
     defer @"u2".deinit();
-    try bigint.mul(&@"u2", r.toConst(), w.toConst());
+    try bigint.mul(&@"u2", r, w.toConst());
     try bigint.mod(&@"u2", @"u2".toConst(), n.toConst());
 
     const capacity = bigint.limbsCapacityForBytesLength(P256.scalar.encoded_length);
@@ -582,12 +602,12 @@ pub fn verifyGeneric(
     }
 
     try bigint.mod(&x, x.toConst(), n.toConst());
-    return x.order(r.*) == .eq;
+    return x.toConst().order(r) == .eq;
 }
 
 const testing = std.testing;
 
-test "signWithPrivateKey and verifyWithPublicKey" {
+test "ecdsa.signWithPrivateKey and verifyWithPublicKey" {
     testing.log_level = .err;
     const allocator = testing.allocator;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
@@ -623,10 +643,22 @@ test "signWithPrivateKey and verifyWithPublicKey" {
     try testing.expectEqualSlices(u8, want_r_bytes, r_bytes);
     try testing.expectEqualSlices(u8, want_s_bytes, s_bytes);
 
-    try testing.expect(try verifyWithPublicKey(allocator, &priv_key.publicKey(), hashed, &r, &s));
+    try testing.expect(try verifyWithPublicKey(
+        allocator,
+        &priv_key.publicKey(),
+        hashed,
+        r.toConst(),
+        s.toConst(),
+    ));
 
     hashed[0] ^= 0xff;
-    try testing.expect(!try verifyWithPublicKey(allocator, &priv_key.publicKey(), hashed, &r, &s));
+    try testing.expect(!try verifyWithPublicKey(
+        allocator,
+        &priv_key.publicKey(),
+        hashed,
+        r.toConst(),
+        s.toConst(),
+    ));
 }
 
 test "StreamRandom" {

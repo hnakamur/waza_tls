@@ -274,37 +274,40 @@ pub const ServerHandshakeStateTls13 = struct {
 
         try self.sendDummyChangeCipherSpec(allocator);
 
-        const early_secret = self.early_secret orelse try self.suite.?.extract(allocator, null, null);
-        defer if (self.early_secret == null) allocator.free(early_secret);
+        {
+            self.handshake_secret = blk: {
+                const early_secret = self.early_secret orelse
+                    try self.suite.?.extract(allocator, null, null);
+                defer if (self.early_secret == null) allocator.free(early_secret);
 
-        self.handshake_secret = blk: {
-            const current_secret = try self.suite.?.deriveSecret(
+                const current_secret = try self.suite.?.deriveSecret(
+                    allocator,
+                    early_secret,
+                    derived_label,
+                    null,
+                );
+                defer allocator.free(current_secret);
+                break :blk try self.suite.?.extract(allocator, self.shared_key, current_secret);
+            };
+
+            const client_secret = try self.suite.?.deriveSecret(
                 allocator,
-                early_secret,
-                derived_label,
-                null,
+                self.handshake_secret,
+                client_handshake_traffic_label,
+                self.transcript,
             );
-            defer allocator.free(current_secret);
-            break :blk try self.suite.?.extract(allocator, self.shared_key, current_secret);
-        };
+            defer allocator.free(client_secret);
+            try self.conn.in.setTrafficSecret(allocator, self.suite.?, client_secret);
 
-        const client_secret = try self.suite.?.deriveSecret(
-            allocator,
-            self.handshake_secret,
-            client_handshake_traffic_label,
-            self.transcript,
-        );
-        defer allocator.free(client_secret);
-        try self.conn.in.setTrafficSecret(allocator, self.suite.?, client_secret);
-
-        const server_secret = try self.suite.?.deriveSecret(
-            allocator,
-            self.handshake_secret,
-            server_handshake_traffic_label,
-            self.transcript,
-        );
-        defer allocator.free(server_secret);
-        try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+            const server_secret = try self.suite.?.deriveSecret(
+                allocator,
+                self.handshake_secret,
+                server_handshake_traffic_label,
+                self.transcript,
+            );
+            defer allocator.free(server_secret);
+            try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+        }
 
         // TODO: implement write key log
 
@@ -401,17 +404,17 @@ pub const ServerHandshakeStateTls13 = struct {
                 const sig_type = try SignatureType.fromSinatureScheme(self.sig_alg.?);
                 _ = sig_type;
 
-                const hash_type = try HashType.fromSinatureScheme(self.sig_alg.?);
+                const sig_hash = try HashType.fromSinatureScheme(self.sig_alg.?);
 
                 var signed = try signedMessage(
                     allocator,
-                    hash_type,
+                    sig_hash,
                     server_signature_context,
                     self.transcript,
                 );
                 defer allocator.free(signed);
 
-                const sign_opts = crypto.SignOpts{ .hash_type = hash_type };
+                const sign_opts = crypto.SignOpts{ .hash_type = sig_hash };
                 var sig = self.cert_chain.?.private_key.?.sign(
                     allocator,
                     signed,
