@@ -370,3 +370,95 @@ func TestCertificateMsgTLS13MarshalUnmarshal(t *testing.T) {
 		t.Errorf("unmarshal result mismatch, got=%+v, want=%+v", got, want)
 	}
 }
+
+// SignatureScheme identifies a signature algorithm supported by TLS. See
+// RFC 8446, Section 4.2.3.
+type SignatureScheme uint16
+
+const (
+	// RSASSA-PKCS1-v1_5 algorithms.
+	PKCS1WithSHA256 SignatureScheme = 0x0401
+	PKCS1WithSHA384 SignatureScheme = 0x0501
+	PKCS1WithSHA512 SignatureScheme = 0x0601
+
+	// RSASSA-PSS algorithms with public key OID rsaEncryption.
+	PSSWithSHA256 SignatureScheme = 0x0804
+	PSSWithSHA384 SignatureScheme = 0x0805
+	PSSWithSHA512 SignatureScheme = 0x0806
+
+	// ECDSA algorithms. Only constrained to a specific curve in TLS 1.3.
+	ECDSAWithP256AndSHA256 SignatureScheme = 0x0403
+	ECDSAWithP384AndSHA384 SignatureScheme = 0x0503
+	ECDSAWithP521AndSHA512 SignatureScheme = 0x0603
+
+	// EdDSA algorithms.
+	Ed25519 SignatureScheme = 0x0807
+
+	// Legacy signature and hash algorithms for TLS 1.2.
+	PKCS1WithSHA1 SignatureScheme = 0x0201
+	ECDSAWithSHA1 SignatureScheme = 0x0203
+)
+
+type certificateVerifyMsg struct {
+	raw                   []byte
+	hasSignatureAlgorithm bool // format change introduced in TLS 1.2
+	signatureAlgorithm    SignatureScheme
+	signature             []byte
+}
+
+func (m *certificateVerifyMsg) marshal() (x []byte) {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	var b cryptobyte.Builder
+	b.AddUint8(typeCertificateVerify)
+	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+		if m.hasSignatureAlgorithm {
+			b.AddUint16(uint16(m.signatureAlgorithm))
+		}
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes(m.signature)
+		})
+	})
+
+	m.raw = b.BytesOrPanic()
+	return m.raw
+}
+
+func (m *certificateVerifyMsg) unmarshal(data []byte) bool {
+	m.raw = data
+	s := cryptobyte.String(data)
+
+	if !s.Skip(4) { // message type and uint24 length field
+		return false
+	}
+	if m.hasSignatureAlgorithm {
+		if !s.ReadUint16((*uint16)(&m.signatureAlgorithm)) {
+			return false
+		}
+	}
+	return readUint16LengthPrefixed(&s, &m.signature) && s.Empty()
+}
+
+func TestCertificateVerifyMsg(t *testing.T) {
+	msg := certificateVerifyMsg{
+		hasSignatureAlgorithm: true,
+		signatureAlgorithm:    ECDSAWithP256AndSHA256,
+		signature:             []byte("example signature"),
+	}
+	marshaled := msg.marshal()
+	// log.Printf("marshaled certificateVerifyMsg=%x", marshaled)
+	wantMarshaled := []byte("\x0f\x00\x00\x15\x04\x03\x00\x11\x65\x78\x61\x6d\x70\x6c\x65\x20\x73\x69\x67\x6e\x61\x74\x75\x72\x65")
+	if got, want := marshaled, wantMarshaled; !bytes.Equal(got, want) {
+		t.Errorf("marshal result mismatch, got=%x, want=%x", got, want)
+	}
+
+	msg2 := certificateVerifyMsg{hasSignatureAlgorithm: true}
+	if !msg2.unmarshal(marshaled) {
+		t.Errorf("unmarshal failed")
+	}
+	if got, want := msg2, msg; !reflect.DeepEqual(got, want) {
+		t.Errorf("unmarshal result mismatch, got=%+v, want=%+v", got, want)
+	}
+}

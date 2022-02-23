@@ -145,7 +145,6 @@ const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;
 const EndOfEarlyDataMsg = void;
 const CertificateRequestMsg = void;
-const CertificateVerifyMsg = void;
 const CertificateStatusMsg = void;
 const KeyUpdateMsg = void;
 const NextProtocolMsg = void;
@@ -1730,6 +1729,62 @@ pub const CertificateMsgTls13 = struct {
     }
 };
 
+const CertificateVerifyMsg = struct {
+    raw: ?[]const u8 = null,
+    signature_algorithm: SignatureScheme = undefined,
+    signature: []const u8 = "",
+
+    pub fn deinit(self: *CertificateVerifyMsg, allocator: mem.Allocator) void {
+        if (self.signature.len > 0) allocator.free(self.signature);
+        if (self.raw) |raw| allocator.free(raw);
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+    ) !CertificateVerifyMsg {
+        var bv: BytesView = undefined;
+        const raw = try allocator.dupe(u8, msg_data);
+        errdefer allocator.free(raw);
+        bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const signature_algorithm = try readEnum(SignatureScheme, &bv);
+        const signature = try allocator.dupe(u8, try readString(u16, &bv));
+
+        return CertificateVerifyMsg{
+            .signature_algorithm = signature_algorithm,
+            .signature = signature,
+            .raw = raw,
+        };
+    }
+
+    pub fn marshal(self: *CertificateVerifyMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        var msg_len: usize = u8_size + u24_size + u16_size +
+            u16_size + self.signature.len;
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var rest_len = msg_len;
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.CertificateVerify, writer);
+        rest_len -= u8_size + u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u16, self.signature_algorithm, writer);
+        try writeInt(u16, self.signature.len, writer);
+        try writeBytes(self.signature, writer);
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
 const testing = std.testing;
 
 test "ClientHelloMsg.marshal" {
@@ -2667,4 +2722,76 @@ test "CertificateMsgTls13.marshal" {
     for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
         try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
     }
+}
+
+test "CertificateMsgTls13.marshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    var msg = CertificateMsgTls13{
+        .cert_chain = CertificateChain{
+            .certificate_chain = &[_][]const u8{
+                "\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61",
+                "\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e",
+            },
+            .ocsp_staple = "\x4d\xab\x72\x65\x6e\x8d",
+            .signed_certificate_timestamps = &[_][]const u8{
+                "\x49\x81\xed\x50\x1d\x4d\x4d\x0e\x04\x2d\xeb\xcb\xcf",
+                "\x30\x9d\x61\xf4\xab\xeb\xb1\xf5\x7c",
+            },
+        },
+        .ocsp_stapling = true,
+        .scts = true,
+    };
+
+    const got = try msg.marshal(allocator);
+    defer allocator.free(got);
+    // std.log.debug("marshaled={}", .{std.fmt.fmtSliceHexLower(got)});
+
+    const want = "\x0b\x00\x00\x6e\x00\x00\x00\x6a\x00\x00\x0f\x24\x0a\xde\xde\x3d\x3b\xa4\x35\xbc\x02\xf8\x87\x18\x0a\x61\x00\x2e\x00\x05\x00\x0a\x01\x00\x00\x06\x4d\xab\x72\x65\x6e\x8d\x00\x12\x00\x1c\x00\x1a\x00\x0d\x49\x81\xed\x50\x1d\x4d\x4d\x0e\x04\x2d\xeb\xcb\xcf\x00\x09\x30\x9d\x61\xf4\xab\xeb\xb1\xf5\x7c\x00\x00\x23\x52\xbb\x1f\x7f\x74\x18\x31\x74\x96\x33\x91\xac\x1a\xa3\x29\xfd\xa7\xb7\x56\x02\x72\xbb\x16\xd9\xbe\xc7\x81\x73\xd4\x01\x80\x61\x18\x1a\x1e\x00\x00";
+    try testing.expectEqualSlices(u8, want, got);
+
+    var msg2 = try CertificateMsgTls13.unmarshal(allocator, want);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqual(
+        msg.cert_chain.certificate_chain.len,
+        msg2.cert_chain.certificate_chain.len,
+    );
+    for (msg.cert_chain.certificate_chain) |cert, i| {
+        try testing.expectEqualStrings(cert, msg2.cert_chain.certificate_chain[i]);
+    }
+
+    try testing.expectEqualStrings(msg.cert_chain.ocsp_staple, msg2.cert_chain.ocsp_staple);
+
+    try testing.expectEqual(
+        msg.cert_chain.signed_certificate_timestamps.?.len,
+        msg2.cert_chain.signed_certificate_timestamps.?.len,
+    );
+    for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
+        try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
+    }
+}
+
+test "CertificateVerifyMsg.marshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    var msg = CertificateVerifyMsg{
+        .signature_algorithm = .ecdsa_with_p256_and_sha256,
+        .signature = "example signature",
+    };
+
+    const got = try msg.marshal(allocator);
+    defer allocator.free(got);
+    // std.log.debug("marshaled={}", .{std.fmt.fmtSliceHexLower(got)});
+
+    const want = "\x0f\x00\x00\x15\x04\x03\x00\x11\x65\x78\x61\x6d\x70\x6c\x65\x20\x73\x69\x67\x6e\x61\x74\x75\x72\x65";
+    try testing.expectEqualSlices(u8, want, got);
+
+    var msg2 = try CertificateVerifyMsg.unmarshal(allocator, want);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqual(msg.signature_algorithm, msg2.signature_algorithm);
+    try testing.expectEqualSlices(u8, msg.signature, msg2.signature);
 }
