@@ -6,6 +6,8 @@ const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const EncryptedExtensionsMsg = @import("handshake_msg.zig").EncryptedExtensionsMsg;
 const CertificateMsgTls13 = @import("handshake_msg.zig").CertificateMsgTls13;
 const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
+const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
+const PskMode = @import("handshake_msg.zig").PskMode;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
@@ -47,6 +49,7 @@ pub const ServerHandshakeStateTls13 = struct {
     master_secret: []const u8 = "",
     traffic_secret: []const u8 = "",
     transcript: crypto.Hash = undefined,
+    client_finished: []const u8 = "",
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls13 {
         return .{ .conn = conn, .client_hello = client_hello };
@@ -60,6 +63,7 @@ pub const ServerHandshakeStateTls13 = struct {
         if (self.handshake_secret.len > 0) allocator.free(self.handshake_secret);
         if (self.master_secret.len > 0) allocator.free(self.master_secret);
         if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
+        if (self.client_finished.len > 0) allocator.free(self.client_finished);
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -436,9 +440,93 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn sendServerFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = self;
-        _ = allocator;
-        // TODO: implement
+        {
+            var finished_msg = FinishedMsg{
+                .verify_data = try self.suite.?.finishedHash(
+                    allocator,
+                    self.conn.out.traffic_secret,
+                    self.transcript,
+                ),
+            };
+            defer finished_msg.deinit(allocator);
+
+            const finished_msg_bytes = try finished_msg.marshal(allocator);
+            self.transcript.update(finished_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, finished_msg_bytes);
+        }
+
+        // Derive secrets that take context through the server Finished.
+
+        self.master_secret = blk: {
+            const current_secret = try self.suite.?.deriveSecret(
+                allocator,
+                self.handshake_secret,
+                derived_label,
+                null,
+            );
+            defer allocator.free(current_secret);
+            break :blk try self.suite.?.extract(allocator, null, current_secret);
+        };
+
+        self.traffic_secret = try self.suite.?.deriveSecret(
+            allocator,
+            self.master_secret,
+            client_handshake_traffic_label,
+            self.transcript,
+        );
+
+        {
+            const server_secret = try self.suite.?.deriveSecret(
+                allocator,
+                self.master_secret,
+                server_handshake_traffic_label,
+                self.transcript,
+            );
+            defer allocator.free(server_secret);
+            try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+        }
+
+        // TODO: implement writing key log
+
+        // If we did not request client certificates, at this point we can
+        // precompute the client finished and roll the transcript forward to send
+        // session tickets in our first flight.
+        if (!self.requestClientCert()) {
+            try self.sendSessionTickets(allocator);
+        }
+    }
+
+    fn shouldSendSessionTickets(self: *const ServerHandshakeStateTls13) bool {
+        if (self.conn.config.session_tickets_disabled) {
+            return false;
+        }
+
+        // Don't send tickets the client wouldn't use. See RFC 8446, Section 4.2.9.
+        return memx.containsScalar(PskMode, self.client_hello.psk_modes, .dhe);
+    }
+
+    fn sendSessionTickets(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        self.client_finished = try self.suite.?.finishedHash(
+            allocator,
+            self.conn.in.traffic_secret,
+            self.transcript,
+        );
+
+        {
+            var finished_msg = FinishedMsg{
+                .verify_data = self.client_finished,
+            };
+            defer finished_msg.deinit(allocator);
+
+            const finished_msg_bytes = try finished_msg.marshal(allocator);
+            self.transcript.update(finished_msg_bytes);
+        }
+
+        if (!self.shouldSendSessionTickets()) {
+            return;
+        }
+
+        @panic("not implemented yet");
     }
 
     fn readClientCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {

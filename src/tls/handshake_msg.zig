@@ -2705,7 +2705,7 @@ const test_marshaled_finished_msg = "\x14" ++ // MsgType.Finished
     "\x76\x65\x72\x69\x66\x79\x20\x64\x61\x74\x61"; // "verify data"
 
 test "EncryptedExtensionsMsg.marshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     var msg = EncryptedExtensionsMsg{ .alpn_protocol = "h2" };
@@ -2723,7 +2723,7 @@ test "EncryptedExtensionsMsg.marshal" {
 }
 
 test "CertificateMsgTls13.marshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     var msg = CertificateMsgTls13{
@@ -2772,7 +2772,7 @@ test "CertificateMsgTls13.marshal" {
 }
 
 test "CertificateMsgTls13.marshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     var msg = CertificateMsgTls13{
@@ -2821,7 +2821,7 @@ test "CertificateMsgTls13.marshal" {
 }
 
 test "CertificateVerifyMsg.marshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     var msg = CertificateVerifyMsg{

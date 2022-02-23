@@ -189,10 +189,46 @@ pub const CipherSuiteTls13 = struct {
         iv_out.* = try self.expandLabel(allocator, traffic_secret, "iv", "", aead_nonce_length);
         errdefer allocator.free(iv_out.*);
     }
+
+    // finishedHash generates the Finished verify_data or PskBinderEntry according
+    // to RFC 8446, Section 4.4.4. See sections 4.4 and 4.2.11.2 for the baseKey
+    // selection.
+    pub fn finishedHash(
+        self: *const CipherSuiteTls13,
+        allocator: mem.Allocator,
+        base_key: []const u8,
+        transcript: crypto.Hash,
+    ) ![]const u8 {
+        var finished_key = try self.expandLabel(
+            allocator,
+            base_key,
+            "finished",
+            "",
+            @intCast(u16, self.hash_type.digestLength()),
+        );
+        defer allocator.free(finished_key);
+
+        const transcript_sum = try transcript.allocFinal(allocator);
+        defer allocator.free(transcript_sum);
+
+        var ret = try allocator.alloc(u8, self.hash_type.digestLength());
+        switch (self.hash_type) {
+            .sha256 => {
+                const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
+                HmacSha256.create(ret[0..HmacSha256.mac_length], transcript_sum, finished_key);
+            },
+            .sha384 => {
+                const HmacSha384 = std.crypto.auth.hmac.sha2.HmacSha384;
+                HmacSha384.create(ret[0..HmacSha384.mac_length], transcript_sum, finished_key);
+            },
+            else => @panic("unsupported hash_type for TLS 1.3"),
+        }
+        return ret;
+    }
 };
 
 test "CipherSuiteTls13.expandLabel" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const test_cases = [_]struct {
         secret: []const u8,
         label: []const u8,
@@ -232,7 +268,7 @@ test "CipherSuiteTls13.expandLabel" {
 }
 
 test "CipherSuiteTls13.extract" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const f = struct {
         fn f(
             new_secret: ?[]const u8,
@@ -265,7 +301,7 @@ test "CipherSuiteTls13.extract" {
 }
 
 test "hmacsha256" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var out: [HmacSha256.mac_length]u8 = undefined;
     const msg = &[_]u8{0} ** HmacSha256.mac_length;
