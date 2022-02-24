@@ -1158,22 +1158,10 @@ const HalfConn = struct {
                     return error.RecordOverflow;
                 }
 
-// Go
-// 2022/02/24 21:45:34 halfConn.decrypt start, len(record)=3851
-// 2022/02/24 21:45:34 halfConn.decrypt len(nonce)=8, len(payload)=3846, len(additionalData)=5
-// 2022/02/24 21:45:34 halfConn.decrypt len(plaintext)=3830, err=<nil>
-//
-// Zig
-// [default] (info): HalfConn.decrypt, self=0x7fff861f2560, rec_type=RecordType.application_data, record.len=3851, self.cipher=Aead{ .xor_nonce_aead_aes128_gcm = tls.cipher_suites.XorNonceAead(std.crypto.aes_gcm.AesGcm(std.crypto.aes.aesni.Aes128)){ .nonce_mask = { 205, 210, 41, 118, 29, 173, 54, 142, 196, 179, 189, 141 }, .key = { 187, 226, 99, 21, 208, 84, 120, 12, 98, 194, 220, 25, 158, 117, 83, 101 } } }
-// [default] (info): HalfConn.decrypt, self=0x7fff861f2560, nonce.len=8, ciphertext_and_tag.len=3846, additional_data.len=5
-// [default] (info): HalfConn.decrypt dest.items.len=4096
-
                 // Remove padding and find the ContentType scanning from the end.
                 var i: usize = dest.items.len - 1;
-                std.log.info("HalfConn.decrypt dest.items.len={}", .{dest.items.len});
                 while (i >= 0) : (i -= 1) {
                     if (dest.items[i] != 0) {
-                        std.log.info("HalfConn.decrypt dest.items[{}]={}", .{ i, dest.items[i] });
                         out_rec_type.* = @intToEnum(RecordType, dest.items[i]);
                         try dest.resize(allocator, i);
                         break;
@@ -1239,6 +1227,7 @@ const HalfConn = struct {
         suite: *const CipherSuiteTls13,
         secret: []const u8,
     ) !void {
+        if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
         self.traffic_secret = try allocator.dupe(u8, secret);
         var key: []const u8 = undefined;
         var iv: []const u8 = undefined;

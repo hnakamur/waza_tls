@@ -314,7 +314,7 @@ test "ClientServer_tls12_p256" {
 }
 
 test "ClientServer_tls13_p256" {
-    if (true) return error.SkipZigTest;
+    // if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
@@ -393,7 +393,7 @@ test "ClientServer_tls13_p256" {
     }.runTest();
 }
 
-const skip_communicate_to_outside = false;
+const skip_communicate_to_outside = true;
 
 test "Connect to localhost TLS 1.3" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
@@ -420,7 +420,7 @@ test "Connect to localhost TLS 1.3" {
 
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
             std.log.info("response:\n{s}", .{buffer[0..n]});
             try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
         }

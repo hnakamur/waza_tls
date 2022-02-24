@@ -904,12 +904,7 @@ fn XorNonceAead(comptime InnerAead: type) type {
             const old_len = dest.items.len;
             const ciphertext_len = chiphertext_and_tag.len - tag_length;
             const new_len = old_len + ciphertext_len;
-            std.log.info("XorNonceAead.decrypt#1, old_len={}, new_len={}", .{ old_len, new_len });
-            // try dest.ensureTotalCapacityPrecise(allocator, new_len);
-            std.log.info("XorNonceAead.decrypt#2, dest.items.len={}, dest.capacity={}", .{ dest.items.len, dest.capacity });
-            // dest.expandToCapacity();
             try dest.resize(allocator, new_len);
-            std.log.info("XorNonceAead.decrypt#3, dest.items.len={}, dest.capacity={}", .{ dest.items.len, dest.capacity });
             try self.doDecrypt(
                 dest.items[old_len..new_len],
                 chiphertext_and_tag[0..ciphertext_len],

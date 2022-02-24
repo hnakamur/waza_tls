@@ -18,6 +18,8 @@ const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const derived_label = @import("key_schedule.zig").derived_label;
 const client_handshake_traffic_label = @import("key_schedule.zig").client_handshake_traffic_label;
 const server_handshake_traffic_label = @import("key_schedule.zig").server_handshake_traffic_label;
+const client_application_traffic_label = @import("key_schedule.zig").client_application_traffic_label;
+const server_application_traffic_label = @import("key_schedule.zig").server_application_traffic_label;
 const server_signature_context = @import("auth.zig").server_signature_context;
 const hmac = @import("hmac.zig");
 const crypto = @import("crypto.zig");
@@ -420,7 +422,7 @@ pub const ClientHandshakeStateTls13 = struct {
         self.traffic_secret = try self.suite.?.deriveSecret(
             allocator,
             self.master_secret,
-            client_handshake_traffic_label,
+            client_application_traffic_label,
             self.transcript,
         );
 
@@ -428,7 +430,7 @@ pub const ClientHandshakeStateTls13 = struct {
             const server_secret = try self.suite.?.deriveSecret(
                 allocator,
                 self.master_secret,
-                server_handshake_traffic_label,
+                server_application_traffic_label,
                 self.transcript,
             );
             defer allocator.free(server_secret);
@@ -436,8 +438,6 @@ pub const ClientHandshakeStateTls13 = struct {
         }
 
         // TODO: implement writing key log
-
-        @panic("not implemented yet");
     }
 
     fn sendClientCertificate(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -457,6 +457,7 @@ pub const ClientHandshakeStateTls13 = struct {
             ),
         };
         defer finished_msg.deinit(allocator);
+        defer allocator.free(finished_msg.verify_data);
 
         const finished_msg_bytes = try finished_msg.marshal(allocator);
         self.transcript.update(finished_msg_bytes);
