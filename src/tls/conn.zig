@@ -1348,7 +1348,7 @@ test "halfConn encrypt decrypt" {
 
     const plaintext = "exampleplaintext";
 
-    const rec_type: RecordType = .application_data;
+    var rec_type: RecordType = .application_data;
     const rec_ver: ProtocolVersion = .v1_2;
     var writer = out_buf.writer(allocator);
     try writer.writeByte(@enumToInt(rec_type));
@@ -1358,7 +1358,7 @@ test "halfConn encrypt decrypt" {
     try hc.encrypt(allocator, &out_buf, plaintext);
 
     mem.set(u8, &hc.seq, 0);
-    const decrypted = try hc.decrypt(allocator, out_buf.items);
+    const decrypted = try hc.decrypt(allocator, out_buf.items, &rec_type);
     defer allocator.free(decrypted);
 
     try testing.expectEqualStrings(plaintext, decrypted);

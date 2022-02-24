@@ -178,7 +178,7 @@ test "AlertDescription.toError" {
 
     try f(error.CloseNotify, .close_notify);
     try f(error.UnexpectedMessage, .unexpected_message);
-    try f(error.BadRecordMAC, .bad_record_mac);
+    try f(error.BadRecordMac, .bad_record_mac);
     try f(error.DecryptionFailed, .decryption_failed);
     try f(error.RecordOverflow, .record_overflow);
     try f(error.DecompressionFailure, .decompression_failure);
@@ -189,7 +189,7 @@ test "AlertDescription.toError" {
     try f(error.CertificateExpired, .certificate_expired);
     try f(error.CertificateUnknown, .certificate_unknown);
     try f(error.IllegalParameter, .illegal_parameter);
-    try f(error.UnknownCA, .unknown_ca);
+    try f(error.UnknownCa, .unknown_ca);
     try f(error.AccessDenied, .access_denied);
     try f(error.DecodeError, .decode_error);
     try f(error.DecryptError, .decrypt_error);
@@ -206,7 +206,7 @@ test "AlertDescription.toError" {
     try f(error.UnrecognizedName, .unrecognized_name);
     try f(error.BadCertificateStatusResponse, .bad_certificate_status_response);
     try f(error.BadCertificateHashValue, .bad_certificate_hash_value);
-    try f(error.UnknownPSKIdentity, .unknown_psk_identity);
+    try f(error.UnknownPskIdentity, .unknown_psk_identity);
     try f(error.CertificateRequired, .certificate_required);
     try f(error.NoApplicationProtocol, .no_application_protocol);
 }

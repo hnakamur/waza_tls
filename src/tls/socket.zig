@@ -475,7 +475,7 @@ test "ClientServer_tls13_p256" {
 }
 
 test "ServerOnly_tls13_p256" {
-    // if (true) return error.SkipZigTest;
+    if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
@@ -536,7 +536,7 @@ test "ServerOnly_tls13_p256" {
     }.runTest();
 }
 
-const skip_communicate_to_outside = false;
+const skip_communicate_to_outside = true;
 
 test "Connect to localhost TLS 1.3" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
