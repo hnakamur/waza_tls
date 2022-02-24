@@ -29,7 +29,7 @@ pub const CipherSuiteId = enum(u16) {
     tls_chacha20_poly1305_sha256 = 0x1303,
 
     // TLS 1.0 - 1.2 cipher suites.
-    tls_ecdhe_ecdsa_with_aes_128_gcm_sha256 = 0xc02b,
+    tls_ecdhe_ecdsa_with_aes_128_gcm_sha256  = 0xc02b,
     tls_ecdhe_ecdsa_with_aes_256_gcm_sha384 = 0xc02c,
     tls_ecdhe_rsa_with_aes_128_gcm_sha256 = 0xc02f,
     tls_ecdhe_rsa_with_aes_256_gcm_sha384 = 0xc030,
@@ -1118,6 +1118,8 @@ pub const SignatureScheme = enum(u16) {
     // Legacy signature and hash algorithms for TLS 1.2.
     pkcs1_with_sha1 = 0x0201,
     ecdsa_with_sha1 = 0x0203,
+
+    _,
 };
 
 pub const CurveId = enum(u16) {

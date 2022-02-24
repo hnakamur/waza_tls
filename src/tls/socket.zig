@@ -313,6 +313,86 @@ test "ClientServer_tls12_p256" {
     }.runTest();
 }
 
+test "ClientServer_tls13_rsa2048" {
+    if (true) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
+
+    testing.log_level = .info;
+
+    try struct {
+        fn testServer(server: *Server) !void {
+            var client = try server.accept();
+            const allocator = server.allocator;
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("hello", buffer[0..n]);
+
+            _ = try client.conn.write("How do you do?");
+        }
+
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{
+                .max_version = .v1_3,
+                .insecure_skip_verify = true,
+            });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("hello");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+
+            const cert_pem = @embedFile("../../tests/rsa2048.crt.pem");
+            const key_pem = @embedFile("../../tests/rsa2048.key.pem");
+
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var certificates = try allocator.alloc(CertificateChain, 1);
+            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{
+                    .certificates = certificates,
+                    .max_version = .v1_3,
+                    .session_tickets_disabled = true,
+                },
+            );
+            defer server.deinit();
+
+            const t = try std.Thread.spawn(
+                .{},
+                testClient,
+                .{ server.server.listen_address, allocator },
+            );
+            defer t.join();
+
+            try testServer(&server);
+        }
+    }.runTest();
+}
+
 test "ClientServer_tls13_p256" {
     // if (true) return error.SkipZigTest;
 
@@ -377,6 +457,7 @@ test "ClientServer_tls13_p256" {
                 .{
                     .certificates = certificates,
                     .max_version = .v1_3,
+                    .session_tickets_disabled = true,
                 },
             );
             defer server.deinit();
@@ -393,7 +474,69 @@ test "ClientServer_tls13_p256" {
     }.runTest();
 }
 
-const skip_communicate_to_outside = true;
+test "ServerOnly_tls13_p256" {
+    // if (true) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
+
+    testing.log_level = .debug;
+
+    try struct {
+        fn testServer(server: *Server) !void {
+            var client = try server.accept();
+            const allocator = server.allocator;
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            var buffer = [_]u8{0} ** 1024;
+            _ = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+
+            var resp = std.ArrayList(u8).init(allocator);
+            defer resp.deinit();
+            var resp_writer = resp.writer();
+            _ = try resp_writer.write("HTTP/1.1 200 OK\r\n");
+            _ = try resp_writer.write("Content-Type: text/plain\r\n");
+            _ = try resp_writer.write("Date: Thu, 24 Feb 2022 14:03:28 GMT\r\n");
+            _ = try resp_writer.write("Content-Length: 27\r\n");
+            _ = try resp_writer.write("\r\n");
+            _ = try resp_writer.write("This is an example server.\n");
+
+            _ = try client.conn.write(resp.items);
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+
+            const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
+            const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
+
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 8443);
+            var certificates = try allocator.alloc(CertificateChain, 1);
+            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+            var server = try Server.init(
+                allocator,
+                listen_addr,
+                .{},
+                .{
+                    .certificates = certificates,
+                    .max_version = .v1_3,
+                    .session_tickets_disabled = true,
+                },
+            );
+            defer server.deinit();
+
+            try testServer(&server);
+        }
+    }.runTest();
+}
+
+const skip_communicate_to_outside = false;
 
 test "Connect to localhost TLS 1.3" {
     if (skip_communicate_to_outside) return error.SkipZigTest;

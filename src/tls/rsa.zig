@@ -73,11 +73,12 @@ pub const PrivateKey = struct {
     pub fn sign(
         self: *const PrivateKey,
         allocator: mem.Allocator,
+        random: ?std.rand.Random,
         digest: []const u8,
         opts: SignOpts,
     ) ![]const u8 {
         // TODO: handle PSSOptions case
-        return try signPKCS1v15(self, allocator, opts.hash_type, digest);
+        return try signPKCS1v15(self, allocator, random, opts.hash_type, digest);
     }
 };
 
@@ -137,6 +138,7 @@ const CrtValue = struct {
 fn signPKCS1v15(
     priv_key: *const PrivateKey,
     allocator: mem.Allocator,
+    random: ?std.rand.Random,
     hash_type: HashType,
     digest: []const u8,
 ) ![]const u8 {
@@ -162,7 +164,7 @@ fn signPKCS1v15(
     var m = try bigint.constFromBytes(allocator, em, .Big);
     defer bigint.deinitConst(m, allocator);
 
-    var c = try decryptAndCheck(priv_key, allocator, m);
+    var c = try decryptAndCheck(priv_key, allocator, random, m);
     defer bigint.deinitConst(c, allocator);
     bigint.fillBytes(c, em);
     return em;
@@ -171,9 +173,10 @@ fn signPKCS1v15(
 fn decryptAndCheck(
     priv_key: *const PrivateKey,
     allocator: mem.Allocator,
+    random: ?std.rand.Random,
     c: math.big.int.Const,
 ) !math.big.int.Const {
-    var m = try decrypt(priv_key, allocator, c);
+    var m = try decrypt(priv_key, allocator, random, c);
 
     // In order to defend against errors in the CRT computation, m^e is
     // calculated, which should match the original ciphertext.
@@ -189,6 +192,7 @@ fn decryptAndCheck(
 fn decrypt(
     priv_key: *const PrivateKey,
     allocator: mem.Allocator,
+    random: ?std.rand.Random,
     c: math.big.int.Const,
 ) !math.big.int.Const {
     // TODO(agl): can we get away with reusing blinds?
@@ -197,6 +201,10 @@ fn decrypt(
     }
     if (priv_key.public_key.modulus.eqZero()) {
         return error.Decryption;
+    }
+
+    if (random != null) {
+        @panic("not implemented yet");
     }
 
     var m = try math.big.int.Managed.init(allocator);

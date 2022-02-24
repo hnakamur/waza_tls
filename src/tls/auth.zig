@@ -94,6 +94,7 @@ pub const SignatureType = enum(u8) {
             .ecdsa_with_sha1,
             => SignatureType.ecdsa,
             .ed25519 => SignatureType.ed25519,
+            else => @panic("unsupported signature scheme"),
         };
     }
 };
@@ -112,6 +113,7 @@ pub const HashType = enum {
             .pkcs1_with_sha512, .pss_with_sha512, .ecdsa_with_p521_and_sha512 => HashType.sha512,
             .ed25519 => HashType.direct_signing,
             .pkcs1_with_sha1, .ecdsa_with_sha1 => HashType.sha1,
+            else => @panic("unsupported signature scheme"),
         };
     }
 

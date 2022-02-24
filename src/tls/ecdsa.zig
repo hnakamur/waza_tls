@@ -107,11 +107,12 @@ pub const PrivateKey = union(CurveId) {
     pub fn sign(
         self: *const PrivateKey,
         allocator: mem.Allocator,
+        random: std.rand.Random,
         digest: []const u8,
         opts: crypto.SignOpts,
     ) ![]const u8 {
         return switch (self.*) {
-            .secp256r1 => |*k| k.sign(allocator, digest, opts),
+            .secp256r1 => |*k| k.sign(allocator, random, digest, opts),
             else => @panic("not implemented yet"),
         };
     }
@@ -178,6 +179,7 @@ const PrivateKeyP256 = struct {
     pub fn sign(
         self: *const PrivateKeyP256,
         allocator: mem.Allocator,
+        random: std.rand.Random,
         digest: []const u8,
         opts: crypto.SignOpts,
     ) ![]const u8 {
@@ -190,7 +192,7 @@ const PrivateKeyP256 = struct {
         var s = try math.big.int.Managed.initCapacity(allocator, capacity);
         defer s.deinit();
 
-        try signWithPrivateKey(allocator, std.crypto.random, &priv_key, digest, &r, &s);
+        try signWithPrivateKey(allocator, random, &priv_key, digest, &r, &s);
 
         var buf = std.ArrayListUnmanaged(u8){};
         errdefer buf.deinit(allocator);
@@ -606,6 +608,22 @@ pub fn verifyGeneric(
 }
 
 const testing = std.testing;
+
+test "ecdsa.PrivateKey.sign" {
+    testing.log_level = .err;
+    const allocator = testing.allocator;
+    const RandomForTest = @import("random_for_test.zig").RandomForTest;
+    const initial = [_]u8{0} ** 48;
+    var rand = RandomForTest.init(initial);
+
+    var priv_key = try PrivateKey.generate(allocator, .secp256r1, rand.random());
+    const digest = "\xcf\x36\xd2\xad\xe1\xc9\x40\x5c\x53\x04\xf6\xa6\xc4\xd1\xe3\x1a\xe3\x5b\x47\xd0\x4d\x6c\x27\x69\x14\x53\xed\x24\xdd\x76\x68\xe6";
+    const signed = try priv_key.sign(allocator, rand.random(), digest, .{});
+    defer allocator.free(signed);
+
+    const want = "\x30\x44\x02\x20\x7e\xe2\x36\xae\x11\x2b\xe7\xa1\x92\xec\x5d\xd7\x40\x69\xbb\x7a\xf8\x13\x1d\x51\x61\xd6\x17\x06\x58\x9a\x9f\x74\xa3\x5b\xb0\x7c\x02\x20\x26\xd3\x02\x17\x5b\x0d\x4d\x28\x17\xa1\x93\xb2\x06\xbc\x4b\x2b\x02\x17\x35\x15\xde\xc4\x02\x69\xa8\x3a\x18\x35\xb8\xda\x4d\x40";
+    try testing.expectEqualSlices(u8, want, signed);
+}
 
 test "ecdsa.signWithPrivateKey and verifyWithPublicKey" {
     testing.log_level = .err;

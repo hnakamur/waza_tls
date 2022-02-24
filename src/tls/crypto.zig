@@ -197,7 +197,7 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
 };
 
 pub const SignOpts = struct {
-    hash_type: HashType,
+    hash_type: HashType = undefined,
 };
 
 pub const PrivateKey = union(PublicKeyAlgorithm) {
@@ -239,9 +239,9 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
         opts: SignOpts,
     ) ![]const u8 {
         return switch (self.*) {
-            .rsa => |*k| try k.sign(allocator, digest, opts),
-            .ecdsa => |*k| try k.sign(allocator, digest, opts),
-            .ed25519 => |*k| try k.sign(allocator, digest, opts),
+            .rsa => |*k| try k.sign(allocator, null, digest, opts),
+            .ecdsa => |*k| try k.sign(allocator, std.crypto.random, digest, opts),
+            .ed25519 => |*k| try k.sign(allocator, null, digest, opts),
             else => @panic("not implemented yet"),
         };
     }
@@ -253,9 +253,11 @@ const Ed25519PrivateKey = struct {
     pub fn sign(
         self: *const Ed25519PrivateKey,
         allocator: mem.Allocator,
+        random: ?std.rand.Random,
         digest: []const u8,
         opts: SignOpts,
     ) ![]const u8 {
+        _ = random;
         _ = opts;
         const private_key_bytes = self.raw[0..std.crypto.sign.Ed25519.secret_length];
         const key_pair = std.crypto.sign.Ed25519.KeyPair.fromSecretKey(private_key_bytes.*);

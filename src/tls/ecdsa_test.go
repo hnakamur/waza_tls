@@ -229,3 +229,26 @@ func (z *zr) Read(dst []byte) (n int, err error) {
 }
 
 var zeroReader = &zr{}
+
+func TestEcdsaPrivateKeySign(t *testing.T) {
+	var initial [12]uint32
+	rnd := NewRandomForTest(initial)
+	c := elliptic.P256()
+	priv, err := ecdsa.GenerateKey(c, &rnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	digest := []byte("\xcf\x36\xd2\xad\xe1\xc9\x40\x5c\x53\x04\xf6\xa6\xc4\xd1\xe3\x1a\xe3\x5b\x47\xd0\x4d\x6c\x27\x69\x14\x53\xed\x24\xdd\x76\x68\xe6")
+	signed, err := priv.Sign(&rnd, digest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// log.Printf("signed=%x", signed)
+
+	// In this case, randutil.MaybeReadByte(rand) in ecdsa.Sign did not read byte.
+	want := []byte("\x30\x44\x02\x20\x7e\xe2\x36\xae\x11\x2b\xe7\xa1\x92\xec\x5d\xd7\x40\x69\xbb\x7a\xf8\x13\x1d\x51\x61\xd6\x17\x06\x58\x9a\x9f\x74\xa3\x5b\xb0\x7c\x02\x20\x26\xd3\x02\x17\x5b\x0d\x4d\x28\x17\xa1\x93\xb2\x06\xbc\x4b\x2b\x02\x17\x35\x15\xde\xc4\x02\x69\xa8\x3a\x18\x35\xb8\xda\x4d\x40")
+	if got := signed; !bytes.Equal(got, want) {
+		t.Errorf("sign result mismatch, got=%x, want=%x", got, want)
+	}
+}

@@ -34,6 +34,7 @@ const HashType = @import("auth.zig").HashType;
 const signedMessage = @import("auth.zig").signedMessage;
 const server_signature_context = @import("auth.zig").server_signature_context;
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
+const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
 
 pub const ServerHandshakeStateTls13 = struct {
@@ -327,23 +328,23 @@ pub const ServerHandshakeStateTls13 = struct {
 
         // TODO: implement write key log
 
-        if (negotiateAlpn(
+        const selected_proto = negotiateAlpn(
             self.conn.config.next_protos,
             self.client_hello.alpn_protocols,
-        )) |selected_proto| {
-            self.conn.client_protocol = try allocator.dupe(u8, selected_proto);
-
-            var encrypted_extensions_msg = EncryptedExtensionsMsg{
-                .alpn_protocol = selected_proto,
-            };
-
-            const encrypted_extensions_msg_bytes = try encrypted_extensions_msg.marshal(allocator);
-            self.transcript.update(encrypted_extensions_msg_bytes);
-            try self.conn.writeRecord(allocator, .handshake, encrypted_extensions_msg_bytes);
-        } else |err| {
+        ) catch |err| {
             self.conn.sendAlert(.no_application_protocol) catch {};
             return err;
-        }
+        };
+        self.conn.client_protocol = try allocator.dupe(u8, selected_proto);
+
+        var encrypted_extensions_msg = EncryptedExtensionsMsg{
+            .alpn_protocol = try allocator.dupe(u8, selected_proto),
+        };
+        defer encrypted_extensions_msg.deinit(allocator);
+
+        const encrypted_extensions_msg_bytes = try encrypted_extensions_msg.marshal(allocator);
+        self.transcript.update(encrypted_extensions_msg_bytes);
+        try self.conn.writeRecord(allocator, .handshake, encrypted_extensions_msg_bytes);
     }
 
     // sendDummyChangeCipherSpec sends a ChangeCipherSpec record for compatibility
@@ -556,8 +557,23 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn readClientFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = self;
-        _ = allocator;
-        // TODO: implement
+        var finished_msg = blk: {
+            var hs_msg = try self.conn.readHandshake(allocator);
+            break :blk switch (hs_msg) {
+                .Finished => |m| m,
+                else => {
+                    self.conn.sendAlert(.unexpected_message) catch {};
+                    return error.UnexpectedMessage;
+                },
+            };
+        };
+        defer finished_msg.deinit(allocator);
+
+        if (!hmac.equal(self.client_finished, finished_msg.verify_data)) {
+            self.conn.sendAlert(.decrypt_error) catch {};
+            return error.InvalidClientFinishedHash;
+        }
+
+        try self.conn.in.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
     }
 };
