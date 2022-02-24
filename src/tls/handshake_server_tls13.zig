@@ -557,6 +557,7 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn readClientFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        std.log.info("ServerHandshakeStateTls13.readClientFinished start", .{});
         var finished_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
@@ -568,6 +569,7 @@ pub const ServerHandshakeStateTls13 = struct {
             };
         };
         defer finished_msg.deinit(allocator);
+        std.log.info("ServerHandshakeStateTls13.readClientFinished read client finished_msg OK", .{});
 
         if (!hmac.equal(self.client_finished, finished_msg.verify_data)) {
             self.conn.sendAlert(.decrypt_error) catch {};
@@ -575,5 +577,6 @@ pub const ServerHandshakeStateTls13 = struct {
         }
 
         try self.conn.in.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
+        std.log.info("ServerHandshakeStateTls13.readClientFinished exit", .{});
     }
 };

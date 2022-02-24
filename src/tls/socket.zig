@@ -475,13 +475,13 @@ test "ClientServer_tls13_p256" {
 }
 
 test "ServerOnly_tls13_p256" {
-    if (true) return error.SkipZigTest;
+    // if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .debug;
+    testing.log_level = .info;
 
     try struct {
         fn testServer(server: *Server) !void {

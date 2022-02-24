@@ -804,6 +804,10 @@ pub const Conn = struct {
             if (payload_bytes_read < payload_len) {
                 return error.UnexpectedEof;
             }
+            std.log.info(
+                "before in.decrpyt, record.items={}, rec_type={}",
+                .{ std.fmt.fmtSliceHexLower(record.items), rec_type },
+            );
             break :blk try self.in.decrypt(allocator, record.items, &rec_type);
         };
         errdefer allocator.free(data);
