@@ -109,7 +109,7 @@ pub const ClientHandshakeStateTls13 = struct {
             return error.ServerSelectedTls13UsingLegacyVersionField;
         }
 
-        if (self.server_hello.supported_version.? == .v1_3) {
+        if (self.server_hello.supported_version.? != .v1_3) {
             self.conn.sendAlert(.illegal_parameter) catch {};
             return error.ServerSelectedInvalidVersionAfterHelloRetryRequest;
         }
@@ -154,6 +154,7 @@ pub const ClientHandshakeStateTls13 = struct {
         }
         self.suite = selected_suite;
         self.conn.cipher_suite_id = self.suite.?.id;
+        std.log.info("ClientHandshakeStateTls13 selected suite={}", .{selected_suite.?.id});
     }
 
     // sendDummyChangeCipherSpec sends a ChangeCipherSpec record for compatibility

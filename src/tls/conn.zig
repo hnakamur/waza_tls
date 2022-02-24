@@ -485,11 +485,13 @@ pub const Conn = struct {
         }
 
         var cli_hello_ver = self.config.maxSupportedVersion();
+        std.log.info("makeClientHello cli_hello_ver#1={}", .{cli_hello_ver});
         // The version at the beginning of the ClientHello was capped at TLS 1.2
         // for compatibility reasons. The supported_versions extension is used
         // to negotiate versions now. See RFC 8446, Section 4.2.1.
         if (@enumToInt(cli_hello_ver) > @enumToInt(ProtocolVersion.v1_2)) {
             cli_hello_ver = .v1_2;
+            std.log.info("makeClientHello cli_hello_ver#2={}", .{cli_hello_ver});
         }
 
         var client_hello: ClientHelloMsg = blk: {
@@ -522,7 +524,7 @@ pub const Conn = struct {
             );
             errdefer allocator.free(supported_points);
 
-            var sig_algs = if (@enumToInt(cli_hello_ver) > @enumToInt(ProtocolVersion.v1_2))
+            var sig_algs = if (@enumToInt(cli_hello_ver) >= @enumToInt(ProtocolVersion.v1_2))
                 try allocator.dupe(SignatureScheme, supported_signature_algorithms)
             else
                 &[_]SignatureScheme{};
@@ -757,7 +759,7 @@ pub const Conn = struct {
 
         var fbs = io.fixedBufferStream(record.items);
         var r = fbs.reader();
-        const rec_type = try r.readEnum(RecordType, .Big);
+        var rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
         std.log.debug(
@@ -766,7 +768,7 @@ pub const Conn = struct {
         );
         if (self.version) |con_ver| {
             if (con_ver != .v1_3 and con_ver != rec_ver) {
-                // TODO: sendAlert
+                self.sendAlert(.protocol_version) catch {};
                 return error.InvalidRecordHeader;
             }
         } else {
@@ -780,13 +782,14 @@ pub const Conn = struct {
                 return error.InvalidRecordHeader;
             }
         }
-        if (self.version) |con_ver| {
-            if (con_ver == .v1_3 and
-                payload_len > max_ciphertext_tls13 or payload_len > max_ciphertext)
-            {
-                // TODO: sendAlert
-                return error.InvalidRecordHeader;
-            }
+
+        const max_payload_len: u16 = if (self.version != null and self.version.? == .v1_3)
+            max_ciphertext_tls13
+        else
+            max_ciphertext;
+        if (payload_len > max_payload_len) {
+            self.sendAlert(.record_overflow) catch {};
+            return error.InvalidRecordHeader;
         }
 
         // std.log.debug(
@@ -801,7 +804,7 @@ pub const Conn = struct {
             if (payload_bytes_read < payload_len) {
                 return error.UnexpectedEof;
             }
-            break :blk try self.in.decrypt(allocator, record.items);
+            break :blk try self.in.decrypt(allocator, record.items, &rec_type);
         };
         errdefer allocator.free(data);
         // std.log.debug(
@@ -809,9 +812,19 @@ pub const Conn = struct {
         //     .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data) },
         // );
 
+        if (self.in.cipher == null and rec_type == .application_data) {
+            return error.UnexpectedMessage;
+        }
+
         if (rec_type != .alert and rec_type != .change_cipher_spec and data.len > 0) {
             // This is a state-advancing message: reset the retry count.
             self.retry_count = 0;
+        }
+
+        if (self.version != null and self.version.? == .v1_3 and rec_type == .handshake and
+            self.handshake_bytes.len > 0)
+        {
+            return error.UnexpectedMessage;
         }
 
         switch (rec_type) {
@@ -825,10 +838,8 @@ pub const Conn = struct {
                 if (desc != .close_notify) {
                     return self.in.setError(error.Eof);
                 }
-                if (self.version) |ver| {
-                    if (ver == .v1_3) {
-                        return self.in.setError(error.RemoteError);
-                    }
+                if (self.version != null and self.version.? == .v1_3) {
+                    return self.in.setError(error.RemoteError);
                 }
                 switch (@intToEnum(AlertLevel, data[0])) {
                     .warning => {
@@ -865,8 +876,7 @@ pub const Conn = struct {
                 // c.vers is still unset. That's not useful though and suspicious if the
                 // server then selects a lower protocol version, so don't allow that.
                 if (self.version.? == .v1_3) {
-                    // TODO: implement
-                    @panic("not implemented yet");
+                    return self.retryReadRecord(expect_change_cipher_spec);
                 }
 
                 if (!expect_change_cipher_spec) {
@@ -1023,7 +1033,22 @@ const HalfConn = struct {
             }
             const nonce: []const u8 = if (explicit_nonce_len > 0) explicit_nonce.? else &self.seq;
             if (self.ver.? == .v1_3) {
-                @panic("not implemented yet");
+                try record.appendSlice(allocator, payload);
+
+                // Encrypt the actual ContentType and replace the plaintext one.
+                try record.append(allocator, record.items[0]);
+                record.items[0] = @enumToInt(RecordType.application_data);
+
+                mem.writeIntBig(u16, record.items[3..5], @intCast(u16, payload.len + 1 + cipher.overhead()));
+
+                const plaintext = try allocator.dupe(u8, record.items[record_header_len..]);
+                defer allocator.free(plaintext);
+                try record.resize(allocator, record_header_len);
+
+                const additional_data = try allocator.dupe(u8, record.items);
+                defer allocator.free(additional_data);
+
+                try cipher.encrypt(allocator, record, nonce, plaintext, additional_data);
             } else {
                 mem.copy(u8, self.scratch_buf[0..], &self.seq);
                 mem.copy(u8, self.scratch_buf[self.seq.len..], record.items[0..record_header_len]);
@@ -1061,26 +1086,20 @@ const HalfConn = struct {
         self: *HalfConn,
         allocator: mem.Allocator,
         record: []const u8,
+        out_rec_type: *RecordType,
     ) ![]const u8 {
         var plaintext: []const u8 = undefined;
-        const rec_type = @intToEnum(RecordType, record[0]);
-        std.log.debug(
+        out_rec_type.* = @intToEnum(RecordType, record[0]);
+        std.log.info(
             "HalfConn.decrypt, self=0x{x}, rec_type={}, record.len={}, self.cipher={}",
-            .{
-                @ptrToInt(self),
-                rec_type,
-                record.len,
-                self.cipher,
-            },
+            .{ @ptrToInt(self), out_rec_type.*, record.len, self.cipher },
         );
         var payload = record[record_header_len..];
 
         // In TLS 1.3, change_cipher_spec messages are to be ignored without being
         // decrypted. See RFC 8446, Appendix D.4.
-        if (self.ver) |con_ver| {
-            if (con_ver == .v1_3 and rec_type == .change_cipher_spec) {
-                return try allocator.dupe(u8, payload);
-            }
+        if (self.ver != null and self.ver.? == .v1_3 and out_rec_type.* == .change_cipher_spec) {
+            return try allocator.dupe(u8, payload);
         }
 
         const explicit_nonce_len = self.explicitNonceLen();
@@ -1094,16 +1113,19 @@ const HalfConn = struct {
             else
                 payload[0..explicit_nonce_len];
             const ciphertext_and_tag = payload[explicit_nonce_len..];
-            var additional_data: []const u8 = undefined;
-            if (self.ver.? == .v1_3) {
-                @panic("not implemented yet");
-            } else {
+            const additional_data = if (self.ver.? == .v1_3)
+                record[0..record_header_len]
+            else blk: {
                 mem.copy(u8, &self.scratch_buf, &self.seq);
                 mem.copy(u8, self.scratch_buf[self.seq.len..], record[0..3]);
                 const n = ciphertext_and_tag.len - cipher.overhead();
-                mem.writeIntBig(u16, self.scratch_buf[self.seq.len + 3 .. self.seq.len + 5], @intCast(u16, n));
-                additional_data = self.scratch_buf[0 .. self.seq.len + 5];
-            }
+                mem.writeIntBig(
+                    u16,
+                    self.scratch_buf[self.seq.len + 3 .. self.seq.len + 5],
+                    @intCast(u16, n),
+                );
+                break :blk self.scratch_buf[0 .. self.seq.len + 5];
+            };
 
             var dest = std.ArrayListUnmanaged(u8){};
             errdefer dest.deinit(allocator);
@@ -1116,14 +1138,53 @@ const HalfConn = struct {
                     fmtx.fmtSliceHexEscapeLower(additional_data),
                 },
             );
+            std.log.info(
+                "HalfConn.decrypt, self=0x{x}, nonce.len={}, ciphertext_and_tag.len={}, additional_data.len={}",
+                .{ @ptrToInt(self), nonce.len, ciphertext_and_tag.len, additional_data.len },
+            );
             cipher.decrypt(allocator, &dest, nonce, ciphertext_and_tag, additional_data) catch |err| {
-                std.log.debug(
+                std.log.err(
                     "HalfConn.decrypt, self=0x{x}, decrpyt err: {s}",
                     .{ @ptrToInt(self), @errorName(err) },
                 );
-                return err;
+                return error.BadRecordMac;
             };
-            plaintext = dest.items;
+
+            if (self.ver.? == .v1_3) {
+                if (out_rec_type.* != .application_data) {
+                    return error.UnexpectedMessage;
+                }
+                if (dest.items.len > max_plain_text + 1) {
+                    return error.RecordOverflow;
+                }
+
+// Go
+// 2022/02/24 21:45:34 halfConn.decrypt start, len(record)=3851
+// 2022/02/24 21:45:34 halfConn.decrypt len(nonce)=8, len(payload)=3846, len(additionalData)=5
+// 2022/02/24 21:45:34 halfConn.decrypt len(plaintext)=3830, err=<nil>
+//
+// Zig
+// [default] (info): HalfConn.decrypt, self=0x7fff861f2560, rec_type=RecordType.application_data, record.len=3851, self.cipher=Aead{ .xor_nonce_aead_aes128_gcm = tls.cipher_suites.XorNonceAead(std.crypto.aes_gcm.AesGcm(std.crypto.aes.aesni.Aes128)){ .nonce_mask = { 205, 210, 41, 118, 29, 173, 54, 142, 196, 179, 189, 141 }, .key = { 187, 226, 99, 21, 208, 84, 120, 12, 98, 194, 220, 25, 158, 117, 83, 101 } } }
+// [default] (info): HalfConn.decrypt, self=0x7fff861f2560, nonce.len=8, ciphertext_and_tag.len=3846, additional_data.len=5
+// [default] (info): HalfConn.decrypt dest.items.len=4096
+
+                // Remove padding and find the ContentType scanning from the end.
+                var i: usize = dest.items.len - 1;
+                std.log.info("HalfConn.decrypt dest.items.len={}", .{dest.items.len});
+                while (i >= 0) : (i -= 1) {
+                    if (dest.items[i] != 0) {
+                        std.log.info("HalfConn.decrypt dest.items[{}]={}", .{ i, dest.items[i] });
+                        out_rec_type.* = @intToEnum(RecordType, dest.items[i]);
+                        try dest.resize(allocator, i);
+                        break;
+                    }
+                    if (i == 0) {
+                        return error.UnexpectedMessage;
+                    }
+                }
+            }
+
+            plaintext = dest.toOwnedSlice(allocator);
             std.log.debug(
                 "HalfConn.decrypt, exit self=0x{x}, plaintext={}",
                 .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(plaintext) },

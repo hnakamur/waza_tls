@@ -117,12 +117,16 @@ pub const HandshakeMsg = union(MsgType) {
         }
         const msg_data = data[0..msg_len];
         const msg_type = @intToEnum(MsgType, data[0]);
+        std.log.info("HandshakeMsg.unmarshal msg_type={}", .{msg_type});
         switch (msg_type) {
             .ClientHello => return HandshakeMsg{
                 .ClientHello = try ClientHelloMsg.unmarshal(allocator, msg_data),
             },
             .ServerHello => return HandshakeMsg{
                 .ServerHello = try ServerHelloMsg.unmarshal(allocator, msg_data),
+            },
+            .EncryptedExtensions => return HandshakeMsg{
+                .EncryptedExtensions = try EncryptedExtensionsMsg.unmarshal(allocator, msg_data),
             },
             .Certificate => return HandshakeMsg{
                 .Certificate = try CertificateMsg.unmarshal(allocator, msg_data, ver.?),

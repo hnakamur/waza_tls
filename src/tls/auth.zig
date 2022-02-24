@@ -248,7 +248,7 @@ fn signatureSchemesForCertificate(
                 }
                 break :blk algs.toOwnedSlice(allocator);
             },
-            .ecdsa => {
+            .ecdsa => |pub_key| {
                 if (ver != .v1_3) {
                     break :blk try allocator.dupe(SignatureScheme, &[_]SignatureScheme{
                         .ecdsa_with_p256_and_sha256,
@@ -257,8 +257,26 @@ fn signatureSchemesForCertificate(
                         .ecdsa_with_sha1,
                     });
                 }
-                @panic("not implmented yet");
+                switch (pub_key) {
+                    .secp256r1 => break :blk try allocator.dupe(
+                        SignatureScheme,
+                        &[_]SignatureScheme{.ecdsa_with_p256_and_sha256},
+                    ),
+                    .secp384r1 => break :blk try allocator.dupe(
+                        SignatureScheme,
+                        &[_]SignatureScheme{.ecdsa_with_p384_and_sha384},
+                    ),
+                    .secp521r1 => break :blk try allocator.dupe(
+                        SignatureScheme,
+                        &[_]SignatureScheme{.ecdsa_with_p521_and_sha512},
+                    ),
+                    .x25519 => return &[_]SignatureScheme{},
+                }
             },
+            .ed25519 => break :blk try allocator.dupe(
+                SignatureScheme,
+                &[_]SignatureScheme{.ed25519},
+            ),
             else => @panic("not implmented yet"),
         }
     };

@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const net = std.net;
 const Conn = @import("conn.zig").Conn;
+const default_cipher_suites_tls13 = @import("cipher_suites.zig").default_cipher_suites_tls13;
 
 const Server = struct {
     server: net.StreamServer,
@@ -313,13 +314,13 @@ test "ClientServer_tls12_p256" {
 }
 
 test "ClientServer_tls13_p256" {
-    // if (true) return error.SkipZigTest;
+    if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .err;
+    testing.log_level = .debug;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -343,6 +344,7 @@ test "ClientServer_tls13_p256" {
             var client = try Client.init(allocator, addr, .{
                 .max_version = .v1_3,
                 .insecure_skip_verify = true,
+                .cipher_suites = &default_cipher_suites_tls13,
             });
             defer client.deinit(allocator);
             defer client.close() catch {};
@@ -391,9 +393,47 @@ test "ClientServer_tls13_p256" {
     }.runTest();
 }
 
-const skip_communicate_to_outside = true;
+const skip_communicate_to_outside = false;
 
-test "Connect to localhost" {
+test "Connect to localhost TLS 1.3" {
+    if (skip_communicate_to_outside) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+
+    testing.log_level = .info;
+
+    try struct {
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = try Client.init(allocator, addr, .{
+                .max_version = .v1_3,
+                .server_name = "naruh.dev",
+                .insecure_skip_verify = false,
+            });
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("GET / HTTP/1.1\r\nHost: naruh.dev\r\n\r\n");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            std.log.info("response:\n{s}", .{buffer[0..n]});
+            try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+            const addr = try std.net.Address.parseIp("127.0.0.1", 8443);
+            try testClient(addr, allocator);
+        }
+    }.runTest();
+}
+
+test "Connect to localhost TLS 1.2" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;

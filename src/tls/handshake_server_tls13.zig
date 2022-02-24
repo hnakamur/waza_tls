@@ -67,22 +67,31 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        std.log.info("ServerHandshakeStateTls13 handshake start", .{});
         // For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
         try self.processClientHello(allocator);
+        std.log.info("ServerHandshakeStateTls13 after processClientHello", .{});
         try self.checkForResumption(allocator);
+        std.log.info("ServerHandshakeStateTls13 after checkForResumption", .{});
         try self.pickCertificate(allocator);
+        std.log.info("ServerHandshakeStateTls13 after pickCertificate", .{});
 
         self.conn.buffering = true;
         try self.sendServerParameters(allocator);
+        std.log.info("ServerHandshakeStateTls13 after sendServerParameters", .{});
         try self.sendServerCertificate(allocator);
+        std.log.info("ServerHandshakeStateTls13 after sendServerCertificate", .{});
         try self.sendServerFinished(allocator);
+        std.log.info("ServerHandshakeStateTls13 after sendServerFinished", .{});
         // Note that at this point we could start sending application data without
         // waiting for the client's second flight, but the application might not
         // expect the lack of replay protection of the ClientHello parameters.
         try self.conn.flush();
-        std.log.debug("ServerHandshakeStateTls13 after sendFinished, flush", .{});
+        std.log.info("ServerHandshakeStateTls13 after flush", .{});
         try self.readClientCertificate(allocator);
+        std.log.info("ServerHandshakeStateTls13 after readClientCertificate", .{});
         try self.readClientFinished(allocator);
+        std.log.info("ServerHandshakeStateTls13 after readClientFinished", .{});
 
         self.conn.handshake_complete = true;
     }
@@ -241,9 +250,11 @@ pub const ServerHandshakeStateTls13 = struct {
 
     fn pickCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
         // TODO: implement
+        std.log.info("ServerHandshakeStateTls13.pickCertificate start", .{});
 
         // signature_algorithms is required in TLS 1.3. See RFC 8446, Section 4.2.3.
         if (self.client_hello.supported_signature_algorithms.len == 0) {
+            std.log.info("ServerHandshakeStateTls13.pickCertificate err exit#1", .{});
             return self.conn.sendAlert(.missing_extension);
         }
 
@@ -260,10 +271,13 @@ pub const ServerHandshakeStateTls13 = struct {
             // getCertificate returned a certificate that is unsupported or
             // incompatible with the client's signature algorithms.
             self.conn.sendAlert(.handshake_failure) catch {};
+
+            std.log.info("ServerHandshakeStateTls13.pickCertificate err exit#2", .{});
             return err;
         };
 
         self.cert_chain = cert_chain;
+        std.log.info("ServerHandshakeStateTls13.pickCertificate exit", .{});
     }
 
     fn sendServerParameters(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
