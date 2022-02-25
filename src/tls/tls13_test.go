@@ -12,6 +12,10 @@ func TestTls13Sign(t *testing.T) {
 		"../../tests/p256-self-signed.crt.pem",
 		"../../tests/p256-self-signed.key.pem",
 	)
+	// D=c6ae5808bbcdb5ae7625078b6cef4db0f486b4790af774971fc0fffc5063c686,
+	// X=0834335c0b0b4bb8c00d2793842385ca632b1158732c94c062165e12f6b9b523,
+	// Y=0545f7c507832e7ee8038ed0089146aaccfe365534e18850d3b18d5c37a3f2e3
+
 	if err != nil {
 		t.Fatal(err)
 	}

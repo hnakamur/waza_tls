@@ -54,6 +54,10 @@ pub const PrivateKey = union(CurveId) {
         var tag: asn1.TagAndClass = undefined;
         var s2 = try s.readAnyAsn1(&tag);
         const private_key_bytes = s2.bytes;
+        std.log.info(
+            "ecdsa.PrivateKey.parseAsn1, priv_key={}",
+            .{std.fmt.fmtSliceHexLower(private_key_bytes)},
+        );
 
         const curve_id = if (oid) |oid2| blk: {
             break :blk CurveId.fromOid(oid2) orelse return error.UnsupportedEcPrivateKeyCurveOid;
@@ -149,9 +153,10 @@ pub const PublicKeyP256 = struct {
 
 const PrivateKeyP256 = struct {
     public_key: PublicKeyP256,
-    d: [P256.Fe.encoded_length]u8,
+    d: [P256.Fe.encoded_length]u8, // little endian
 
-    pub fn init(d: [P256.Fe.encoded_length]u8) !PrivateKeyP256 {
+    pub fn init(d_big: [P256.Fe.encoded_length]u8) !PrivateKeyP256 {
+        const d = P256.Fe.orderSwap(d_big);
         const pub_key_point = try P256.basePoint.mulPublic(d, .Little);
         return PrivateKeyP256{ .public_key = .{ .point = pub_key_point }, .d = d };
     }
@@ -167,7 +172,7 @@ const PrivateKeyP256 = struct {
         var d: []const u8 = undefined;
         d.ptr = @ptrCast([*]const u8, k.limbs.ptr);
         d.len = P256.Fe.encoded_length;
-        return init(d[0..P256.Fe.encoded_length].*);
+        return init(P256.Fe.orderSwap(d[0..P256.Fe.encoded_length].*));
     }
 
     pub fn bigD(self: *const PrivateKeyP256) [P256.Fe.encoded_length]u8 {
@@ -616,9 +621,11 @@ test "ecdsa.PrivateKey.sign" {
     const initial = [_]u8{0} ** 48;
     var rand = RandomForTest.init(initial);
 
-    // priv_key.d=10a8e7424b64ddaf8b3e7e428c3f6e0e253709be285c64bc41cc300fd800c11f
-
     var priv_key = try PrivateKey.generate(allocator, .secp256r1, rand.random());
+    std.log.debug("priv_key.d={}", .{std.fmt.fmtSliceHexLower(&priv_key.secp256r1.bigD())});
+    const want_priv_d = "\x10\xa8\xe7\x42\x4b\x64\xdd\xaf\x8b\x3e\x7e\x42\x8c\x3f\x6e\x0e\x25\x37\x09\xbe\x28\x5c\x64\xbc\x41\xcc\x30\x0f\xd8\x00\xc1\x1f";
+    try testing.expectEqualSlices(u8, want_priv_d, &priv_key.secp256r1.bigD());
+
     const digest = "\xcf\x36\xd2\xad\xe1\xc9\x40\x5c\x53\x04\xf6\xa6\xc4\xd1\xe3\x1a\xe3\x5b\x47\xd0\x4d\x6c\x27\x69\x14\x53\xed\x24\xdd\x76\x68\xe6";
     const signed = try priv_key.sign(allocator, rand.random(), digest, .{});
     defer allocator.free(signed);
