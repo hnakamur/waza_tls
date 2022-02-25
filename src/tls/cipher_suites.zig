@@ -812,6 +812,21 @@ fn PrefixNonceAead(comptime AesGcm: type) type {
                 self.key,
             );
         }
+
+        pub fn format(
+            self: Self,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+            try std.fmt.format(writer, "{s}{{ .nonce = {}, .key = {} }}", .{
+                @typeName(Self),
+                std.fmt.fmtSliceHexLower(&self.nonce),
+                std.fmt.fmtSliceHexLower(&self.key),
+            });
+        }
     };
 }
 
@@ -942,6 +957,21 @@ fn XorNonceAead(comptime InnerAead: type) type {
             while (i < nonce.len) : (i += 1) {
                 self.nonce_mask[aead_nonce_length - nonce_length + i] ^= nonce[i];
             }
+        }
+
+        pub fn format(
+            self: Self,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+            try std.fmt.format(writer, "{s}{{ .nonce_mask = {}, .key = {} }}", .{
+                @typeName(Self),
+                std.fmt.fmtSliceHexLower(&self.nonce_mask),
+                std.fmt.fmtSliceHexLower(&self.key),
+            });
         }
     };
 }

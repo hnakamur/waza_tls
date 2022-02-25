@@ -762,7 +762,7 @@ pub const Conn = struct {
         var rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
-        std.log.debug(
+        std.log.info(
             "Conn.readRecordOrChangeCipherSpec self=0x{x}, rec_type={}, rec_ver={}, payload_len={}",
             .{ @ptrToInt(self), rec_type, rec_ver, payload_len },
         );
@@ -808,6 +808,23 @@ pub const Conn = struct {
                 "before in.decrpyt, record.items={}, rec_type={}",
                 .{ std.fmt.fmtSliceHexLower(record.items), rec_type },
             );
+            if (rec_type == .alert) {
+                if (payload_len < 2) {
+                    std.log.warn(
+                        "Invalid payload length for receiving alert, length={}",
+                        .{payload_len},
+                    );
+                    return error.InvalidAlertReceived;
+                }
+                const level = @intToEnum(AlertLevel, record.items[record_header_len]);
+                const desc = @intToEnum(AlertDescription, record.items[record_header_len + 1]);
+                std.log.warn(
+                    "Received alert, level={}, desc={}, payload_len={}",
+                    .{ level, desc, payload_len },
+                );
+                return error.ReceivedAlert;
+            }
+
             break :blk try self.in.decrypt(allocator, record.items, &rec_type);
         };
         errdefer allocator.free(data);
@@ -1095,7 +1112,7 @@ const HalfConn = struct {
         var plaintext: []const u8 = undefined;
         out_rec_type.* = @intToEnum(RecordType, record[0]);
         std.log.info(
-            "HalfConn.decrypt, self=0x{x}, rec_type={}, record.len={}, self.cipher={}",
+            "HalfConn.decrypt, self=0x{x}, rec_type={}, record.len={}, self.cipher.id={}",
             .{ @ptrToInt(self), out_rec_type.*, record.len, self.cipher },
         );
         var payload = record[record_header_len..];

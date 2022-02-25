@@ -32,7 +32,7 @@ const Server = struct {
 
     pub fn accept(self: *Server) !ServerConn {
         var conn = try self.server.accept();
-        var sc = ServerConn{
+        const c = ServerConn{
             .address = conn.address,
             .conn = Conn.init(
                 self.allocator,
@@ -43,8 +43,8 @@ const Server = struct {
                 self.conn_config,
             ),
         };
-        try self.connections.append(self.allocator, sc);
-        return sc;
+        try self.connections.append(self.allocator, c);
+        return c;
     }
 };
 
@@ -172,7 +172,7 @@ test "ClientServer_tls12_p256" {
             const allocator = server.allocator;
             defer client.deinit(allocator);
             defer client.close() catch {};
-            std.log.debug(
+            std.log.info(
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -192,7 +192,7 @@ test "ClientServer_tls12_p256" {
             defer client.deinit(allocator);
             defer client.close() catch {};
 
-            std.log.debug(
+            std.log.info(
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -394,13 +394,13 @@ test "ClientServer_tls13_rsa2048" {
 }
 
 test "ClientServer_tls13_p256" {
-    // if (true) return error.SkipZigTest;
+    if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .debug;
+    testing.log_level = .info;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -408,7 +408,7 @@ test "ClientServer_tls13_p256" {
             const allocator = server.allocator;
             defer client.deinit(allocator);
             defer client.close() catch {};
-            std.log.debug(
+            std.log.info(
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -429,7 +429,7 @@ test "ClientServer_tls13_p256" {
             defer client.deinit(allocator);
             defer client.close() catch {};
 
-            std.log.debug(
+            std.log.info(
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -475,7 +475,7 @@ test "ClientServer_tls13_p256" {
 }
 
 test "ServerOnly_tls13_p256" {
-    // if (true) return error.SkipZigTest;
+    if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;

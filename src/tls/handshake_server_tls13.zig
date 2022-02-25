@@ -237,6 +237,10 @@ pub const ServerHandshakeStateTls13 = struct {
         };
 
         self.shared_key = try params.sharedKey(allocator, client_key_share.?.data);
+        std.log.info(
+            "ServerHandshakeStateTls13.processClientHello shared_key={}",
+            .{std.fmt.fmtSliceHexLower(self.shared_key)},
+        );
 
         if (self.client_hello.server_name.len > 0) {
             self.conn.server_name = try allocator.dupe(u8, self.client_hello.server_name);
@@ -306,6 +310,10 @@ pub const ServerHandshakeStateTls13 = struct {
                 defer allocator.free(current_secret);
                 break :blk try self.suite.?.extract(allocator, self.shared_key, current_secret);
             };
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerParameters handshake_secret={}",
+                .{std.fmt.fmtSliceHexLower(self.handshake_secret)},
+            );
 
             const client_secret = try self.suite.?.deriveSecret(
                 allocator,
@@ -314,7 +322,15 @@ pub const ServerHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(client_secret);
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerParameters client_secret={}",
+                .{std.fmt.fmtSliceHexLower(client_secret)},
+            );
             try self.conn.in.setTrafficSecret(allocator, self.suite.?, client_secret);
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerParameters in.traffic_secret={}",
+                .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
+            );
 
             const server_secret = try self.suite.?.deriveSecret(
                 allocator,
@@ -323,7 +339,15 @@ pub const ServerHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(server_secret);
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerParameters server_secret={}",
+                .{std.fmt.fmtSliceHexLower(server_secret)},
+            );
             try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerParameters out.traffic_secret={}",
+                .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
+            );
         }
 
         // TODO: implement write key log
@@ -383,6 +407,10 @@ pub const ServerHandshakeStateTls13 = struct {
                     self.cert_chain.?.signed_certificate_timestamps.?.len > 0;
                 const ocsp_stapling = self.client_hello.ocsp_stapling and
                     self.cert_chain.?.ocsp_staple.len > 0;
+                std.log.info(
+                    "ServerHandshakeStateTls13.sendServerCertificate scts={}, ocsp_stapling={}",
+                    .{ scts, ocsp_stapling },
+                );
 
                 var cert_chain = CertificateChain{
                     .certificate_chain = try memx.dupeStringList(
@@ -430,8 +458,16 @@ pub const ServerHandshakeStateTls13 = struct {
                     self.transcript,
                 );
                 defer allocator.free(signed);
+                std.log.info(
+                    "ServerHandshakeStateTls13.sendServerCertificate signed={}",
+                    .{ std.fmt.fmtSliceHexLower(signed) },
+                );
 
                 const sign_opts = crypto.SignOpts{ .hash_type = sig_hash };
+                std.log.info(
+                    "ServerHandshakeStateTls13.sendServerCertificate cert={}",
+                    .{ std.fmt.fmtSliceHexLower(self.cert_chain.?.certificate_chain[0]) },
+                );
                 var sig = self.cert_chain.?.private_key.?.sign(
                     allocator,
                     signed,
@@ -445,6 +481,10 @@ pub const ServerHandshakeStateTls13 = struct {
                     self.conn.sendAlert(alert_desc) catch {};
                     return error.SignHandshakeFailed;
                 };
+                std.log.info(
+                    "ServerHandshakeStateTls13.sendServerCertificate sig={}",
+                    .{ std.fmt.fmtSliceHexLower(sig) },
+                );
 
                 break :blk CertificateVerifyMsg{
                     .signature_algorithm = self.sig_alg.?,
@@ -488,12 +528,20 @@ pub const ServerHandshakeStateTls13 = struct {
             defer allocator.free(current_secret);
             break :blk try self.suite.?.extract(allocator, null, current_secret);
         };
+        std.log.info(
+            "ServerHandshakeStateTls13.sendServerFinished master_secret={}",
+            .{std.fmt.fmtSliceHexLower(self.master_secret)},
+        );
 
         self.traffic_secret = try self.suite.?.deriveSecret(
             allocator,
             self.master_secret,
             client_application_traffic_label,
             self.transcript,
+        );
+        std.log.info(
+            "ServerHandshakeStateTls13.sendServerFinished traffic_secret={}",
+            .{std.fmt.fmtSliceHexLower(self.traffic_secret)},
         );
 
         {
@@ -504,7 +552,15 @@ pub const ServerHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(server_secret);
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerFinished server_secret={}",
+                .{std.fmt.fmtSliceHexLower(server_secret)},
+            );
             try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+            std.log.info(
+                "ServerHandshakeStateTls13.sendServerFinished out.traffic_secret={}",
+                .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
+            );
         }
 
         // TODO: implement writing key log

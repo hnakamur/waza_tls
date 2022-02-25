@@ -227,6 +227,10 @@ pub const ClientHandshakeStateTls13 = struct {
             return error.InvalidServerKeyShare;
         };
         defer allocator.free(shared_key);
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys shared_key={}",
+            .{std.fmt.fmtSliceHexLower(shared_key)},
+        );
 
         const handshake_secret = blk: {
             const early_secret = if (self.using_psk)
@@ -245,6 +249,10 @@ pub const ClientHandshakeStateTls13 = struct {
             break :blk try self.suite.?.extract(allocator, shared_key, current_secret);
         };
         defer allocator.free(handshake_secret);
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys handshake_secret={}",
+            .{std.fmt.fmtSliceHexLower(handshake_secret)},
+        );
 
         const client_secret = try self.suite.?.deriveSecret(
             allocator,
@@ -253,7 +261,15 @@ pub const ClientHandshakeStateTls13 = struct {
             self.transcript,
         );
         defer allocator.free(client_secret);
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys client_secret={}",
+            .{std.fmt.fmtSliceHexLower(client_secret)},
+        );
         try self.conn.out.setTrafficSecret(allocator, self.suite.?, client_secret);
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys out.traffic_secret={}",
+            .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
+        );
 
         const server_secret = try self.suite.?.deriveSecret(
             allocator,
@@ -262,7 +278,15 @@ pub const ClientHandshakeStateTls13 = struct {
             self.transcript,
         );
         defer allocator.free(server_secret);
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys server_secret={}",
+            .{std.fmt.fmtSliceHexLower(server_secret)},
+        );
         try self.conn.in.setTrafficSecret(allocator, self.suite.?, server_secret);
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys in.traffic_secret={}",
+            .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
+        );
 
         // TODO: implement write key log
 
@@ -276,6 +300,10 @@ pub const ClientHandshakeStateTls13 = struct {
             defer allocator.free(current_secret);
             break :blk try self.suite.?.extract(allocator, null, current_secret);
         };
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys master_secret={}",
+            .{std.fmt.fmtSliceHexLower(self.master_secret)},
+        );
     }
 
     fn readServerParameters(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -374,7 +402,15 @@ pub const ClientHandshakeStateTls13 = struct {
             self.transcript,
         );
         defer allocator.free(signed);
+        std.log.info(
+            "ClientHandshakeStateTls13.readServerCertificate signed={}",
+            .{std.fmt.fmtSliceHexLower(signed)},
+        );
 
+        std.log.info(
+            "ClientHandshakeStateTls13.readServerCertificate cert={}",
+            .{std.fmt.fmtSliceHexLower(self.conn.peer_certificates[0].raw)},
+        );
         verifyHandshakeSignature(
             allocator,
             sig_type,
@@ -425,6 +461,10 @@ pub const ClientHandshakeStateTls13 = struct {
             client_application_traffic_label,
             self.transcript,
         );
+        std.log.info(
+            "ClientHandshakeStateTls13.establishHandshakeKeys traffic_secret={}",
+            .{std.fmt.fmtSliceHexLower(self.traffic_secret)},
+        );
 
         {
             const server_secret = try self.suite.?.deriveSecret(
@@ -434,7 +474,15 @@ pub const ClientHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(server_secret);
+            std.log.info(
+                "ClientHandshakeStateTls13.establishHandshakeKeys server_secret={}",
+                .{std.fmt.fmtSliceHexLower(server_secret)},
+            );
             try self.conn.in.setTrafficSecret(allocator, self.suite.?, server_secret);
+            std.log.info(
+                "ClientHandshakeStateTls13.establishHandshakeKeys in.traffic_secret={}",
+                .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
+            );
         }
 
         // TODO: implement writing key log

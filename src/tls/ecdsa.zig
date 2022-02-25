@@ -610,11 +610,13 @@ pub fn verifyGeneric(
 const testing = std.testing;
 
 test "ecdsa.PrivateKey.sign" {
-    testing.log_level = .err;
+    testing.log_level = .debug;
     const allocator = testing.allocator;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const initial = [_]u8{0} ** 48;
     var rand = RandomForTest.init(initial);
+
+    // priv_key.d=10a8e7424b64ddaf8b3e7e428c3f6e0e253709be285c64bc41cc300fd800c11f
 
     var priv_key = try PrivateKey.generate(allocator, .secp256r1, rand.random());
     const digest = "\xcf\x36\xd2\xad\xe1\xc9\x40\x5c\x53\x04\xf6\xa6\xc4\xd1\xe3\x1a\xe3\x5b\x47\xd0\x4d\x6c\x27\x69\x14\x53\xed\x24\xdd\x76\x68\xe6";
@@ -795,7 +797,7 @@ test "ecdsa.hashToInt" {
 }
 
 test "ecdsa.PrivateKey.parseAsn1" {
-    testing.log_level = .err;
+    testing.log_level = .debug;
     const allocator = testing.allocator;
     const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
     var offset: usize = 0;
@@ -804,6 +806,7 @@ test "ecdsa.PrivateKey.parseAsn1" {
     const key_der = key_block.bytes;
     const key = try PrivateKey.parseAsn1(allocator, key_der, null);
     std.log.debug("key={}", .{key});
+    //Go priv.D=c6ae5808bbcdb5ae7625078b6cef4db0f486b4790af774971fc0fffc5063c686
 }
 
 test "randFieldElement" {
