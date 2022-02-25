@@ -70,31 +70,31 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        std.log.info("ServerHandshakeStateTls13 handshake start", .{});
+        std.log.debug("ServerHandshakeStateTls13 handshake start", .{});
         // For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
         try self.processClientHello(allocator);
-        std.log.info("ServerHandshakeStateTls13 after processClientHello", .{});
+        std.log.debug("ServerHandshakeStateTls13 after processClientHello", .{});
         try self.checkForResumption(allocator);
-        std.log.info("ServerHandshakeStateTls13 after checkForResumption", .{});
+        std.log.debug("ServerHandshakeStateTls13 after checkForResumption", .{});
         try self.pickCertificate(allocator);
-        std.log.info("ServerHandshakeStateTls13 after pickCertificate", .{});
+        std.log.debug("ServerHandshakeStateTls13 after pickCertificate", .{});
 
         self.conn.buffering = true;
         try self.sendServerParameters(allocator);
-        std.log.info("ServerHandshakeStateTls13 after sendServerParameters", .{});
+        std.log.debug("ServerHandshakeStateTls13 after sendServerParameters", .{});
         try self.sendServerCertificate(allocator);
-        std.log.info("ServerHandshakeStateTls13 after sendServerCertificate", .{});
+        std.log.debug("ServerHandshakeStateTls13 after sendServerCertificate", .{});
         try self.sendServerFinished(allocator);
-        std.log.info("ServerHandshakeStateTls13 after sendServerFinished", .{});
+        std.log.debug("ServerHandshakeStateTls13 after sendServerFinished", .{});
         // Note that at this point we could start sending application data without
         // waiting for the client's second flight, but the application might not
         // expect the lack of replay protection of the ClientHello parameters.
         try self.conn.flush();
-        std.log.info("ServerHandshakeStateTls13 after flush", .{});
+        std.log.debug("ServerHandshakeStateTls13 after flush", .{});
         try self.readClientCertificate(allocator);
-        std.log.info("ServerHandshakeStateTls13 after readClientCertificate", .{});
+        std.log.debug("ServerHandshakeStateTls13 after readClientCertificate", .{});
         try self.readClientFinished(allocator);
-        std.log.info("ServerHandshakeStateTls13 after readClientFinished", .{});
+        std.log.debug("ServerHandshakeStateTls13 after readClientFinished", .{});
 
         self.conn.handshake_complete = true;
     }
@@ -237,7 +237,7 @@ pub const ServerHandshakeStateTls13 = struct {
         };
 
         self.shared_key = try params.sharedKey(allocator, client_key_share.?.data);
-        std.log.info(
+        std.log.debug(
             "ServerHandshakeStateTls13.processClientHello shared_key={}",
             .{std.fmt.fmtSliceHexLower(self.shared_key)},
         );
@@ -257,11 +257,11 @@ pub const ServerHandshakeStateTls13 = struct {
 
     fn pickCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
         // TODO: implement
-        std.log.info("ServerHandshakeStateTls13.pickCertificate start", .{});
+        std.log.debug("ServerHandshakeStateTls13.pickCertificate start", .{});
 
         // signature_algorithms is required in TLS 1.3. See RFC 8446, Section 4.2.3.
         if (self.client_hello.supported_signature_algorithms.len == 0) {
-            std.log.info("ServerHandshakeStateTls13.pickCertificate err exit#1", .{});
+            std.log.debug("ServerHandshakeStateTls13.pickCertificate err exit#1", .{});
             return self.conn.sendAlert(.missing_extension);
         }
 
@@ -279,12 +279,12 @@ pub const ServerHandshakeStateTls13 = struct {
             // incompatible with the client's signature algorithms.
             self.conn.sendAlert(.handshake_failure) catch {};
 
-            std.log.info("ServerHandshakeStateTls13.pickCertificate err exit#2", .{});
+            std.log.debug("ServerHandshakeStateTls13.pickCertificate err exit#2", .{});
             return err;
         };
 
         self.cert_chain = cert_chain;
-        std.log.info("ServerHandshakeStateTls13.pickCertificate exit", .{});
+        std.log.debug("ServerHandshakeStateTls13.pickCertificate exit", .{});
     }
 
     fn sendServerParameters(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -310,7 +310,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 defer allocator.free(current_secret);
                 break :blk try self.suite.?.extract(allocator, self.shared_key, current_secret);
             };
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters handshake_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.handshake_secret)},
             );
@@ -322,12 +322,12 @@ pub const ServerHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(client_secret);
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters client_secret={}",
                 .{std.fmt.fmtSliceHexLower(client_secret)},
             );
             try self.conn.in.setTrafficSecret(allocator, self.suite.?, client_secret);
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters in.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
             );
@@ -339,12 +339,12 @@ pub const ServerHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(server_secret);
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters server_secret={}",
                 .{std.fmt.fmtSliceHexLower(server_secret)},
             );
             try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters out.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
             );
@@ -407,7 +407,7 @@ pub const ServerHandshakeStateTls13 = struct {
                     self.cert_chain.?.signed_certificate_timestamps.?.len > 0;
                 const ocsp_stapling = self.client_hello.ocsp_stapling and
                     self.cert_chain.?.ocsp_staple.len > 0;
-                std.log.info(
+                std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate scts={}, ocsp_stapling={}",
                     .{ scts, ocsp_stapling },
                 );
@@ -458,13 +458,13 @@ pub const ServerHandshakeStateTls13 = struct {
                     self.transcript,
                 );
                 defer allocator.free(signed);
-                std.log.info(
+                std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate signed={}",
                     .{ std.fmt.fmtSliceHexLower(signed) },
                 );
 
                 const sign_opts = crypto.SignOpts{ .hash_type = sig_hash };
-                std.log.info(
+                std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate cert={}",
                     .{ std.fmt.fmtSliceHexLower(self.cert_chain.?.certificate_chain[0]) },
                 );
@@ -481,7 +481,7 @@ pub const ServerHandshakeStateTls13 = struct {
                     self.conn.sendAlert(alert_desc) catch {};
                     return error.SignHandshakeFailed;
                 };
-                std.log.info(
+                std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate sig={}",
                     .{ std.fmt.fmtSliceHexLower(sig) },
                 );
@@ -528,7 +528,7 @@ pub const ServerHandshakeStateTls13 = struct {
             defer allocator.free(current_secret);
             break :blk try self.suite.?.extract(allocator, null, current_secret);
         };
-        std.log.info(
+        std.log.debug(
             "ServerHandshakeStateTls13.sendServerFinished master_secret={}",
             .{std.fmt.fmtSliceHexLower(self.master_secret)},
         );
@@ -539,7 +539,7 @@ pub const ServerHandshakeStateTls13 = struct {
             client_application_traffic_label,
             self.transcript,
         );
-        std.log.info(
+        std.log.debug(
             "ServerHandshakeStateTls13.sendServerFinished traffic_secret={}",
             .{std.fmt.fmtSliceHexLower(self.traffic_secret)},
         );
@@ -552,12 +552,12 @@ pub const ServerHandshakeStateTls13 = struct {
                 self.transcript,
             );
             defer allocator.free(server_secret);
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerFinished server_secret={}",
                 .{std.fmt.fmtSliceHexLower(server_secret)},
             );
             try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
-            std.log.info(
+            std.log.debug(
                 "ServerHandshakeStateTls13.sendServerFinished out.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
             );
@@ -613,7 +613,7 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn readClientFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        std.log.info("ServerHandshakeStateTls13.readClientFinished start", .{});
+        std.log.debug("ServerHandshakeStateTls13.readClientFinished start", .{});
         var finished_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
@@ -625,7 +625,7 @@ pub const ServerHandshakeStateTls13 = struct {
             };
         };
         defer finished_msg.deinit(allocator);
-        std.log.info("ServerHandshakeStateTls13.readClientFinished read client finished_msg OK", .{});
+        std.log.debug("ServerHandshakeStateTls13.readClientFinished read client finished_msg OK", .{});
 
         if (!hmac.equal(self.client_finished, finished_msg.verify_data)) {
             self.conn.sendAlert(.decrypt_error) catch {};
@@ -633,6 +633,6 @@ pub const ServerHandshakeStateTls13 = struct {
         }
 
         try self.conn.in.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
-        std.log.info("ServerHandshakeStateTls13.readClientFinished exit", .{});
+        std.log.debug("ServerHandshakeStateTls13.readClientFinished exit", .{});
     }
 };

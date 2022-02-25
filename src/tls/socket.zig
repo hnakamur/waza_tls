@@ -172,7 +172,7 @@ test "ClientServer_tls12_p256" {
             const allocator = server.allocator;
             defer client.deinit(allocator);
             defer client.close() catch {};
-            std.log.info(
+            std.log.debug(
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -192,7 +192,7 @@ test "ClientServer_tls12_p256" {
             defer client.deinit(allocator);
             defer client.close() catch {};
 
-            std.log.info(
+            std.log.debug(
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -408,7 +408,7 @@ test "ClientServer_tls13_p256" {
             const allocator = server.allocator;
             defer client.deinit(allocator);
             defer client.close() catch {};
-            std.log.info(
+            std.log.debug(
                 "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -429,7 +429,7 @@ test "ClientServer_tls13_p256" {
             defer client.deinit(allocator);
             defer client.close() catch {};
 
-            std.log.info(
+            std.log.debug(
                 "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
                 .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
             );
@@ -564,7 +564,7 @@ test "Connect to localhost TLS 1.3" {
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
-            std.log.info("response:\n{s}", .{buffer[0..n]});
+            std.log.debug("response:\n{s}", .{buffer[0..n]});
             try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
         }
 
@@ -602,7 +602,7 @@ test "Connect to localhost TLS 1.2" {
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
-            std.log.info("response:\n{s}", .{buffer[0..n]});
+            std.log.debug("response:\n{s}", .{buffer[0..n]});
             try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
         }
 
@@ -640,7 +640,7 @@ test "Connect to Internet" {
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
             try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
-            std.log.info("response:\n{s}", .{buffer[0..n]});
+            std.log.debug("response:\n{s}", .{buffer[0..n]});
             try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
         }
 

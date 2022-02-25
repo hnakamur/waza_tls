@@ -117,7 +117,7 @@ pub const HandshakeMsg = union(MsgType) {
         }
         const msg_data = data[0..msg_len];
         const msg_type = @intToEnum(MsgType, data[0]);
-        std.log.info("HandshakeMsg.unmarshal msg_type={}", .{msg_type});
+        std.log.debug("HandshakeMsg.unmarshal msg_type={}", .{msg_type});
         switch (msg_type) {
             .ClientHello => return HandshakeMsg{
                 .ClientHello = try ClientHelloMsg.unmarshal(allocator, msg_data),

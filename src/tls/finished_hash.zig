@@ -40,10 +40,7 @@ pub const FinishedHash = struct {
         version: ProtocolVersion,
         cipher_suite: *const CipherSuiteTls12,
     ) FinishedHash {
-        std.log.info(
-            "FinishedHash.new, version={}, suite={}",
-            .{ version, cipher_suite },
-        );
+        std.log.debug("FinishedHash.new, version={}, suite={}", .{ version, cipher_suite });
         switch (version) {
             .v1_2 => {
                 if (cipher_suite.flags.sha384) {
@@ -103,7 +100,7 @@ pub const FinishedHash = struct {
     ) !void {
         var sum = try self.client.allocFinal(allocator);
         defer allocator.free(sum);
-        std.log.info("{s}: client hash={}", .{ label, std.fmt.fmtSliceHexLower(sum) });
+        std.log.debug("{s}: client hash={}", .{ label, std.fmt.fmtSliceHexLower(sum) });
     }
 
     // clientSum returns to the contents of the verify_data member of a client's

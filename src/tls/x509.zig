@@ -1646,7 +1646,7 @@ fn checkSignaturePublicKey(
     };
     defer allocator.free(signed2);
 
-    std.log.info("checkSignaturePublicKey public_key type={s}", .{@tagName(public_key)});
+    std.log.debug("checkSignaturePublicKey public_key type={s}", .{@tagName(public_key)});
     switch (public_key) {
         .rsa => |*k| {
             if (pub_key_algo.? != .rsa) {

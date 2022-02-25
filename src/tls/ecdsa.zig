@@ -54,10 +54,6 @@ pub const PrivateKey = union(CurveId) {
         var tag: asn1.TagAndClass = undefined;
         var s2 = try s.readAnyAsn1(&tag);
         const private_key_bytes = s2.bytes;
-        std.log.info(
-            "ecdsa.PrivateKey.parseAsn1, priv_key={}",
-            .{std.fmt.fmtSliceHexLower(private_key_bytes)},
-        );
 
         const curve_id = if (oid) |oid2| blk: {
             break :blk CurveId.fromOid(oid2) orelse return error.UnsupportedEcPrivateKeyCurveOid;

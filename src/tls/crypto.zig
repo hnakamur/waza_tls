@@ -308,19 +308,6 @@ test "PrivateKey.sign" {
     var cert = try x509KeyPair(allocator, cert_pem, key_pem);
     defer cert.deinit(allocator);
 
-    {
-        const priv_key = cert.private_key.?.ecdsa.secp256r1;
-        const xy = priv_key.public_key.point.affineCoordinates();
-        std.log.info("d={}, x={}, y={}", .{
-            std.fmt.fmtSliceHexLower(&priv_key.bigD()),
-            std.fmt.fmtSliceHexLower(&xy.x.toBytes(.Big)),
-            std.fmt.fmtSliceHexLower(&xy.y.toBytes(.Big)),
-        });
-        // d=c6ae5808bbcdb5ae7625078b6cef4db0f486b4790af774971fc0fffc5063c686,
-        // x=0834335c0b0b4bb8c00d2793842385ca632b1158732c94c062165e12f6b9b523,
-        // y=0545f7c507832e7ee8038ed0089146aaccfe365534e18850d3b18d5c37a3f2e3
-    }
-
     const signed = "\x0d\x7a\x45\xfc\x76\xfe\xd7\xde\x30\xa5\xbb\x93\x71\x61\x16\x9f\x96\x20\x26\x59\x7f\x70\x8a\x1c\xb9\x2b\x7d\xff\xac\x15\xad\x43";
     const want = "\x30\x45\x02\x20\x4b\x33\xe6\x66\x13\xd2\x30\xd6\xe0\x7a\x2c\xc4\x03\x0e\xcc\xbc\xad\x41\xd4\x81\x57\x9b\x33\xb0\x99\x10\x04\x5f\x2d\xb8\x19\x91\x02\x21\x00\xe0\xe7\x1f\x24\x51\xcb\xc1\xc3\x08\xaf\xad\x3b\xb0\x4a\x7f\x3b\x6d\xdb\x58\x72\xae\x3a\xf2\x18\x93\xc5\x6e\xcc\x12\x83\x23\x3b";
 
@@ -329,9 +316,4 @@ test "PrivateKey.sign" {
     const sig = try cert.private_key.?.ecdsa.sign(allocator, rand.random(), signed, .{});
     defer allocator.free(sig);
     try testing.expectEqualSlices(u8, want, sig);
-
-    // ecdsa.PrivateKey.parseAsn1, priv_key=c6ae5808bbcdb5ae7625078b6cef4db0f486b4790af774971fc0fffc5063c686
-
-    //Go priv.D=c6ae5808bbcdb5ae7625078b6cef4db0f486b4790af774971fc0fffc5063c686
-    // priv_key.d=10a8e7424b64ddaf8b3e7e428c3f6e0e253709be285c64bc41cc300fd800c11f
 }

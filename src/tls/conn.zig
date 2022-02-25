@@ -485,13 +485,13 @@ pub const Conn = struct {
         }
 
         var cli_hello_ver = self.config.maxSupportedVersion();
-        std.log.info("makeClientHello cli_hello_ver#1={}", .{cli_hello_ver});
+        std.log.debug("makeClientHello cli_hello_ver#1={}", .{cli_hello_ver});
         // The version at the beginning of the ClientHello was capped at TLS 1.2
         // for compatibility reasons. The supported_versions extension is used
         // to negotiate versions now. See RFC 8446, Section 4.2.1.
         if (@enumToInt(cli_hello_ver) > @enumToInt(ProtocolVersion.v1_2)) {
             cli_hello_ver = .v1_2;
-            std.log.info("makeClientHello cli_hello_ver#2={}", .{cli_hello_ver});
+            std.log.debug("makeClientHello cli_hello_ver#2={}", .{cli_hello_ver});
         }
 
         var client_hello: ClientHelloMsg = blk: {
@@ -762,7 +762,7 @@ pub const Conn = struct {
         var rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
-        std.log.info(
+        std.log.debug(
             "Conn.readRecordOrChangeCipherSpec self=0x{x}, rec_type={}, rec_ver={}, payload_len={}",
             .{ @ptrToInt(self), rec_type, rec_ver, payload_len },
         );
@@ -804,7 +804,7 @@ pub const Conn = struct {
             if (payload_bytes_read < payload_len) {
                 return error.UnexpectedEof;
             }
-            std.log.info(
+            std.log.debug(
                 "before in.decrpyt, record.items={}, rec_type={}",
                 .{ std.fmt.fmtSliceHexLower(record.items), rec_type },
             );
@@ -1111,7 +1111,7 @@ const HalfConn = struct {
     ) ![]const u8 {
         var plaintext: []const u8 = undefined;
         out_rec_type.* = @intToEnum(RecordType, record[0]);
-        std.log.info(
+        std.log.debug(
             "HalfConn.decrypt, self=0x{x}, rec_type={}, record.len={}, self.cipher.id={}",
             .{ @ptrToInt(self), out_rec_type.*, record.len, self.cipher },
         );
@@ -1159,7 +1159,7 @@ const HalfConn = struct {
                     fmtx.fmtSliceHexEscapeLower(additional_data),
                 },
             );
-            std.log.info(
+            std.log.debug(
                 "HalfConn.decrypt, self=0x{x}, nonce.len={}, ciphertext_and_tag.len={}, additional_data.len={}",
                 .{ @ptrToInt(self), nonce.len, ciphertext_and_tag.len, additional_data.len },
             );
