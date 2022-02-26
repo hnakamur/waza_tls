@@ -76,7 +76,7 @@ pub const SignatureAlgorithm = enum(u8) {
         @panic("not implemented yet");
     }
 
-    fn is_rsa_pss(self: SignatureAlgorithm) bool {
+    fn isRsaPss(self: SignatureAlgorithm) bool {
         return switch (self) {
             .sha256_with_rsa_pss, .sha384_with_rsa_pss, .sha512_with_rsa_pss => true,
             else => false,
@@ -1652,7 +1652,7 @@ fn checkSignaturePublicKey(
             if (pub_key_algo.? != .rsa) {
                 return error.SignaturePublicKeyAlgoMismatch;
             }
-            if (algo.is_rsa_pss()) {
+            if (algo.isRsaPss()) {
                 @panic("not implemented yet");
             } else {
                 try rsa.verifyPkcs1v15(allocator, k, hash_type.?, signed2, signature);

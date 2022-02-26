@@ -460,13 +460,16 @@ pub const ServerHandshakeStateTls13 = struct {
                 defer allocator.free(signed);
                 std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate signed={}",
-                    .{ std.fmt.fmtSliceHexLower(signed) },
+                    .{std.fmt.fmtSliceHexLower(signed)},
                 );
 
-                const sign_opts = crypto.SignOpts{ .hash_type = sig_hash };
+                const sign_opts = if (sig_type == .rsa_pss)
+                    crypto.SignOpts{ .hash_type = sig_hash, .salt_length = .equals_hash }
+                else
+                    crypto.SignOpts{ .hash_type = sig_hash };
                 std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate cert={}",
-                    .{ std.fmt.fmtSliceHexLower(self.cert_chain.?.certificate_chain[0]) },
+                    .{std.fmt.fmtSliceHexLower(self.cert_chain.?.certificate_chain[0])},
                 );
                 var sig = self.cert_chain.?.private_key.?.sign(
                     allocator,
@@ -483,7 +486,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 };
                 std.log.debug(
                     "ServerHandshakeStateTls13.sendServerCertificate sig={}",
-                    .{ std.fmt.fmtSliceHexLower(sig) },
+                    .{std.fmt.fmtSliceHexLower(sig)},
                 );
 
                 break :blk CertificateVerifyMsg{

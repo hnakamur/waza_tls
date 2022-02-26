@@ -247,7 +247,7 @@ pub const PrivateKey = union(PublicKeyAlgorithm) {
         opts: SignOpts,
     ) ![]const u8 {
         return switch (self.*) {
-            .rsa => |*k| try k.sign(allocator, null, digest, opts),
+            .rsa => |*k| try k.sign(allocator, std.crypto.random, digest, opts),
             .ecdsa => |*k| try k.sign(allocator, std.crypto.random, digest, opts),
             .ed25519 => |*k| try k.sign(allocator, null, digest, opts),
             else => @panic("not implemented yet"),

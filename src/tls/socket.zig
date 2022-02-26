@@ -87,7 +87,7 @@ test "ClientServer_tls12_rsa2048" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .err;
+    testing.log_level = .warn;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -132,83 +132,6 @@ test "ClientServer_tls12_rsa2048" {
 
             const cert_pem = @embedFile("../../tests/rsa2048.crt.pem");
             const key_pem = @embedFile("../../tests/rsa2048.key.pem");
-
-            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{
-                    .certificates = certificates,
-                    .max_version = .v1_2,
-                },
-            );
-            defer server.deinit();
-
-            const t = try std.Thread.spawn(
-                .{},
-                testClient,
-                .{ server.server.listen_address, allocator },
-            );
-            defer t.join();
-
-            try testServer(&server);
-        }
-    }.runTest();
-}
-
-test "ClientServer_tls12_p256" {
-    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
-    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
-    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
-
-    testing.log_level = .err;
-
-    try struct {
-        fn testServer(server: *Server) !void {
-            var client = try server.accept();
-            const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
-            std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
-            );
-            var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
-            try testing.expectEqualStrings("hello", buffer[0..n]);
-
-            _ = try client.conn.write("How do you do?");
-        }
-
-        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
-                .max_version = .v1_2,
-                .insecure_skip_verify = true,
-            });
-            defer client.deinit(allocator);
-            defer client.close() catch {};
-
-            std.log.debug(
-                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
-            );
-            _ = try client.conn.write("hello");
-
-            var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
-            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
-        }
-
-        fn runTest() !void {
-            const allocator = testing.allocator;
-
-            const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
-            const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
             var certificates = try allocator.alloc(CertificateChain, 1);
