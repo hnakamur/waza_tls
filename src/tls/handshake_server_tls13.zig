@@ -470,7 +470,6 @@ pub const ServerHandshakeStateTls13 = struct {
                 );
                 var sig = self.cert_chain.?.private_key.?.sign(
                     allocator,
-                    std.crypto.random,
                     signed,
                     sign_opts,
                 ) catch {
