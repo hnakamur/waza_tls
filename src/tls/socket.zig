@@ -314,7 +314,7 @@ test "ClientServer_tls12_p256" {
 }
 
 test "ClientServer_tls13_rsa2048" {
-    if (true) return error.SkipZigTest;
+    // if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
@@ -334,7 +334,7 @@ test "ClientServer_tls13_rsa2048" {
             );
             var buffer = [_]u8{0} ** 1024;
             const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
             _ = try client.conn.write("How do you do?");

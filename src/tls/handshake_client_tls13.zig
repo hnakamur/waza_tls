@@ -4,9 +4,11 @@ const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
+const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
 const mutualCipherSuiteTls13 = @import("cipher_suites.zig").mutualCipherSuiteTls13;
+const cipherSuiteTls13ById = @import("cipher_suites.zig").cipherSuiteTls13ById;
 const hello_retry_request_random = @import("common.zig").hello_retry_request_random;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const checkAlpn = @import("handshake_client.zig").checkAlpn;
@@ -25,7 +27,9 @@ const hmac = @import("hmac.zig");
 const crypto = @import("crypto.zig");
 const memx = @import("../memx.zig");
 
-const ClientSessionState = struct {};
+const ClientSessionState = struct {
+    cipher_suite: CipherSuiteId,
+};
 
 pub const ClientHandshakeStateTls13 = struct {
     conn: *Conn,
@@ -213,7 +217,16 @@ pub const ClientHandshakeStateTls13 = struct {
             try self.conn.sendAlert(.internal_error);
         }
 
-        // const psk_suite = cipherSuiteTls13ById(self.session.cipher_suite);
+        const psk_suite = cipherSuiteTls13ById(self.session.?.cipher_suite);
+        if (psk_suite == null) {
+            try self.conn.sendAlert(.internal_error);
+        }
+        if (psk_suite.?.hash_type != self.suite.?.hash_type) {
+            self.conn.sendAlert(.illegal_parameter) catch {};
+            return error.ServerSelectedInvalidPskCipherSuitePair;
+        }
+
+        self.using_psk = true;
         _ = allocator;
         @panic("not implemented yet");
     }

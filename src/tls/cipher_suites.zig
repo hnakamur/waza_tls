@@ -339,7 +339,7 @@ pub fn mutualCipherSuiteTls13(
     return if (memx.containsScalar(CipherSuiteId, have, want)) cipherSuiteTls13ById(want) else null;
 }
 
-fn cipherSuiteTls13ById(id: CipherSuiteId) ?*const CipherSuiteTls13 {
+pub fn cipherSuiteTls13ById(id: CipherSuiteId) ?*const CipherSuiteTls13 {
     for (cipher_suites_tls13) |*suite| {
         if (suite.id == id) {
             return suite;

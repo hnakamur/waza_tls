@@ -5,6 +5,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const crypto = @import("crypto.zig");
 const ecdsa = @import("ecdsa.zig");
+const rsa = @import("rsa.zig");
 const memx = @import("../memx.zig");
 
 pub const server_signature_context = "TLS 1.3, server CertificateVerify\x00";
@@ -23,7 +24,14 @@ pub fn verifyHandshakeSignature(
     _ = sig_hash;
     switch (sig_type) {
         .pkcs1v15 => @panic("not implemented yet"),
-        .rsa_pss => @panic("not implemented yet"),
+        .rsa_pss => {
+            switch (public_key) {
+                .rsa => |*pub_key| {
+                    try rsa.verifyPkcs1v15(allocator, pub_key, sig_hash, signed, signature);
+                },
+                else => return error.ExpectedRsaPublicKey,
+            }
+        },
         .ecdsa => {
             switch (public_key) {
                 .ecdsa => |*pub_key| {
