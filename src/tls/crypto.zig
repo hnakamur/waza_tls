@@ -197,6 +197,14 @@ pub const PublicKey = union(PublicKeyAlgorithm) {
 };
 
 pub const SignOpts = struct {
+    // salt_length controls the length of the salt used in the PSS
+    // signature. It can either be a number of bytes, or one of the special
+    // PSSSaltLength constants.
+    salt_length: ?rsa.PssSaltLength = null,
+
+    // hash_type is the hash function used to generate the message digest. If not
+    // zero, it overrides the hash function passed to SignPss. It's required
+    // when using PrivateKey.Sign.
     hash_type: HashType = undefined,
 };
 

@@ -155,8 +155,8 @@ pub const EcdheKeyAgreement = struct {
         var sig_hash_type: HashType = undefined;
         const v1_2_or_later = @enumToInt(self.version) >= @enumToInt(ProtocolVersion.v1_2);
         if (v1_2_or_later) {
-            sig_type = try SignatureType.fromSinatureScheme(sig_alg);
-            sig_hash_type = try HashType.fromSinatureScheme(sig_alg);
+            sig_type = try SignatureType.fromSignatureScheme(sig_alg);
+            sig_hash_type = try HashType.fromSignatureScheme(sig_alg);
         } else {
             // TODO: implement
         }
@@ -176,7 +176,7 @@ pub const EcdheKeyAgreement = struct {
 
         const private_key = cert_chain.private_key.?;
         var sign_opts = SignOpts{ .hash_type = sig_hash_type };
-        var sig = try private_key.sign(allocator, signed, sign_opts);
+        var sig = try private_key.sign(allocator, std.crypto.random, signed, sign_opts);
         defer allocator.free(sig);
 
         const sig_and_hash_len: usize = if (v1_2_or_later) 2 else 0;

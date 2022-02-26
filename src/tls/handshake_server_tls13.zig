@@ -446,10 +446,10 @@ pub const ServerHandshakeStateTls13 = struct {
 
         {
             var cert_verify_msg = blk: {
-                const sig_type = try SignatureType.fromSinatureScheme(self.sig_alg.?);
+                const sig_type = try SignatureType.fromSignatureScheme(self.sig_alg.?);
                 _ = sig_type;
 
-                const sig_hash = try HashType.fromSinatureScheme(self.sig_alg.?);
+                const sig_hash = try HashType.fromSignatureScheme(self.sig_alg.?);
 
                 var signed = try signedMessage(
                     allocator,
@@ -470,6 +470,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 );
                 var sig = self.cert_chain.?.private_key.?.sign(
                     allocator,
+                    std.crypto.random,
                     signed,
                     sign_opts,
                 ) catch {

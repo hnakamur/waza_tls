@@ -23,11 +23,25 @@ pub fn verifyHandshakeSignature(
 ) !void {
     _ = sig_hash;
     switch (sig_type) {
-        .pkcs1v15 => @panic("not implemented yet"),
-        .rsa_pss => {
+        .pkcs1v15 => {
             switch (public_key) {
                 .rsa => |*pub_key| {
                     try rsa.verifyPkcs1v15(allocator, pub_key, sig_hash, signed, signature);
+                },
+                else => return error.ExpectedRsaPublicKey,
+            }
+        },
+        .rsa_pss => {
+            switch (public_key) {
+                .rsa => |*pub_key| {
+                    try rsa.verifyPss(
+                        allocator,
+                        pub_key,
+                        sig_hash,
+                        signed,
+                        signature,
+                        .equals_hash,
+                    );
                 },
                 else => return error.ExpectedRsaPublicKey,
             }
@@ -85,7 +99,7 @@ pub const SignatureType = enum(u8) {
     ed25519 = 228,
     _,
 
-    pub fn fromSinatureScheme(s: SignatureScheme) !SignatureType {
+    pub fn fromSignatureScheme(s: SignatureScheme) !SignatureType {
         return switch (s) {
             .pkcs1_with_sha256,
             .pkcs1_with_sha384,
@@ -114,7 +128,7 @@ pub const HashType = enum {
     direct_signing,
     sha1,
 
-    pub fn fromSinatureScheme(s: SignatureScheme) !HashType {
+    pub fn fromSignatureScheme(s: SignatureScheme) !HashType {
         return switch (s) {
             .pkcs1_with_sha256, .pss_with_sha256, .ecdsa_with_p256_and_sha256 => HashType.sha256,
             .pkcs1_with_sha384, .pss_with_sha384, .ecdsa_with_p384_and_sha384 => HashType.sha384,
@@ -131,16 +145,6 @@ pub const HashType = enum {
             .sha384 => std.crypto.hash.sha2.Sha384.digest_length,
             .sha512 => std.crypto.hash.sha2.Sha512.digest_length,
             .sha1 => std.crypto.hash.Sha1.digest_length,
-            else => @panic("Unsupported HashType"),
-        };
-    }
-
-    pub fn hmacType(hash_type: HashType) type {
-        return switch (hash_type) {
-            .sha256 => std.crypto.auth.hmac.sha2.HmacSha256,
-            .sha384 => std.crypto.auth.hmac.sha2.HmacSha384,
-            .sha512 => std.crypto.auth.hmac.sha2.HmacSha512,
-            .sha1 => std.crypto.auth.hmac.HmacSha1,
             else => @panic("Unsupported HashType"),
         };
     }

@@ -401,8 +401,8 @@ pub const ClientHandshakeStateTls13 = struct {
             return error.CertificateUsedWithInvalidSignatureAlgorithm;
         }
 
-        const sig_type = try SignatureType.fromSinatureScheme(cert_verify_msg.signature_algorithm);
-        const sig_hash = try HashType.fromSinatureScheme(cert_verify_msg.signature_algorithm);
+        const sig_type = try SignatureType.fromSignatureScheme(cert_verify_msg.signature_algorithm);
+        const sig_hash = try HashType.fromSignatureScheme(cert_verify_msg.signature_algorithm);
         if (sig_type == .pkcs1v15 or sig_hash == .sha1) {
             self.conn.sendAlert(.illegal_parameter) catch {};
             return error.CertificateUsedWithInvalidSignatureAlgorithm;
