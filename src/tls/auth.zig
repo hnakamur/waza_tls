@@ -148,6 +148,10 @@ pub const HashType = enum {
             else => @panic("Unsupported HashType"),
         };
     }
+
+    pub fn initDigestArray(hash_type: HashType) crypto.Hash.DigestArray {
+        return crypto.Hash.DigestArray.init(hash_type.digestLength()) catch unreachable;
+    }
 };
 
 // selectSignatureScheme picks a SignatureScheme from the peer's preference list

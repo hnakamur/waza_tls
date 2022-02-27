@@ -8,6 +8,9 @@ const parsePkcs1PrivateKey = @import("pkcs1.zig").parsePkcs1PrivateKey;
 const HashType = @import("auth.zig").HashType;
 
 pub const Hash = union(HashType) {
+    const max_digest_length = std.crypto.hash.sha2.Sha512.digest_length;
+    pub const DigestArray = std.BoundedArray(u8, max_digest_length);
+
     sha256: Sha256Hash,
     sha384: Sha384Hash,
     sha512: Sha512Hash,
@@ -44,22 +47,22 @@ pub const Hash = union(HashType) {
         };
     }
 
-    pub fn finalToSlice(self: *const Hash, out: []u8) usize {
-        return switch (self.*) {
+    pub fn finalToSlice(self: *const Hash, out: []u8) void {
+        switch (self.*) {
             .sha256 => |*s| s.finalToSlice(out),
             .sha384 => |*s| s.finalToSlice(out),
             .sha512 => |*s| s.finalToSlice(out),
             .sha1 => |*s| s.finalToSlice(out),
             else => @panic("Unsupported HashType"),
-        };
+        }
     }
 
     pub fn digestLength(self: *const Hash) usize {
         return switch (self.*) {
-            .sha256 => |s| s.digestLength(),
-            .sha384 => |s| s.digestLength(),
-            .sha512 => |s| s.digestLength(),
-            .sha1 => |s| s.digestLength(),
+            .sha256 => |s| s.digest_length,
+            .sha384 => |s| s.digest_length,
+            .sha512 => |s| s.digest_length,
+            .sha1 => |s| s.digest_length,
             else => @panic("Unsupported HashType"),
         };
     }
@@ -116,22 +119,15 @@ fn HashAdapter(comptime HashImpl: type) type {
             return d_out.len;
         }
 
-        pub fn finalToSlice(self: *const Self, out: []u8) usize {
+        pub fn finalToSlice(self: *const Self, out: []u8) void {
             const len = HashImpl.digest_length;
             var inner_hash_copy = self.inner_hash;
             inner_hash_copy.final(out[0..len]);
-            return len;
-        }
-
-        pub fn digestLength(self: *const Self) usize {
-            _ = self;
-            return digest_length;
         }
 
         pub fn allocFinal(self: *const Self, allocator: mem.Allocator) ![]const u8 {
             var sum = try allocator.alloc(u8, digest_length);
-            const sum_len = self.finalToSlice(sum);
-            assert(sum_len == digest_length);
+            self.finalToSlice(sum);
             return sum;
         }
     };
@@ -289,8 +285,7 @@ test "Hash.Sha256" {
     var h2 = Hash{ .sha256 = Sha256Hash.init(.{}) };
     h2.update("hello");
     var out2 = [_]u8{0} ** (digest_len + 4);
-    const bytes_written2 = h2.finalToSlice(&out2);
-    try testing.expectEqual(digest_len, bytes_written2);
+    h2.finalToSlice(&out2);
     std.log.debug("Sha256Hash hash={}\n", .{std.fmt.fmtSliceHexLower(&out2)});
 }
 
