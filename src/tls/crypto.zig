@@ -8,7 +8,7 @@ const parsePkcs1PrivateKey = @import("pkcs1.zig").parsePkcs1PrivateKey;
 const HashType = @import("auth.zig").HashType;
 
 pub const Hash = union(HashType) {
-    const max_digest_length = std.crypto.hash.sha2.Sha512.digest_length;
+    pub const max_digest_length = std.crypto.hash.sha2.Sha512.digest_length;
     pub const DigestArray = std.BoundedArray(u8, max_digest_length);
 
     sha256: Sha256Hash,
@@ -59,10 +59,10 @@ pub const Hash = union(HashType) {
 
     pub fn digestLength(self: *const Hash) usize {
         return switch (self.*) {
-            .sha256 => |s| s.digest_length,
-            .sha384 => |s| s.digest_length,
-            .sha512 => |s| s.digest_length,
-            .sha1 => |s| s.digest_length,
+            .sha256 => |s| @TypeOf(s).digest_length,
+            .sha384 => |s| @TypeOf(s).digest_length,
+            .sha512 => |s| @TypeOf(s).digest_length,
+            .sha1 => |s| @TypeOf(s).digest_length,
             else => @panic("Unsupported HashType"),
         };
     }
