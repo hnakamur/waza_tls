@@ -48,11 +48,13 @@ const LruSessionCache = struct {
     const Self = @This();
     pub const Entry = struct {
         session_key: []const u8,
-        state: *ClientSessionState,
+        state: ClientSessionState,
     };
     pub const Queue = std.TailQueue(Entry);
     pub const Node = Queue.Node;
-    pub const Map = std.StringHashMap(*Node);
+    // It is safe to use Node instead of *Node here
+    // because this Map is never expanded from the initial capacity.
+    pub const Map = std.StringHashMap(Node);
     pub const default_capacity = 64;
     map: Map,
     queue: Queue,
@@ -73,18 +75,18 @@ const LruSessionCache = struct {
     pub fn deinit(self: *Self) void {
         var it = self.map.valueIterator();
         while (it.next()) |value_ptr| {
-            self.removeHelper(value_ptr.*);
+            self.removeHelper(value_ptr);
         }
         self.map.deinit();
     }
 
     // LruSessionCache take ownership of cs.
     // cs must be created with the allocator which was passed to init.
-    pub fn put(self: *Self, session_key: []const u8, cs: *ClientSessionState) !void {
+    pub fn put(self: *Self, session_key: []const u8, cs: ClientSessionState) !void {
         var result = try self.map.getOrPut(session_key);
         if (result.found_existing) {
-            self.queue.remove(result.value_ptr.*);
-            self.removeHelper(result.value_ptr.*);
+            self.queue.remove(result.value_ptr);
+            self.removeHelper(result.value_ptr);
             try self.putHelper(result, session_key, cs);
             return;
         }
@@ -95,14 +97,14 @@ const LruSessionCache = struct {
         }
 
         var oldest_entry = self.queue.pop().?;
-        var oldest_node = self.map.get(oldest_entry.data.session_key).?;
+        var oldest_node_ptr = self.map.getPtr(oldest_entry.data.session_key).?;
+        self.removeHelper(oldest_node_ptr);
         _ = self.map.remove(oldest_entry.data.session_key);
-        self.removeHelper(oldest_node);
         try self.putHelper(result, session_key, cs);
     }
 
     pub fn remove(self: *Self, session_key: []const u8) void {
-        if (self.map.get(session_key)) |node_ptr| {
+        if (self.map.get(session_key)) |*node_ptr| {
             _ = self.map.remove(session_key);
             self.queue.remove(node_ptr);
             self.removeHelper(node_ptr);
@@ -110,8 +112,8 @@ const LruSessionCache = struct {
     }
 
     // LruSessionCache owns the memory for the returned value.
-    pub fn get(self: *Self, session_key: []const u8) ?*ClientSessionState {
-        if (self.map.get(session_key)) |node_ptr| {
+    pub fn get(self: *Self, session_key: []const u8) ?ClientSessionState {
+        if (self.map.get(session_key)) |*node_ptr| {
             self.queue.remove(node_ptr);
             self.queue.prepend(node_ptr);
             return node_ptr.data.state;
@@ -124,24 +126,20 @@ const LruSessionCache = struct {
         self: *Self,
         result: Map.GetOrPutResult,
         session_key: []const u8,
-        cs: *ClientSessionState,
+        cs: ClientSessionState,
     ) !void {
-        var node = try self.map.allocator.create(Node);
-        node.* = .{
+        result.value_ptr.* = .{
             .data = Entry{
                 .session_key = session_key,
                 .state = cs,
             },
         };
-        result.value_ptr.* = node;
-        self.queue.prepend(node);
+        self.queue.prepend(result.value_ptr);
     }
 
     fn removeHelper(self: *Self, node: *Node) void {
         const allocator = self.map.allocator;
         node.data.state.deinit(allocator);
-        allocator.destroy(node.data.state);
-        allocator.destroy(node);
     }
 };
 
@@ -168,43 +166,34 @@ test "LruSessionCache" {
     {
         var ticket1 = try allocator.dupe(u8, "ticket1");
         errdefer allocator.free(ticket1);
-        var state = try allocator.create(ClientSessionState);
-        errdefer state.deinit(allocator);
-        state.* = .{
+        try cache.put("key1", .{
             .session_ticket = ticket1,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        };
-        try cache.put("key1", state);
+        });
     }
 
     {
         var ticket2 = try allocator.dupe(u8, "ticket2");
         errdefer allocator.free(ticket2);
-        var state = try allocator.create(ClientSessionState);
-        errdefer state.deinit(allocator);
-        state.* = .{
+        try cache.put("key1", .{
             .session_ticket = ticket2,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        };
-        try cache.put("key1", state);
+        });
     }
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        var state = try allocator.create(ClientSessionState);
-        errdefer state.deinit(allocator);
-        state.* = .{
+        try cache.put("key2", .{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        };
-        try cache.put("key2", state);
+        });
     }
 
     var cs = cache.get("key2");
@@ -214,43 +203,34 @@ test "LruSessionCache" {
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        var state = try allocator.create(ClientSessionState);
-        errdefer state.deinit(allocator);
-        state.* = .{
+        try cache.put("key2", .{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        };
-        try cache.put("key2", state);
+        });
     }
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        var state = try allocator.create(ClientSessionState);
-        errdefer state.deinit(allocator);
-        state.* = .{
+        try cache.put("key3", .{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        };
-        try cache.put("key3", state);
+        });
     }
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        var state = try allocator.create(ClientSessionState);
-        errdefer state.deinit(allocator);
-        state.* = .{
+        try cache.put("key4", .{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        };
-        try cache.put("key4", state);
+        });
     }
 
     cs = cache.get("key2");
