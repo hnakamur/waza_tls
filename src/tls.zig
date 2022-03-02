@@ -46,6 +46,7 @@ const random_for_test = @import("tls/random_for_test.zig");
 const aes = @import("tls/aes.zig");
 const ctr = @import("tls/ctr.zig");
 const hkdf = @import("tls/hkdf.zig");
+const session = @import("tls/session.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
