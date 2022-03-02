@@ -78,6 +78,8 @@ const LruSessionCache = struct {
         self.map.deinit();
     }
 
+    // LruSessionCache take ownership of cs.
+    // cs must be created with the allocator which was passed to init.
     pub fn put(self: *Self, session_key: []const u8, cs: *ClientSessionState) !void {
         var result = try self.map.getOrPut(session_key);
         if (result.found_existing) {
@@ -107,6 +109,7 @@ const LruSessionCache = struct {
         }
     }
 
+    // LruSessionCache owns the memory for the returned value.
     pub fn get(self: *Self, session_key: []const u8) ?*ClientSessionState {
         if (self.map.get(session_key)) |node_ptr| {
             self.queue.remove(node_ptr);
