@@ -46,11 +46,7 @@ pub const ClientSessionState = struct {
 
 const LruSessionCache = struct {
     const Self = @This();
-    pub const Entry = struct {
-        session_key: []const u8,
-        state: ClientSessionState,
-    };
-    pub const Queue = std.TailQueue(Entry);
+    pub const Queue = std.TailQueue(ClientSessionState);
     pub const Node = Queue.Node;
     // It is safe to use Node instead of *Node here
     // because this Map is never expanded from the initial capacity.
@@ -87,20 +83,21 @@ const LruSessionCache = struct {
         if (result.found_existing) {
             self.queue.remove(result.value_ptr);
             self.removeHelper(result.value_ptr);
-            try self.putHelper(result, session_key, cs);
+            try self.putHelper(result, cs);
             return;
         }
 
         if (self.queue.len < self.capacity) {
-            try self.putHelper(result, session_key, cs);
+            try self.putHelper(result, cs);
             return;
         }
 
-        var oldest_entry = self.queue.pop().?;
-        var oldest_node_ptr = self.map.getPtr(oldest_entry.data.session_key).?;
-        self.removeHelper(oldest_node_ptr);
-        _ = self.map.remove(oldest_entry.data.session_key);
-        try self.putHelper(result, session_key, cs);
+        const oldest_value_ptr = self.queue.pop().?;
+        const map_index = self.getMapIndexFromValuePtr(oldest_value_ptr);
+        const oldest_key = self.getMapKeys()[map_index];
+        self.removeHelper(oldest_value_ptr);
+        _ = self.map.remove(oldest_key);
+        try self.putHelper(result, cs);
     }
 
     pub fn remove(self: *Self, session_key: []const u8) void {
@@ -116,7 +113,7 @@ const LruSessionCache = struct {
         if (self.map.get(session_key)) |*node_ptr| {
             self.queue.remove(node_ptr);
             self.queue.prepend(node_ptr);
-            return node_ptr.data.state;
+            return node_ptr.data;
         } else {
             return null;
         }
@@ -125,21 +122,39 @@ const LruSessionCache = struct {
     fn putHelper(
         self: *Self,
         result: Map.GetOrPutResult,
-        session_key: []const u8,
         cs: ClientSessionState,
     ) !void {
         result.value_ptr.* = .{
-            .data = Entry{
-                .session_key = session_key,
-                .state = cs,
-            },
+            .data = cs,
         };
         self.queue.prepend(result.value_ptr);
     }
 
     fn removeHelper(self: *Self, node: *Node) void {
         const allocator = self.map.allocator;
-        node.data.state.deinit(allocator);
+        node.data.deinit(allocator);
+    }
+
+    const MapHeader = packed struct {
+        values: [*]Node,
+        keys: [*][]const u8,
+        capacity: Map.Size,
+    };
+
+    fn getMapHeader(self: *const Self) *MapHeader {
+        return @ptrCast(*MapHeader, @ptrCast([*]MapHeader, self.map.unmanaged.metadata.?) - 1);
+    }
+
+    fn getMapKeys(self: *const Self) [*][]const u8 {
+        return self.getMapHeader().keys;
+    }
+
+    fn getMapValues(self: *const Self) [*]Node {
+        return self.getMapHeader().values;
+    }
+
+    fn getMapIndexFromValuePtr(self: *const Self, value_ptr: *const Node) usize {
+        return (@ptrToInt(value_ptr) - @ptrToInt(self.getMapValues())) / @sizeOf(Node);
     }
 };
 
