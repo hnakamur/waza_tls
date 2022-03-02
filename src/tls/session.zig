@@ -46,17 +46,19 @@ pub const ClientSessionState = struct {
 
 const LruSessionCache = struct {
     const Self = @This();
-    pub const Queue = std.TailQueue(ClientSessionState);
-    pub const Node = Queue.Node;
+    const Queue = std.TailQueue(ClientSessionState);
+    const Node = Queue.Node;
     // It is safe to use Node instead of *Node here
     // because this Map is never expanded from the initial capacity.
-    pub const Map = std.StringHashMap(Node);
+    const Map = std.StringHashMap(Node);
+    pub const Size = Map.Size;
     pub const default_capacity = 64;
+
     map: Map,
     queue: Queue,
-    capacity: Map.Size,
+    capacity: Size,
 
-    pub fn init(allocator: mem.Allocator, capacity: ?Map.Size) !Self {
+    pub fn init(allocator: mem.Allocator, capacity: ?Size) !Self {
         const cap = capacity orelse default_capacity;
         var cache = Self{
             .map = Map.init(allocator),
@@ -138,7 +140,7 @@ const LruSessionCache = struct {
     const MapHeader = packed struct {
         values: [*]Node,
         keys: [*][]const u8,
-        capacity: Map.Size,
+        capacity: Size,
     };
 
     fn getMapHeader(self: *const Self) *MapHeader {
