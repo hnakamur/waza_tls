@@ -691,7 +691,7 @@ pub const Conn = struct {
         const client_hello = switch (hs_msg) {
             .ClientHello => |msg| msg,
             else => {
-                // TODO: send alert
+                self.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         };
