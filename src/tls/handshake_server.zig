@@ -442,7 +442,7 @@ pub const ServerHandshakeStateTls12 = struct {
         var client_finished_msg = switch (hs_msg) {
             .Finished => |m| m,
             else => {
-                // TODO: send alert
+                self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         };
@@ -455,7 +455,7 @@ pub const ServerHandshakeStateTls12 = struct {
         );
 
         if (constantTimeEqlBytes(&verify_data, client_finished_msg.verify_data) != 1) {
-            // TODO: send alert
+            self.conn.sendAlert(.handshake_failure) catch {};
             return error.IncorrectClientFinishedMessage;
         }
 
