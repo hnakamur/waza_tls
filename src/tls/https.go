@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -14,17 +15,17 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
+	if len(os.Args) < 2 {
 		usage()
 	}
 
 	switch os.Args[1] {
 	case "server":
-		if err := runServer(); err != nil {
+		if err := runServer(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
 	case "client":
-		if err := runClient(); err != nil {
+		if err := runClient(os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
 	default:
@@ -38,40 +39,50 @@ func HelloServer(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte("This is an example server.\n"))
 }
 
-const port = 8443
+const defaultPort = 8443
+const defaultHost = "my-server.example.test"
+const defaultCertFilename = "../../tests/rsa2048.crt.pem"
+const defaultKeyFilename = "../../tests/rsa2048.key.pem"
+const defaultSkipVerifyCert = true
 
-// const host = "naruh.dev"
-// const certFilename = "naruh.dev.crt"
-// const keyFilename = "naruh.dev.key"
-// const skipVerifyCert = false
+func runServer(args []string) error {
+	var fs = flag.NewFlagSet("server", flag.ExitOnError)
+	certFilename := fs.String("cert", defaultCertFilename, "certificate filename")
+	keyFilename := fs.String("key", defaultKeyFilename, "key filename")
+	port := fs.Int("port", defaultPort, "port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
-const host = "my-server.example.test"
-const certFilename = "../../tests/rsa2048.crt.pem"
-const keyFilename = "../../tests/rsa2048.key.pem"
-const skipVerifyCert = true
-
-func runServer() error {
 	http.HandleFunc("/", HelloServer)
-	return http.ListenAndServeTLS(":"+strconv.Itoa(port), certFilename, keyFilename, nil)
+	return http.ListenAndServeTLS(":"+strconv.Itoa(*port), *certFilename, *keyFilename, nil)
 }
 
-func runClient() error {
+func runClient(args []string) error {
+	var fs = flag.NewFlagSet("client", flag.ExitOnError)
+	host := fs.String("host", defaultHost, "host")
+	port := fs.Int("port", defaultPort, "port")
+	skipVerifyCert := fs.Bool("skip-verify-cert", defaultSkipVerifyCert, "skip verify certificate")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{
 		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: skipVerifyCert,
+		InsecureSkipVerify: *skipVerifyCert,
 	}
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		var d net.Dialer
-		return d.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		return d.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(*port)))
 	}
 	c := http.Client{Transport: tr}
-	u := url.URL{Scheme: "https", Host: net.JoinHostPort(host, strconv.Itoa(port))}
+	u := url.URL{Scheme: "https", Host: net.JoinHostPort(*host, strconv.Itoa(*port))}
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return err
 	}
-	req.Host = host
+	req.Host = *host
 	resp, err := c.Do(req)
 	if err != nil {
 		return err
