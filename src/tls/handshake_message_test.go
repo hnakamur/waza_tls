@@ -462,3 +462,104 @@ func TestCertificateVerifyMsg(t *testing.T) {
 		t.Errorf("unmarshal result mismatch, got=%+v, want=%+v", got, want)
 	}
 }
+
+type certificateRequestMsgTLS13 struct {
+	raw                              []byte
+	ocspStapling                     bool
+	scts                             bool
+	supportedSignatureAlgorithms     []SignatureScheme
+	supportedSignatureAlgorithmsCert []SignatureScheme
+	certificateAuthorities           [][]byte
+}
+
+func (m *certificateRequestMsgTLS13) marshal() []byte {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	var b cryptobyte.Builder
+	b.AddUint8(typeCertificateRequest)
+	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+		// certificate_request_context (SHALL be zero length unless used for
+		// post-handshake authentication)
+		b.AddUint8(0)
+
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			if m.ocspStapling {
+				b.AddUint16(extensionStatusRequest)
+				b.AddUint16(0) // empty extension_data
+			}
+			if m.scts {
+				// RFC 8446, Section 4.4.2.1 makes no mention of
+				// signed_certificate_timestamp in CertificateRequest, but
+				// "Extensions in the Certificate message from the client MUST
+				// correspond to extensions in the CertificateRequest message
+				// from the server." and it appears in the table in Section 4.2.
+				b.AddUint16(extensionSCT)
+				b.AddUint16(0) // empty extension_data
+			}
+			if len(m.supportedSignatureAlgorithms) > 0 {
+				b.AddUint16(extensionSignatureAlgorithms)
+				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+						for _, sigAlgo := range m.supportedSignatureAlgorithms {
+							b.AddUint16(uint16(sigAlgo))
+						}
+					})
+				})
+			}
+			if len(m.supportedSignatureAlgorithmsCert) > 0 {
+				b.AddUint16(extensionSignatureAlgorithmsCert)
+				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+						for _, sigAlgo := range m.supportedSignatureAlgorithmsCert {
+							b.AddUint16(uint16(sigAlgo))
+						}
+					})
+				})
+			}
+			if len(m.certificateAuthorities) > 0 {
+				b.AddUint16(extensionCertificateAuthorities)
+				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+						for _, ca := range m.certificateAuthorities {
+							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+								b.AddBytes(ca)
+							})
+						}
+					})
+				})
+			}
+		})
+	})
+
+	m.raw = b.BytesOrPanic()
+	return m.raw
+}
+
+func TestCertificateRequestMsgTLS13(t *testing.T) {
+	msg := certificateRequestMsgTLS13{
+		ocspStapling: true,
+		scts:         true,
+		supportedSignatureAlgorithms: []SignatureScheme{
+			PSSWithSHA256,
+			ECDSAWithP256AndSHA256,
+			Ed25519,
+		},
+		supportedSignatureAlgorithmsCert: []SignatureScheme{
+			PSSWithSHA256,
+			ECDSAWithP256AndSHA256,
+			Ed25519,
+		},
+		certificateAuthorities: [][]byte{
+			[]byte("authority1"),
+			[]byte("authority2"),
+		},
+	}
+	marshaled := msg.marshal()
+	// log.Printf("marshaled=%x", marshaled)
+	want := []byte("\x0d\x00\x00\x41\x00\x00\x3e\x00\x05\x00\x00\x00\x12\x00\x00\x00\x0d\x00\x08\x00\x06\x08\x04\x04\x03\x08\x07\x00\x32\x00\x08\x00\x06\x08\x04\x04\x03\x08\x07\x00\x2f\x00\x1a\x00\x18\x00\x0a\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x31\x00\x0a\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x32")
+	if got := marshaled; !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
+}

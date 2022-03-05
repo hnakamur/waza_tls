@@ -29,7 +29,7 @@ pub const CipherSuiteId = enum(u16) {
     tls_chacha20_poly1305_sha256 = 0x1303,
 
     // TLS 1.0 - 1.2 cipher suites.
-    tls_ecdhe_ecdsa_with_aes_128_gcm_sha256  = 0xc02b,
+    tls_ecdhe_ecdsa_with_aes_128_gcm_sha256 = 0xc02b,
     tls_ecdhe_ecdsa_with_aes_256_gcm_sha384 = 0xc02c,
     tls_ecdhe_rsa_with_aes_128_gcm_sha256 = 0xc02f,
     tls_ecdhe_rsa_with_aes_256_gcm_sha384 = 0xc030,
@@ -156,7 +156,6 @@ pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 const HelloRequestMsg = void;
 const NewSessionTicketMsg = void;
 const EndOfEarlyDataMsg = void;
-const CertificateRequestMsg = void;
 const CertificateStatusMsg = void;
 const KeyUpdateMsg = void;
 const NextProtocolMsg = void;
@@ -920,6 +919,517 @@ pub const CertificateMsgTls12 = struct {
     }
 };
 
+// TLS CertificateStatusType (RFC 3546)
+const status_type_ocsp: u8 = 1;
+
+pub const CertificateMsgTls13 = struct {
+    raw: ?[]const u8 = null,
+    cert_chain: CertificateChain,
+    ocsp_stapling: bool = false,
+    scts: bool = false,
+
+    pub fn deinit(self: *CertificateMsgTls13, allocator: mem.Allocator) void {
+        self.cert_chain.deinit(allocator);
+        if (self.raw) |raw| allocator.free(raw);
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsgTls13 {
+        var bv: BytesView = undefined;
+        const raw = try allocator.dupe(u8, msg_data);
+        errdefer allocator.free(raw);
+        bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const context = try bv.readByte();
+        if (context != 0) {
+            return error.InvalidCertificateMsgTls12;
+        }
+        var certificates_len = try bv.readIntBig(u24);
+        try bv.ensureRestLen(certificates_len);
+        const certificates_end_pos = bv.pos + certificates_len;
+        var certificates = std.ArrayListUnmanaged([]const u8){};
+        errdefer {
+            for (certificates.items) |cert| allocator.free(cert);
+            certificates.deinit(allocator);
+        }
+        var ocsp_staple: []const u8 = "";
+        errdefer if (ocsp_staple.len > 0) allocator.free(ocsp_staple);
+        var scts = std.ArrayListUnmanaged([]const u8){};
+        errdefer {
+            for (scts.items) |sct| allocator.free(sct);
+            scts.deinit(allocator);
+        }
+        while (bv.pos < certificates_end_pos) {
+            try certificates.append(allocator, try allocator.dupe(u8, try readString(u24, &bv)));
+            const extensions_len = try bv.readIntBig(u16);
+            const extensions_end_pos = bv.pos + extensions_len;
+            while (bv.pos < extensions_end_pos) {
+                const ext_type = try readEnum(ExtensionType, &bv);
+                const ext_len = try bv.readIntBig(u16);
+                switch (ext_type) {
+                    .StatusRequest => {
+                        const status_type = try bv.readByte();
+                        if (status_type != status_type_ocsp) {
+                            return error.InvalidCertificateMsgTls12;
+                        }
+                        ocsp_staple = try allocator.dupe(u8, try readString(u24, &bv));
+                    },
+                    .Sct => {
+                        const scts_len = try bv.readIntBig(u16);
+                        const scts_end_pos = bv.pos + scts_len;
+                        while (bv.pos < scts_end_pos) {
+                            try scts.append(
+                                allocator,
+                                try allocator.dupe(u8, try readString(u16, &bv)),
+                            );
+                        }
+                    },
+                    else => bv.skip(ext_len),
+                }
+            }
+        }
+
+        const cert_chain = CertificateChain{
+            .certificate_chain = certificates.toOwnedSlice(allocator),
+            .ocsp_staple = ocsp_staple,
+            .signed_certificate_timestamps = scts.toOwnedSlice(allocator),
+        };
+
+        return CertificateMsgTls13{
+            .cert_chain = cert_chain,
+            .ocsp_stapling = ocsp_staple.len > 0,
+            .scts = scts.items.len > 0,
+            .raw = raw,
+        };
+    }
+
+    pub fn marshal(self: *CertificateMsgTls13, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        var msg_len: usize = u8_size + u24_size + u8_size + u24_size;
+        var ocsp_stapling_marshaled_len: usize = 0;
+        var scts_marshaled_len: usize = 0;
+        for (self.cert_chain.certificate_chain) |cert, i| {
+            msg_len += u24_size + cert.len + u16_size;
+            if (i == 0) {
+                if (self.cert_chain.ocsp_staple.len > 0) {
+                    ocsp_stapling_marshaled_len = u16_size * 2 + u8_size + u24_size +
+                        self.cert_chain.ocsp_staple.len;
+                    msg_len += ocsp_stapling_marshaled_len;
+                }
+                if (self.cert_chain.signed_certificate_timestamps) |scts| {
+                    scts_marshaled_len = u16_size * 3;
+                    for (scts) |sct| {
+                        scts_marshaled_len += u16_size + sct.len;
+                    }
+                    msg_len += scts_marshaled_len;
+                }
+            }
+        }
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var rest_len = msg_len;
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.Certificate, writer);
+        rest_len -= u8_size + u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u8, 0, writer); // certificate_request_context
+        rest_len -= u8_size + u24_size;
+
+        try writeInt(u24, rest_len, writer);
+        for (self.cert_chain.certificate_chain) |cert, i| {
+            try writeInt(u24, cert.len, writer);
+            try writeBytes(cert, writer);
+            const ext_len = if (i == 0) ocsp_stapling_marshaled_len + scts_marshaled_len else 0;
+            try writeInt(u16, ext_len, writer);
+            // This library only supports OCSP and SCT for leaf certificates.
+            if (i == 0) {
+                if (self.ocsp_stapling) {
+                    try writeInt(u16, ExtensionType.StatusRequest, writer);
+                    try writeInt(u16, u8_size + u24_size + self.cert_chain.ocsp_staple.len, writer);
+                    try writeInt(u8, status_type_ocsp, writer);
+                    try writeInt(u24, self.cert_chain.ocsp_staple.len, writer);
+                    try writeBytes(self.cert_chain.ocsp_staple, writer);
+                }
+                if (self.scts) {
+                    if (self.cert_chain.signed_certificate_timestamps) |scts| {
+                        try writeInt(u16, ExtensionType.Sct, writer);
+                        rest_len = scts_marshaled_len - u16_size * 2;
+                        try writeInt(u16, rest_len, writer);
+                        rest_len -= u16_size;
+                        try writeInt(u16, rest_len, writer);
+                        for (scts) |sct| {
+                            try writeInt(u16, sct.len, writer);
+                            try writeBytes(sct, writer);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
+pub const CertificateRequestMsg = union(ProtocolVersion) {
+    v1_3: CertificateRequestMsgTls13,
+    v1_2: CertificateRequestMsgTls12,
+    v1_1: void,
+    v1_0: void,
+
+    pub fn deinit(self: *CertificateRequestMsg, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .v1_3 => |*m| m.deinit(allocator),
+            .v1_2 => |*m| m.deinit(allocator),
+            else => {},
+        }
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+        ver: ProtocolVersion,
+    ) !CertificateRequestMsg {
+        return switch (ver) {
+            .v1_3 => CertificateRequestMsg{
+                .v1_3 = try CertificateRequestMsgTls13.unmarshal(allocator, msg_data),
+            },
+            .v1_2 => CertificateRequestMsg{
+                .v1_2 = try CertificateRequestMsgTls12.unmarshal(allocator, msg_data),
+            },
+            else => @panic("unsupported TLS version"),
+        };
+    }
+
+    pub fn marshal(self: *CertificateRequestMsg, allocator: mem.Allocator) ![]const u8 {
+        return switch (self.*) {
+            .v1_3 => |*m| try m.marshal(allocator),
+            .v1_2 => |*m| try m.marshal(allocator),
+            else => {},
+        };
+    }
+};
+
+pub const CertificateRequestMsgTls12 = struct {
+    raw: ?[]const u8 = null,
+    has_signature_algorithm: bool,
+    certificate_types: []const u8 = "",
+    supported_signature_algorithms: []SignatureScheme = &.{},
+    certificate_authorities: []const []const u8 = &.{},
+
+    pub fn deinit(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) void {
+        if (self.raw) |raw| allocator.free(raw);
+        @panic("not implemented yet");
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateRequestMsgTls12 {
+        _ = allocator;
+        _ = msg_data;
+        @panic("not implemented yet");
+    }
+
+    pub fn marshal(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+        _ = allocator;
+        @panic("not implemented yet");
+    }
+};
+
+pub const CertificateRequestMsgTls13 = struct {
+    raw: ?[]const u8 = null,
+    ocsp_stapling: bool = false,
+    scts: bool = false,
+    supported_signature_algorithms: []SignatureScheme = &.{},
+    supported_signature_algorithms_cert: []SignatureScheme = &.{},
+    certificate_authorities: []const []const u8 = &.{},
+
+    pub fn deinit(self: *CertificateRequestMsgTls13, allocator: mem.Allocator) void {
+        if (self.raw) |raw| allocator.free(raw);
+        if (self.supported_signature_algorithms.len > 0) {
+            allocator.free(self.supported_signature_algorithms);
+        }
+        if (self.supported_signature_algorithms_cert.len > 0) {
+            allocator.free(self.supported_signature_algorithms_cert);
+        }
+        if (self.certificate_authorities.len > 0) {
+            for (self.certificate_authorities) |auth| allocator.free(auth);
+            allocator.free(self.certificate_authorities);
+        }
+    }
+
+    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateRequestMsgTls13 {
+        var extensions: BytesView = undefined;
+        var msg: CertificateRequestMsgTls13 = blk: {
+            const raw = try allocator.dupe(u8, msg_data);
+            errdefer allocator.free(raw);
+            var bv = BytesView.init(raw);
+            bv.skip(handshake_msg_header_len);
+
+            const context_len = try bv.readByte();
+            if (context_len != 0) {
+                return error.InvalidCertificateRequestMsgTls13;
+            }
+
+            extensions = BytesView.init(try bv.readLenPrefixedBytes(u16, .Big));
+            if (!bv.empty()) {
+                return error.InvalidCertificateRequestMsgTls13;
+            }
+
+            break :blk CertificateRequestMsgTls13{
+                .raw = raw,
+            };
+        };
+        errdefer msg.deinit(allocator);
+
+        while (!extensions.empty()) {
+            const ext_type = try extensions.readEnum(ExtensionType, .Big);
+            var ext_data = BytesView.init(try extensions.readLenPrefixedBytes(u16, .Big));
+            switch (ext_type) {
+                .StatusRequest => msg.ocsp_stapling = true,
+                .Sct => msg.scts = true,
+                .SignatureAlgorithms => {
+                    var sig_and_algs = BytesView.init(try ext_data.readLenPrefixedBytes(u16, .Big));
+                    if (sig_and_algs.empty()) {
+                        return error.InvalidCertificateRequestMsgTls13;
+                    }
+                    const count = sig_and_algs.restLen() / enumTypeLen(SignatureScheme);
+                    msg.supported_signature_algorithms = try allocator.alloc(
+                        SignatureScheme,
+                        count,
+                    );
+                    var i: usize = 0;
+                    while (!sig_and_algs.empty()) : (i += 1) {
+                        msg.supported_signature_algorithms[i] =
+                            try sig_and_algs.readEnum(SignatureScheme, .Big);
+                    }
+                },
+                .SignatureAlgorithmsCert => {
+                    var sig_and_algs = BytesView.init(try ext_data.readLenPrefixedBytes(u16, .Big));
+                    if (sig_and_algs.empty()) {
+                        return error.InvalidCertificateRequestMsgTls13;
+                    }
+                    const count = sig_and_algs.restLen() / enumTypeLen(SignatureScheme);
+                    msg.supported_signature_algorithms_cert = try allocator.alloc(
+                        SignatureScheme,
+                        count,
+                    );
+                    var i: usize = 0;
+                    while (!sig_and_algs.empty()) : (i += 1) {
+                        msg.supported_signature_algorithms_cert[i] =
+                            try sig_and_algs.readEnum(SignatureScheme, .Big);
+                    }
+                },
+                .CertificateAuthorities => {
+                    var auths = BytesView.init(try ext_data.readLenPrefixedBytes(u16, .Big));
+                    if (auths.empty()) {
+                        return error.InvalidCertificateRequestMsgTls13;
+                    }
+
+                    var count: usize = 0;
+                    var auths_count = auths;
+                    while (!auths_count.empty()) : (count += 1) {
+                        const ca = try auths_count.readLenPrefixedBytes(u16, .Big);
+                        if (ca.len == 0) {
+                            return error.InvalidCertificateRequestMsgTls13;
+                        }
+                    }
+
+                    var i: usize = 0;
+                    var authorities = try allocator.alloc([]const u8, count);
+                    errdefer {
+                        var j: usize = 0;
+                        while (j < i) : (j += 1) {
+                            allocator.free(authorities[j]);
+                        }
+                        allocator.free(authorities);
+                    }
+                    while (!auths.empty()) : (i += 1) {
+                        const ca = try auths.readLenPrefixedBytes(u16, .Big);
+                        authorities[i] = try allocator.dupe(u8, ca);
+                    }
+                    msg.certificate_authorities = authorities;
+                },
+                else => {
+                    // Ignore unknown extensions.
+                    continue;
+                },
+            }
+
+            if (!ext_data.empty()) {
+                return error.InvalidCertificateRequestMsgTls13;
+            }
+        }
+
+        return msg;
+    }
+
+    pub fn marshal(self: *CertificateRequestMsgTls13, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        var msg_len: usize = u8_size + u24_size + u8_size + u16_size;
+        if (self.ocsp_stapling) {
+            msg_len += u16_size * 2;
+        }
+        if (self.scts) {
+            msg_len += u16_size * 2;
+        }
+        if (self.supported_signature_algorithms.len > 0) {
+            msg_len += u16_size * 2 + u16_size + u16_size * self.supported_signature_algorithms.len;
+        }
+        if (self.supported_signature_algorithms_cert.len > 0) {
+            msg_len += u16_size * 2 + u16_size + u16_size * self.supported_signature_algorithms_cert.len;
+        }
+        var authorities_len: usize = 0;
+        if (self.certificate_authorities.len > 0) {
+            authorities_len += u16_size * 3;
+            for (self.certificate_authorities) |auth| {
+                authorities_len += u16_size + auth.len;
+            }
+            msg_len += authorities_len;
+        }
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var rest_len = msg_len;
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.CertificateRequest, writer);
+        rest_len -= u8_size + u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u8, 0, writer); // context_len
+        rest_len -= u8_size + u16_size;
+        try writeInt(u16, rest_len, writer); // extensions_len
+        if (self.ocsp_stapling) {
+            try writeInt(u16, ExtensionType.StatusRequest, writer);
+            try writeInt(u16, 0, writer);
+        }
+        if (self.scts) {
+            try writeInt(u16, ExtensionType.Sct, writer);
+            try writeInt(u16, 0, writer);
+        }
+        if (self.supported_signature_algorithms.len > 0) {
+            try writeInt(u16, ExtensionType.SignatureAlgorithms, writer);
+            try writeInt(u16, u16_size + u16_size * self.supported_signature_algorithms.len, writer);
+            try writeInt(u16, u16_size * self.supported_signature_algorithms.len, writer);
+            for (self.supported_signature_algorithms) |alg| {
+                try writeInt(u16, alg, writer);
+            }
+        }
+        if (self.supported_signature_algorithms_cert.len > 0) {
+            try writeInt(u16, ExtensionType.SignatureAlgorithmsCert, writer);
+            try writeInt(u16, u16_size + u16_size * self.supported_signature_algorithms_cert.len, writer);
+            try writeInt(u16, u16_size * self.supported_signature_algorithms_cert.len, writer);
+            for (self.supported_signature_algorithms_cert) |alg| {
+                try writeInt(u16, alg, writer);
+            }
+        }
+        if (self.certificate_authorities.len > 0) {
+            try writeInt(u16, ExtensionType.CertificateAuthorities, writer);
+            authorities_len -= u16_size * 2;
+            try writeInt(u16, authorities_len, writer);
+            try writeInt(u16, authorities_len - u16_size, writer);
+            for (self.certificate_authorities) |auth| {
+                try writeInt(u16, auth.len, writer);
+                try writeBytes(auth, writer);
+            }
+        }
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
+test "CertificateRequestMsgTls13" {
+    const allocator = testing.allocator;
+
+    const msg_data = "\x0d" ++ // index: 0
+        "\x00\x00\x41" ++ // index: 1
+        "\x00" ++ // index: 4
+        "\x00\x3e" ++ // index: 5, extensions_len
+        "\x00\x05" ++ // index: 7, ExtensionType.StatusRequest
+        "\x00\x00" ++ // index: 9
+        "\x00\x12" ++ // index: 11, ExtensionType.Sct
+        "\x00\x00" ++ // index: 13
+        "\x00\x0d" ++ // index: 15, ExtensionType.SignatureAlgorithms
+        "\x00\x08" ++ // index: 17
+        "\x00\x06" ++ // index: 19
+        "\x08\x04" ++ // index: 21
+        "\x04\x03" ++ // index: 23
+        "\x08\x07" ++ // index: 25
+        "\x00\x32" ++ // index: 27, ExtensionType.SignatureAlgorithmsCert
+        "\x00\x08" ++ // index: 29
+        "\x00\x06" ++ // index: 31
+        "\x08\x04" ++ // index: 33
+        "\x04\x03" ++ // index: 35
+        "\x08\x07" ++ // index: 37
+        "\x00\x2f" ++ // index: 39, ExtensionType: CertificateAuthorities
+        "\x00\x1a" ++ // index: 41
+        "\x00\x18" ++ // index: 43
+        "\x00\x0a" ++ // index: 45
+        "\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x31" ++ // index: 47
+        "\x00\x0a" ++ // index: 57
+        "\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x32"; // index: 59
+    var msg = try CertificateRequestMsgTls13.unmarshal(allocator, msg_data);
+    defer msg.deinit(allocator);
+
+    try testing.expect(msg.ocsp_stapling);
+    try testing.expect(msg.scts);
+    const want_supported_signature_algorithms = &[_]SignatureScheme{
+        .pss_with_sha256,
+        .ecdsa_with_p256_and_sha256,
+        .ed25519,
+    };
+    try testing.expectEqual(
+        want_supported_signature_algorithms.len,
+        msg.supported_signature_algorithms.len,
+    );
+    for (msg.supported_signature_algorithms) |alg, i| {
+        try testing.expectEqual(want_supported_signature_algorithms[i], alg);
+    }
+
+    const want_supported_signature_algorithms_cert = &[_]SignatureScheme{
+        .pss_with_sha256,
+        .ecdsa_with_p256_and_sha256,
+        .ed25519,
+    };
+    try testing.expectEqual(
+        want_supported_signature_algorithms_cert.len,
+        msg.supported_signature_algorithms_cert.len,
+    );
+    for (msg.supported_signature_algorithms_cert) |alg, i| {
+        try testing.expectEqual(want_supported_signature_algorithms_cert[i], alg);
+    }
+
+    const want_certificate_authorities = &[_][]const u8{
+        "authority1",
+        "authority2",
+    };
+    try testing.expectEqual(
+        want_certificate_authorities.len,
+        msg.certificate_authorities.len,
+    );
+    for (msg.certificate_authorities) |auth, i| {
+        try testing.expectEqualSlices(u8, want_certificate_authorities[i], auth);
+    }
+
+    allocator.free(msg.raw.?);
+    msg.raw = null;
+
+    const msg_data2 = try msg.marshal(allocator);
+    try testing.expectEqualSlices(u8, msg_data, msg_data2);
+}
+
 pub const ServerKeyExchangeMsg = struct {
     raw: ?[]const u8 = null,
     key: []const u8,
@@ -1496,7 +2006,7 @@ fn writeLenAndIntSlice(
 }
 
 fn intTypeLen(comptime IntType: type) usize {
-    return @divExact(@typeInfo(IntType).Int.bits, 8);
+    return @divExact(@typeInfo(IntType).Int.bits, @bitSizeOf(u8));
 }
 
 fn enumTypeLen(comptime EnumType: type) usize {
@@ -1617,164 +2127,6 @@ pub const EncryptedExtensionsMsg = struct {
             rest_len -= u8_size;
             try writeInt(u8, rest_len, writer);
             try writeBytes(self.alpn_protocol, writer);
-        }
-
-        self.raw = raw;
-        return raw;
-    }
-};
-
-// TLS CertificateStatusType (RFC 3546)
-const status_type_ocsp: u8 = 1;
-
-pub const CertificateMsgTls13 = struct {
-    raw: ?[]const u8 = null,
-    cert_chain: CertificateChain,
-    ocsp_stapling: bool = false,
-    scts: bool = false,
-
-    pub fn deinit(self: *CertificateMsgTls13, allocator: mem.Allocator) void {
-        self.cert_chain.deinit(allocator);
-        if (self.raw) |raw| allocator.free(raw);
-    }
-
-    fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsgTls13 {
-        var bv: BytesView = undefined;
-        const raw = try allocator.dupe(u8, msg_data);
-        errdefer allocator.free(raw);
-        bv = BytesView.init(raw);
-        bv.skip(handshake_msg_header_len);
-
-        const context = try bv.readByte();
-        if (context != 0) {
-            return error.InvalidCertificateMsgTls12;
-        }
-        var certificates_len = try bv.readIntBig(u24);
-        try bv.ensureRestLen(certificates_len);
-        const certificates_end_pos = bv.pos + certificates_len;
-        var certificates = std.ArrayListUnmanaged([]const u8){};
-        errdefer {
-            for (certificates.items) |cert| allocator.free(cert);
-            certificates.deinit(allocator);
-        }
-        var ocsp_staple: []const u8 = "";
-        errdefer if (ocsp_staple.len > 0) allocator.free(ocsp_staple);
-        var scts = std.ArrayListUnmanaged([]const u8){};
-        errdefer {
-            for (scts.items) |sct| allocator.free(sct);
-            scts.deinit(allocator);
-        }
-        while (bv.pos < certificates_end_pos) {
-            try certificates.append(allocator, try allocator.dupe(u8, try readString(u24, &bv)));
-            const extensions_len = try bv.readIntBig(u16);
-            const extensions_end_pos = bv.pos + extensions_len;
-            while (bv.pos < extensions_end_pos) {
-                const ext_type = try readEnum(ExtensionType, &bv);
-                const ext_len = try bv.readIntBig(u16);
-                switch (ext_type) {
-                    .StatusRequest => {
-                        const status_type = try bv.readByte();
-                        if (status_type != status_type_ocsp) {
-                            return error.InvalidCertificateMsgTls12;
-                        }
-                        ocsp_staple = try allocator.dupe(u8, try readString(u24, &bv));
-                    },
-                    .Sct => {
-                        const scts_len = try bv.readIntBig(u16);
-                        const scts_end_pos = bv.pos + scts_len;
-                        while (bv.pos < scts_end_pos) {
-                            try scts.append(
-                                allocator,
-                                try allocator.dupe(u8, try readString(u16, &bv)),
-                            );
-                        }
-                    },
-                    else => bv.skip(ext_len),
-                }
-            }
-        }
-
-        const cert_chain = CertificateChain{
-            .certificate_chain = certificates.toOwnedSlice(allocator),
-            .ocsp_staple = ocsp_staple,
-            .signed_certificate_timestamps = scts.toOwnedSlice(allocator),
-        };
-
-        return CertificateMsgTls13{
-            .cert_chain = cert_chain,
-            .ocsp_stapling = ocsp_staple.len > 0,
-            .scts = scts.items.len > 0,
-            .raw = raw,
-        };
-    }
-
-    pub fn marshal(self: *CertificateMsgTls13, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
-        }
-
-        var msg_len: usize = u8_size + u24_size + u8_size + u24_size;
-        var ocsp_stapling_marshaled_len: usize = 0;
-        var scts_marshaled_len: usize = 0;
-        for (self.cert_chain.certificate_chain) |cert, i| {
-            msg_len += u24_size + cert.len + u16_size;
-            if (i == 0) {
-                if (self.cert_chain.ocsp_staple.len > 0) {
-                    ocsp_stapling_marshaled_len = u16_size * 2 + u8_size + u24_size +
-                        self.cert_chain.ocsp_staple.len;
-                    msg_len += ocsp_stapling_marshaled_len;
-                }
-                if (self.cert_chain.signed_certificate_timestamps) |scts| {
-                    scts_marshaled_len = u16_size * 3;
-                    for (scts) |sct| {
-                        scts_marshaled_len += u16_size + sct.len;
-                    }
-                    msg_len += scts_marshaled_len;
-                }
-            }
-        }
-
-        var raw = try allocator.alloc(u8, msg_len);
-        errdefer allocator.free(raw);
-
-        var rest_len = msg_len;
-        var fbs = io.fixedBufferStream(raw);
-        var writer = fbs.writer();
-        try writeInt(u8, MsgType.Certificate, writer);
-        rest_len -= u8_size + u24_size;
-        try writeInt(u24, rest_len, writer);
-        try writeInt(u8, 0, writer); // certificate_request_context
-        rest_len -= u8_size + u24_size;
-
-        try writeInt(u24, rest_len, writer);
-        for (self.cert_chain.certificate_chain) |cert, i| {
-            try writeInt(u24, cert.len, writer);
-            try writeBytes(cert, writer);
-            const ext_len = if (i == 0) ocsp_stapling_marshaled_len + scts_marshaled_len else 0;
-            try writeInt(u16, ext_len, writer);
-            // This library only supports OCSP and SCT for leaf certificates.
-            if (i == 0) {
-                if (self.ocsp_stapling) {
-                    try writeInt(u16, ExtensionType.StatusRequest, writer);
-                    try writeInt(u16, u8_size + u24_size + self.cert_chain.ocsp_staple.len, writer);
-                    try writeInt(u8, status_type_ocsp, writer);
-                    try writeInt(u24, self.cert_chain.ocsp_staple.len, writer);
-                    try writeBytes(self.cert_chain.ocsp_staple, writer);
-                }
-                if (self.scts) {
-                    if (self.cert_chain.signed_certificate_timestamps) |scts| {
-                        try writeInt(u16, ExtensionType.Sct, writer);
-                        rest_len = scts_marshaled_len - u16_size * 2;
-                        try writeInt(u16, rest_len, writer);
-                        rest_len -= u16_size;
-                        try writeInt(u16, rest_len, writer);
-                        for (scts) |sct| {
-                            try writeInt(u16, sct.len, writer);
-                            try writeBytes(sct, writer);
-                        }
-                    }
-                }
-            }
         }
 
         self.raw = raw;

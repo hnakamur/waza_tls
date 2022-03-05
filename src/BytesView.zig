@@ -23,7 +23,7 @@ pub fn peekByte(self: *const BytesView) ?u8 {
 }
 
 pub fn skip(self: *BytesView, len: usize) void {
-    self.pos += len;
+    self.pos = math.min(self.pos + len, self.bytes.len);
 }
 
 pub fn sliceBytesNoEof(self: *BytesView, num_bytes: usize) Error![]const u8 {
@@ -140,6 +140,19 @@ pub fn getBytesPos(self: *const BytesView, pos: usize, len: usize) []const u8 {
 pub fn isBytes(self: *const BytesView, slice: []const u8) !bool {
     try self.ensureRestLen(slice.len);
     return mem.eql(u8, self.bytes[self.pos .. self.pos + slice.len], slice);
+}
+
+pub fn empty(self: *const BytesView) bool {
+    return self.pos == self.bytes.len;
+}
+
+pub fn readLenPrefixedBytes(
+    bv: *BytesView,
+    comptime LenType: type,
+    endian: std.builtin.Endian,
+) ![]const u8 {
+    const len = try bv.readInt(LenType, endian);
+    return try bv.sliceBytesNoEof(len);
 }
 
 const testing = std.testing;
