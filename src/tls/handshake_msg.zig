@@ -131,6 +131,9 @@ pub const HandshakeMsg = union(MsgType) {
             .Certificate => return HandshakeMsg{
                 .Certificate = try CertificateMsg.unmarshal(allocator, msg_data, ver.?),
             },
+            .CertificateRequest => return HandshakeMsg{
+                .CertificateRequest = try CertificateRequestMsg.unmarshal(allocator, msg_data, ver.?),
+            },
             .ServerKeyExchange => return HandshakeMsg{
                 .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, msg_data),
             },
@@ -1111,7 +1114,7 @@ pub const CertificateRequestMsg = union(ProtocolVersion) {
         return switch (self.*) {
             .v1_3 => |*m| try m.marshal(allocator),
             .v1_2 => |*m| try m.marshal(allocator),
-            else => {},
+            else => @panic("unsupported TLS version"),
         };
     }
 };

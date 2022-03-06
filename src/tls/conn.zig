@@ -44,6 +44,7 @@ const x509 = @import("x509.zig");
 const VerifyOptions = @import("verify.zig").VerifyOptions;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
+const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -117,6 +118,11 @@ pub const Conn = struct {
         // TLS Client Authentication. The default is NoClientCert.
         client_auth: ClientAuthType = .no_client_cert,
 
+        // ClientCAs defines the set of root certificate authorities
+        // that servers use if required to verify a client certificate
+        // by the policy in ClientAuth.
+        client_cas: ?CertPool = null,
+
         // InsecureSkipVerify controls whether a client verifies the server's
         // certificate chain and host name. If InsecureSkipVerify is true, crypto/tls
         // accepts any certificate presented by the server and any host name in that
@@ -163,6 +169,7 @@ pub const Conn = struct {
 
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
+            if (self.client_cas) |*cas| cas.deinit();
         }
 
         pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
@@ -1010,6 +1017,43 @@ pub const Conn = struct {
         }
 
         self.peer_certificates = certs;
+    }
+
+    pub fn getClientCertificate(
+        self: *const Conn,
+        allocator: mem.Allocator,
+        available_authorities: []const []const u8,
+        signature_schemes: []const SignatureScheme,
+        version: ProtocolVersion,
+    ) ?*const CertificateChain {
+        for (self.config.certificates) |*cert_chain| {
+            _ = selectSignatureScheme(
+                allocator,
+                version,
+                cert_chain,
+                signature_schemes,
+            ) catch continue;
+
+            if (available_authorities.len == 0) {
+                return cert_chain;
+            }
+
+            for (cert_chain.certificate_chain) |cert, j| {
+                var x509_cert = if (j == 0 and cert_chain.leaf != null)
+                    cert_chain.leaf.?.*
+                else
+                    x509.Certificate.parse(allocator, cert) catch continue;
+                defer if (j != 0 or cert_chain.leaf == null) {
+                    x509_cert.deinit(allocator);
+                };
+                for (available_authorities) |auth| {
+                    if (mem.eql(u8, x509_cert.raw_issuer, auth)) {
+                        return cert_chain;
+                    }
+                }
+            }
+        }
+        return null;
     }
 };
 

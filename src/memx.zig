@@ -69,6 +69,19 @@ pub fn freeElemsAndFreeSlice(
     }
 }
 
+pub fn freeElemsAndFreeSliceInError(
+    comptime T: type,
+    slice: []const T,
+    allocator: mem.Allocator,
+    end: usize,
+) void {
+    var i: usize = 0;
+    while (i < end) : (i += 1) {
+        allocator.free(slice[i]);
+    }
+    allocator.free(slice);
+}
+
 pub fn deinitSliceAndElems(
     comptime T: type,
     slice: []T,
@@ -79,6 +92,24 @@ pub fn deinitSliceAndElems(
 }
 
 const testing = std.testing;
+
+test "freeElemsAndFreeSliceInError" {
+    const failing_allocator = testing.FailingAllocator.init(testing.allocator, 4).allocator();
+
+    const f = struct {
+        fn f(allocator: mem.Allocator, len: usize) ![]const []const u8 {
+            var ret = try allocator.alloc([]const u8, len);
+            var i: usize = 0;
+            errdefer freeElemsAndFreeSliceInError([]const u8, ret, allocator, i);
+            while (i < len) : (i += 1) {
+                ret[i] = try allocator.dupe(u8, "string");
+            }
+            return ret;
+        }
+    }.f;
+
+    try testing.expectError(error.OutOfMemory, f(failing_allocator, 5));
+}
 
 test "containsScalar" {
     try testing.expect(containsScalar(u8, &[_]u8{ 0, 1 }, 1));

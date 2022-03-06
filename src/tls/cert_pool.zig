@@ -151,12 +151,27 @@ pub const CertPool = struct {
         try candidates.appendSlice(allocator, mismatch_key_id.items);
         return candidates.toOwnedSlice(allocator);
     }
+
+    pub fn subjects(
+        self: *const CertPool,
+        allocator: mem.Allocator,
+    ) ![]const []const u8 {
+        var ret = try allocator.alloc([]const u8, self.by_name.count());
+        var i: usize = 0;
+        errdefer memx.freeElemsAndFreeSliceInError([]const u8, ret, allocator, i);
+        var it = self.by_name.keyIterator();
+        while (it.next()) |name| {
+            ret[i] = try allocator.dupe(u8, name.*);
+            i += 1;
+        }
+        return ret;
+    }
 };
 
 const testing = std.testing;
 
 test "CertPool" {
-    // testing.log_level = .err;
+    testing.log_level = .debug;
 
     const allocator = testing.allocator;
 
@@ -174,4 +189,10 @@ test "CertPool" {
     defer allocator.free(pem_certs);
 
     try pool.appendCertsFromPem(pem_certs);
+
+    var subjects = try pool.subjects(allocator);
+    defer memx.freeElemsAndFreeSlice([]const u8, subjects, allocator);
+    // for (subjects) |subject| {
+    //     std.log.debug("subject={s}", .{subject});
+    // }
 }

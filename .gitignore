@@ -6,3 +6,6 @@ zig-cache/
 
 src/tls/naruh.dev.crt
 src/tls/naruh.dev.key
+
+tests/client_cert/*.crt
+tests/client_cert/*.key

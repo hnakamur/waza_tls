@@ -5,6 +5,7 @@ const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const EncryptedExtensionsMsg = @import("handshake_msg.zig").EncryptedExtensionsMsg;
 const CertificateMsgTls13 = @import("handshake_msg.zig").CertificateMsgTls13;
+const CertificateRequestMsgTls13 = @import("handshake_msg.zig").CertificateRequestMsgTls13;
 const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const PskMode = @import("handshake_msg.zig").PskMode;
@@ -34,6 +35,7 @@ const HashType = @import("auth.zig").HashType;
 const signedMessage = @import("auth.zig").signedMessage;
 const server_signature_context = @import("auth.zig").server_signature_context;
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
+const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
 
@@ -389,15 +391,29 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn sendServerCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = allocator;
-
         // Only one of PSK and certificates are used at a time.
         if (self.using_psk) {
             return;
         }
 
         if (self.requestClientCert()) {
-            @panic("not implemented yet");
+            var cert_req_msg = CertificateRequestMsgTls13{
+                .ocsp_stapling = true,
+                .scts = true,
+                .supported_signature_algorithms = try allocator.dupe(
+                    SignatureScheme,
+                    supported_signature_algorithms,
+                ),
+            };
+            defer cert_req_msg.deinit(allocator);
+
+            if (self.conn.config.client_cas) |*cas| {
+                cert_req_msg.certificate_authorities = try cas.subjects(allocator);
+            }
+
+            const cert_req_msg_bytes = try cert_req_msg.marshal(allocator);
+            self.transcript.update(cert_req_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, cert_req_msg_bytes);
         }
 
         {
@@ -447,8 +463,6 @@ pub const ServerHandshakeStateTls13 = struct {
         {
             var cert_verify_msg = blk: {
                 const sig_type = try SignatureType.fromSignatureScheme(self.sig_alg.?);
-                _ = sig_type;
-
                 const sig_hash = try HashType.fromSignatureScheme(self.sig_alg.?);
 
                 var signed = try signedMessage(
@@ -610,8 +624,48 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn readClientCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = self;
-        _ = allocator;
+        if (!self.requestClientCert()) {
+            // Make sure the connection is still being verified whether or not
+            // the server requested a client certificate.
+
+            // TODO: implement
+            return;
+        }
+
+        // If we requested a client certificate, then the client must send a
+        // certificate message. If it's empty, no CertificateVerify is sent.
+
+        var cert_msg = blk: {
+            var hs_msg = try self.conn.readHandshake(allocator);
+            switch (hs_msg) {
+                .Certificate => |m| {
+                    switch (m) {
+                        .v1_3 => break :blk m.v1_3,
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+            self.conn.sendAlert(.unexpected_message) catch {};
+            return error.UnexpectedMessage;
+        };
+        defer cert_msg.deinit(allocator);
+
+        // TODO: implement
+
+        if (cert_msg.cert_chain.certificate_chain.len != 0) {
+            var cert_verify_msg = blk: {
+                var hs_msg = try self.conn.readHandshake(allocator);
+                break :blk switch (hs_msg) {
+                    .CertificateVerify => |m| m,
+                    else => {
+                        self.conn.sendAlert(.unexpected_message) catch {};
+                        return error.UnexpectedMessage;
+                    },
+                };
+            };
+            defer cert_verify_msg.deinit(allocator);
+        }
         // TODO: implement
     }
 

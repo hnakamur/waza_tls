@@ -7,7 +7,7 @@ const pem = @import("pem.zig");
 const x509 = @import("x509.zig");
 
 pub const CertificateChain = struct {
-    certificate_chain: []const []const u8,
+    certificate_chain: []const []const u8 = &.{},
     // PrivateKey contains the private key corresponding to the public key in
     // Leaf. This must implement crypto.Signer with an RSA, ECDSA or Ed25519 PublicKey.
     // For a server up to TLS 1.2, it can also implement crypto.Decrypter with
@@ -28,10 +28,10 @@ pub const CertificateChain = struct {
     leaf: ?*x509.Certificate = null,
 
     pub fn deinit(self: *CertificateChain, allocator: mem.Allocator) void {
-        for (self.certificate_chain) |cert| {
-            allocator.free(cert);
+        if (self.certificate_chain.len > 0) {
+            for (self.certificate_chain) |cert| allocator.free(cert);
+            allocator.free(self.certificate_chain);
         }
-        allocator.free(self.certificate_chain);
         if (self.private_key) |*key| {
             key.deinit(allocator);
         }

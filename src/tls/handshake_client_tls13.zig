@@ -3,8 +3,12 @@ const mem = std.mem;
 const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
+const CertificateRequestMsgTls13 = @import("handshake_msg.zig").CertificateRequestMsgTls13;
+const CertificateMsgTls13 = @import("handshake_msg.zig").CertificateMsgTls13;
+const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
+const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
 const mutualCipherSuiteTls13 = @import("cipher_suites.zig").mutualCipherSuiteTls13;
@@ -23,6 +27,8 @@ const server_handshake_traffic_label = @import("key_schedule.zig").server_handsh
 const client_application_traffic_label = @import("key_schedule.zig").client_application_traffic_label;
 const server_application_traffic_label = @import("key_schedule.zig").server_application_traffic_label;
 const server_signature_context = @import("auth.zig").server_signature_context;
+const client_signature_context = @import("auth.zig").client_signature_context;
+const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 const hmac = @import("hmac.zig");
 const crypto = @import("crypto.zig");
 const memx = @import("../memx.zig");
@@ -35,6 +41,7 @@ pub const ClientHandshakeStateTls13 = struct {
     conn: *Conn,
     hello: ClientHelloMsg,
     server_hello: ServerHelloMsg,
+    cert_req: ?CertificateRequestMsgTls13 = null,
     ecdhe_params: EcdheParameters,
 
     sent_dummy_ccs: bool = false,
@@ -66,6 +73,7 @@ pub const ClientHandshakeStateTls13 = struct {
     pub fn deinit(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);
         self.server_hello.deinit(allocator);
+        if (self.cert_req) |*cert_req| cert_req.deinit(allocator);
         if (self.early_secret.len > 0) allocator.free(self.early_secret);
         if (self.master_secret.len > 0) allocator.free(self.master_secret);
         if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
@@ -350,10 +358,16 @@ pub const ClientHandshakeStateTls13 = struct {
 
         var hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
-            .CertificateRequest => {
-                // self.transcript.update(try m.marshal(allocator));
-                @panic("not implemented yet");
-                // hs_msg = try self.conn.readHandshake(allocator);
+            .CertificateRequest => |*m| {
+                switch (m.*) {
+                    .v1_3 => |*cert_req_msg| {
+                        self.transcript.update(try cert_req_msg.marshal(allocator));
+                        self.cert_req = cert_req_msg.*;
+                        std.log.info("ClientHandshakeStateTls13.readServerCertificate, set self.cert_req", .{});
+                        hs_msg = try self.conn.readHandshake(allocator);
+                    },
+                    else => {},
+                }
             },
             else => {},
         }
@@ -502,11 +516,115 @@ pub const ClientHandshakeStateTls13 = struct {
     }
 
     fn sendClientCertificate(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = self;
-        _ = allocator;
+        if (self.cert_req == null) {
+            return;
+        }
 
-        // TODO: implement
-        return;
+        const cert = self.conn.getClientCertificate(
+            allocator,
+            self.cert_req.?.certificate_authorities,
+            self.cert_req.?.supported_signature_algorithms,
+            self.conn.version.?,
+        );
+
+        var cert_for_msg = if (cert) |cert2| blk: {
+            var cert2_copy = CertificateChain{
+                .certificate_chain = try memx.dupeStringList(allocator, cert2.certificate_chain),
+            };
+            errdefer cert2_copy.deinit(allocator);
+            cert2_copy.ocsp_staple = try allocator.dupe(u8, cert2.ocsp_staple);
+            if (cert2.signed_certificate_timestamps) |scts| {
+                cert2_copy.signed_certificate_timestamps = try memx.dupeStringList(allocator, scts);
+            }
+            break :blk cert2_copy;
+        } else CertificateChain{};
+
+        var cert_msg = CertificateMsgTls13{
+            .cert_chain = cert_for_msg,
+            .scts = self.cert_req.?.scts and
+                cert_for_msg.signed_certificate_timestamps != null and
+                cert_for_msg.signed_certificate_timestamps.?.len > 0,
+            .ocsp_stapling = self.cert_req.?.ocsp_stapling and cert_for_msg.ocsp_staple.len > 0,
+        };
+        defer cert_msg.deinit(allocator);
+
+        const cert_msg_bytes = try cert_msg.marshal(allocator);
+        self.transcript.update(cert_msg_bytes);
+        try self.conn.writeRecord(allocator, .handshake, cert_msg_bytes);
+        std.log.info(
+            "ClientHandshakeStateTls13.sendClientCertificate sent cert_msg={}",
+            .{std.fmt.fmtSliceHexLower(cert_msg_bytes)},
+        );
+
+        // If we sent an empty certificate message, skip the CertificateVerify.
+        if (cert_for_msg.certificate_chain.len == 0) {
+            return;
+        }
+
+        {
+            var cert_verify_msg = blk: {
+                const sig_alg = selectSignatureScheme(
+                    allocator,
+                    self.conn.version.?,
+                    cert.?,
+                    self.cert_req.?.supported_signature_algorithms,
+                ) catch |err| {
+                    // getClientCertificate returned a certificate incompatible with the
+                    // CertificateRequestInfo supported signature algorithms.
+                    self.conn.sendAlert(.handshake_failure) catch {};
+                    return err;
+                };
+
+                const sig_type = try SignatureType.fromSignatureScheme(sig_alg);
+                const sig_hash = try HashType.fromSignatureScheme(sig_alg);
+                var signed = try signedMessage(
+                    allocator,
+                    sig_hash,
+                    client_signature_context,
+                    self.transcript,
+                );
+                defer allocator.free(signed);
+                std.log.info(
+                    "ClientHandshakeStateTls13.sendClientCertificate signed={}",
+                    .{std.fmt.fmtSliceHexLower(signed)},
+                );
+
+                const sign_opts = if (sig_type == .rsa_pss)
+                    crypto.SignOpts{ .hash_type = sig_hash, .salt_length = .equals_hash }
+                else
+                    crypto.SignOpts{ .hash_type = sig_hash };
+                std.log.info(
+                    "ClientHandshakeStateTls13.sendClientCertificate cert={}",
+                    .{std.fmt.fmtSliceHexLower(cert.?.certificate_chain[0])},
+                );
+                var sig = cert.?.private_key.?.sign(
+                    allocator,
+                    signed,
+                    sign_opts,
+                ) catch {
+                    self.conn.sendAlert(.internal_error) catch {};
+                    return error.SignHandshakeFailed;
+                };
+                std.log.info(
+                    "ClientHandshakeStateTls13.sendClientCertificate sig={}",
+                    .{std.fmt.fmtSliceHexLower(sig)},
+                );
+
+                break :blk CertificateVerifyMsg{
+                    .signature_algorithm = sig_alg,
+                    .signature = sig,
+                };
+            };
+            defer cert_verify_msg.deinit(allocator);
+
+            const cert_verify_msg_bytes = try cert_verify_msg.marshal(allocator);
+            self.transcript.update(cert_verify_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, cert_verify_msg_bytes);
+            std.log.info(
+                "ClientHandshakeStateTls13.sendClientCertificate sent cert_verify_msg={}",
+                .{std.fmt.fmtSliceHexLower(cert_verify_msg_bytes)},
+            );
+        }
     }
 
     fn sendClientFinished(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
