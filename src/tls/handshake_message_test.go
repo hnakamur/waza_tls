@@ -563,3 +563,90 @@ func TestCertificateRequestMsgTLS13(t *testing.T) {
 		t.Errorf("result mismatch, got=%x, want=%x", got, want)
 	}
 }
+
+type certificateRequestMsg struct {
+	raw []byte
+	// hasSignatureAlgorithm indicates whether this message includes a list of
+	// supported signature algorithms. This change was introduced with TLS 1.2.
+	hasSignatureAlgorithm bool
+
+	certificateTypes             []byte
+	supportedSignatureAlgorithms []SignatureScheme
+	certificateAuthorities       [][]byte
+}
+
+func (m *certificateRequestMsg) marshal() (x []byte) {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	// See RFC 4346, Section 7.4.4.
+	length := 1 + len(m.certificateTypes) + 2
+	casLength := 0
+	for _, ca := range m.certificateAuthorities {
+		casLength += 2 + len(ca)
+	}
+	length += casLength
+
+	if m.hasSignatureAlgorithm {
+		length += 2 + 2*len(m.supportedSignatureAlgorithms)
+	}
+
+	x = make([]byte, 4+length)
+	x[0] = typeCertificateRequest
+	x[1] = uint8(length >> 16)
+	x[2] = uint8(length >> 8)
+	x[3] = uint8(length)
+
+	x[4] = uint8(len(m.certificateTypes))
+
+	copy(x[5:], m.certificateTypes)
+	y := x[5+len(m.certificateTypes):]
+
+	if m.hasSignatureAlgorithm {
+		n := len(m.supportedSignatureAlgorithms) * 2
+		y[0] = uint8(n >> 8)
+		y[1] = uint8(n)
+		y = y[2:]
+		for _, sigAlgo := range m.supportedSignatureAlgorithms {
+			y[0] = uint8(sigAlgo >> 8)
+			y[1] = uint8(sigAlgo)
+			y = y[2:]
+		}
+	}
+
+	y[0] = uint8(casLength >> 8)
+	y[1] = uint8(casLength)
+	y = y[2:]
+	for _, ca := range m.certificateAuthorities {
+		y[0] = uint8(len(ca) >> 8)
+		y[1] = uint8(len(ca))
+		y = y[2:]
+		copy(y, ca)
+		y = y[len(ca):]
+	}
+
+	m.raw = x
+	return
+}
+
+func TestCertificateRequestMsg(t *testing.T) {
+	msg := certificateRequestMsg{
+		hasSignatureAlgorithm: true,
+		certificateTypes:      []byte("\xab\xcd"),
+		supportedSignatureAlgorithms: []SignatureScheme{
+			PSSWithSHA256,
+			ECDSAWithP256AndSHA256,
+			Ed25519,
+		},
+		certificateAuthorities: [][]byte{
+			[]byte("authority1"),
+			[]byte("authority2"),
+		},
+	}
+	marshaled := msg.marshal()
+	want := []byte("\x0d\x00\x00\x25\x02\xab\xcd\x00\x06\x08\x04\x04\x03\x08\x07\x00\x18\x00\x0a\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x31\x00\x0a\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x32")
+	if got := marshaled; !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
+}

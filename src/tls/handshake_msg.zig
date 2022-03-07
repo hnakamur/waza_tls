@@ -9,6 +9,7 @@ const mem = std.mem;
 
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const BytesView = @import("../BytesView.zig");
+const memx = @import("../memx.zig");
 const asn1 = @import("asn1.zig");
 
 pub const ProtocolVersion = enum(u16) {
@@ -1121,30 +1122,172 @@ pub const CertificateRequestMsg = union(ProtocolVersion) {
 
 pub const CertificateRequestMsgTls12 = struct {
     raw: ?[]const u8 = null,
-    has_signature_algorithm: bool,
     certificate_types: []const u8 = "",
     supported_signature_algorithms: []SignatureScheme = &.{},
     certificate_authorities: []const []const u8 = &.{},
 
     pub fn deinit(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) void {
         if (self.raw) |raw| allocator.free(raw);
-        @panic("not implemented yet");
+        if (self.certificate_types.len > 0) {
+            allocator.free(self.certificate_types);
+        }
+        if (self.supported_signature_algorithms.len > 0) {
+            allocator.free(self.supported_signature_algorithms);
+        }
+        if (self.certificate_authorities.len > 0) {
+            for (self.certificate_authorities) |auth| allocator.free(auth);
+            allocator.free(self.certificate_authorities);
+        }
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateRequestMsgTls12 {
-        _ = allocator;
-        _ = msg_data;
-        @panic("not implemented yet");
+        const raw = try allocator.dupe(u8, msg_data);
+        errdefer allocator.free(raw);
+        var bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const cert_types = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u8, .Big));
+        errdefer allocator.free(cert_types);
+
+        // CertificateRequestMsgTls12 has always signature algorithms
+        const sig_and_hash_len = try bv.readIntBig(u16);
+        const sig_and_hash_count = sig_and_hash_len / @sizeOf(SignatureScheme);
+        var sig_and_algs = try allocator.alloc(SignatureScheme, sig_and_hash_count);
+        errdefer allocator.free(sig_and_algs);
+        var i: usize = 0;
+        while (i < sig_and_hash_count) : (i += 1) {
+            sig_and_algs[i] = try bv.readEnum(SignatureScheme, .Big);
+        }
+
+        var auths = BytesView.init(try bv.readLenPrefixedBytes(u16, .Big));
+        if (auths.empty()) {
+            return error.InvalidCertificateRequestMsgTls12;
+        }
+
+        var count: usize = 0;
+        var auths_count = auths;
+        while (!auths_count.empty()) : (count += 1) {
+            const ca = try auths_count.readLenPrefixedBytes(u16, .Big);
+            if (ca.len == 0) {
+                return error.InvalidCertificateRequestMsgTls12;
+            }
+        }
+
+        i = 0;
+        var authorities = try allocator.alloc([]const u8, count);
+        errdefer memx.freeElemsAndFreeSliceInError([]const u8, authorities, allocator, i);
+        while (!auths.empty()) : (i += 1) {
+            const ca = try auths.readLenPrefixedBytes(u16, .Big);
+            authorities[i] = try allocator.dupe(u8, ca);
+        }
+
+        if (!bv.empty()) {
+            return error.InvalidCertificateRequestMsgTls12;
+        }
+
+        return CertificateRequestMsgTls12{
+            .raw = raw,
+            .certificate_types = cert_types,
+            .supported_signature_algorithms = sig_and_algs,
+            .certificate_authorities = authorities,
+        };
     }
 
     pub fn marshal(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) ![]const u8 {
         if (self.raw) |raw| {
             return raw;
         }
-        _ = allocator;
-        @panic("not implemented yet");
+
+        var msg_len: usize = u8_size + u24_size + u8_size + self.certificate_types.len;
+        if (self.supported_signature_algorithms.len > 0) {
+            msg_len += u16_size + u16_size * self.supported_signature_algorithms.len;
+        }
+        var authorities_len: usize = 0;
+        if (self.certificate_authorities.len > 0) {
+            for (self.certificate_authorities) |auth| {
+                authorities_len += u16_size + auth.len;
+            }
+            msg_len += u16_size + authorities_len;
+        }
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var rest_len = msg_len;
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.CertificateRequest, writer);
+        rest_len -= u8_size + u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeLenAndBytes(u8, self.certificate_types, writer);
+        try writeLenAndIntSlice(
+            u16,
+            u16,
+            SignatureScheme,
+            self.supported_signature_algorithms,
+            writer,
+        );
+        try writeInt(u16, authorities_len, writer);
+        for (self.certificate_authorities) |auth| {
+            try writeLenAndBytes(u16, auth, writer);
+        }
+
+        self.raw = raw;
+        return raw;
     }
 };
+
+test "CertificateRequestMsgTls12" {
+    const allocator = testing.allocator;
+
+    const msg_data = "\x0d" ++ // index: 0
+        "\x00\x00\x25" ++ // index: 1
+        "\x02\xab\xcd" ++ // index: 4
+        "\x00\x06" ++ // index: 7
+        "\x08\x04" ++ // index: 9
+        "\x04\x03" ++ // index: 11
+        "\x08\x07" ++ // index: 13
+        "\x00\x18" ++ // index: 15
+        "\x00\x0a" ++ // index: 17
+        "\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x31" ++ // index: 19
+        "\x00\x0a" ++ // index: 29
+        "\x61\x75\x74\x68\x6f\x72\x69\x74\x79\x32"; // index: 31
+    var msg = try CertificateRequestMsgTls12.unmarshal(allocator, msg_data);
+    defer msg.deinit(allocator);
+
+    const want_certificate_types = "\xab\xcd";
+    try testing.expectEqualSlices(u8, want_certificate_types, msg.certificate_types);
+    const want_supported_signature_algorithms = &[_]SignatureScheme{
+        .pss_with_sha256,
+        .ecdsa_with_p256_and_sha256,
+        .ed25519,
+    };
+    try testing.expectEqual(
+        want_supported_signature_algorithms.len,
+        msg.supported_signature_algorithms.len,
+    );
+    for (msg.supported_signature_algorithms) |alg, i| {
+        try testing.expectEqual(want_supported_signature_algorithms[i], alg);
+    }
+
+    const want_certificate_authorities = &[_][]const u8{
+        "authority1",
+        "authority2",
+    };
+    try testing.expectEqual(
+        want_certificate_authorities.len,
+        msg.certificate_authorities.len,
+    );
+    for (msg.certificate_authorities) |auth, i| {
+        try testing.expectEqualSlices(u8, want_certificate_authorities[i], auth);
+    }
+
+    allocator.free(msg.raw.?);
+    msg.raw = null;
+
+    const msg_data2 = try msg.marshal(allocator);
+    try testing.expectEqualSlices(u8, msg_data, msg_data2);
+}
 
 pub const CertificateRequestMsgTls13 = struct {
     raw: ?[]const u8 = null,
