@@ -240,7 +240,7 @@ pub const Conn = struct {
     handshakes: usize = 0,
     cipher_suite_id: ?CipherSuiteId = null,
     ocsp_response: []const u8 = "", // stapled OCSP response
-    scts: []const []const u8 = &[_][]u8{}, // signed certificate timestamps from server
+    scts: []const []const u8 = &.{}, // signed certificate timestamps from server
     server_name: []const u8 = "",
 
     buffering: bool = false,
@@ -1054,6 +1054,77 @@ pub const Conn = struct {
             }
         }
         return null;
+    }
+
+    // processCertsFromClient takes a chain of client certificates either from a
+    // Certificates message or from a sessionState and verifies them. It returns
+    // the public key of the leaf certificate.
+    pub fn processCertsFromClient(
+        self: *Conn,
+        allocator: mem.Allocator,
+        cert_chain: *const CertificateChain,
+    ) !void {
+        const has_certs = cert_chain.certificate_chain.len > 0;
+        if (!has_certs and self.config.client_auth.requiresClientCert()) {
+            self.sendAlert(.bad_certificate) catch {};
+            return error.NoClientCertificate;
+        }
+
+        var certs = blk: {
+            var certs2 = try allocator.alloc(x509.Certificate, cert_chain.certificate_chain.len);
+            var i: usize = 0;
+            errdefer memx.deinitElemsAndFreeSliceInError(x509.Certificate, certs2, allocator, i);
+            while (i < cert_chain.certificate_chain.len) : (i += 1) {
+                certs2[i] = x509.Certificate.parse(
+                    allocator,
+                    cert_chain.certificate_chain[i],
+                ) catch {
+                    self.sendAlert(.bad_certificate) catch {};
+                    return error.InvalidClientCertificate;
+                };
+            }
+            break :blk certs2;
+        };
+        errdefer memx.deinitSliceAndElems(x509.Certificate, certs, allocator);
+
+        if ((@enumToInt(self.config.client_auth) >
+            @enumToInt(ClientAuthType.verify_client_cert_if_given)) and
+            has_certs)
+        {
+            var intermediate_pool = try CertPool.init(allocator, false);
+            defer intermediate_pool.deinit();
+            for (certs[1..]) |*cert| {
+                var cert_copy = x509.Certificate.parse(allocator, cert.raw) catch unreachable;
+                try intermediate_pool.addCert(&cert_copy);
+            }
+
+            const opts = VerifyOptions{
+                .roots = &self.config.client_cas.?,
+                .current_time = datetime.datetime.Datetime.now(),
+                .intermediates = &intermediate_pool,
+                .key_usages = &[_]x509.ExtKeyUsage{.client_auth},
+            };
+            if (certs[0].verify(allocator, &opts)) |*chains| {
+                // TODO: implement setting verified_chains
+                chains.deinit(allocator);
+            } else |_| {
+                std.log.debug(
+                    "getClientCertificate verify error, certs[0]=0x{x}",
+                    .{@ptrToInt(&certs[0])},
+                );
+                self.sendAlert(.bad_certificate) catch {};
+                return error.BadServerCertificate;
+            }
+        }
+
+        self.peer_certificates = certs;
+        self.ocsp_response = try allocator.dupe(u8, cert_chain.ocsp_staple);
+        if (cert_chain.signed_certificate_timestamps) |scts| {
+            self.scts = try memx.dupeStringList(allocator, scts);
+        }
+
+        // TODO: implement
+        std.log.info("Conn.processCertsFromClient ok", .{});
     }
 };
 

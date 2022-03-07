@@ -34,7 +34,10 @@ const SignatureType = @import("auth.zig").SignatureType;
 const HashType = @import("auth.zig").HashType;
 const signedMessage = @import("auth.zig").signedMessage;
 const server_signature_context = @import("auth.zig").server_signature_context;
+const client_signature_context = @import("auth.zig").client_signature_context;
+const isSupportedSignatureAlgorithm = @import("auth.zig").isSupportedSignatureAlgorithm;
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
+const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
@@ -72,31 +75,31 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        std.log.debug("ServerHandshakeStateTls13 handshake start", .{});
+        std.log.info("ServerHandshakeStateTls13 handshake start", .{});
         // For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
         try self.processClientHello(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after processClientHello", .{});
+        std.log.info("ServerHandshakeStateTls13 after processClientHello", .{});
         try self.checkForResumption(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after checkForResumption", .{});
+        std.log.info("ServerHandshakeStateTls13 after checkForResumption", .{});
         try self.pickCertificate(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after pickCertificate", .{});
+        std.log.info("ServerHandshakeStateTls13 after pickCertificate", .{});
 
         self.conn.buffering = true;
         try self.sendServerParameters(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after sendServerParameters", .{});
+        std.log.info("ServerHandshakeStateTls13 after sendServerParameters", .{});
         try self.sendServerCertificate(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after sendServerCertificate", .{});
+        std.log.info("ServerHandshakeStateTls13 after sendServerCertificate", .{});
         try self.sendServerFinished(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after sendServerFinished", .{});
+        std.log.info("ServerHandshakeStateTls13 after sendServerFinished", .{});
         // Note that at this point we could start sending application data without
         // waiting for the client's second flight, but the application might not
         // expect the lack of replay protection of the ClientHello parameters.
         try self.conn.flush();
-        std.log.debug("ServerHandshakeStateTls13 after flush", .{});
+        std.log.info("ServerHandshakeStateTls13 after flush", .{});
         try self.readClientCertificate(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after readClientCertificate", .{});
+        std.log.info("ServerHandshakeStateTls13 after readClientCertificate", .{});
         try self.readClientFinished(allocator);
-        std.log.debug("ServerHandshakeStateTls13 after readClientFinished", .{});
+        std.log.info("ServerHandshakeStateTls13 after readClientFinished", .{});
 
         self.conn.handshake_complete = true;
     }
@@ -651,6 +654,10 @@ pub const ServerHandshakeStateTls13 = struct {
         };
         defer cert_msg.deinit(allocator);
 
+        self.transcript.update(try cert_msg.marshal(allocator));
+
+        try self.conn.processCertsFromClient(allocator, &cert_msg.cert_chain);
+
         // TODO: implement
 
         if (cert_msg.cert_chain.certificate_chain.len != 0) {
@@ -665,12 +672,57 @@ pub const ServerHandshakeStateTls13 = struct {
                 };
             };
             defer cert_verify_msg.deinit(allocator);
+
+            const sig_alg = cert_verify_msg.signature_algorithm;
+            if (!isSupportedSignatureAlgorithm(sig_alg, supported_signature_algorithms)) {
+                self.conn.sendAlert(.illegal_parameter) catch {};
+                return error.InvalidSignatureAlgorithmInClientCertificate;
+            }
+
+            const sig_type = SignatureType.fromSignatureScheme(sig_alg) catch |err| {
+                self.conn.sendAlert(.internal_error) catch {};
+                return err;
+            };
+            const sig_hash = HashType.fromSignatureScheme(sig_alg) catch |err| {
+                self.conn.sendAlert(.internal_error) catch {};
+                return err;
+            };
+            if (sig_type == .pkcs1v15 or .sig_hash == .sha1) {
+                self.conn.sendAlert(.illegal_parameter) catch {};
+                return error.InvalidSignatureAlgorithmInClientCertificate;
+            }
+
+            var signed = try signedMessage(
+                allocator,
+                sig_hash,
+                client_signature_context,
+                self.transcript,
+            );
+            defer allocator.free(signed);
+
+            verifyHandshakeSignature(
+                allocator,
+                sig_type,
+                self.conn.peer_certificates[0].public_key,
+                sig_hash,
+                signed,
+                cert_verify_msg.signature,
+            ) catch {
+                self.conn.sendAlert(.decrypt_error) catch {};
+                return error.InvalidSignatureByClientCertificate;
+            };
+
+            self.transcript.update(try cert_verify_msg.marshal(allocator));
+            self.transcript.logFinal("ServerHandshakeStateTls13.transcript after cert_verify: ");
         }
-        // TODO: implement
+
+        // If we waited until the client certificates to send session tickets, we
+        // are ready to do it now.
+        try self.sendSessionTickets(allocator);
     }
 
     fn readClientFinished(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        std.log.debug("ServerHandshakeStateTls13.readClientFinished start", .{});
+        std.log.info("ServerHandshakeStateTls13.readClientFinished start", .{});
         var finished_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
@@ -682,7 +734,7 @@ pub const ServerHandshakeStateTls13 = struct {
             };
         };
         defer finished_msg.deinit(allocator);
-        std.log.debug("ServerHandshakeStateTls13.readClientFinished read client finished_msg OK", .{});
+        std.log.info("ServerHandshakeStateTls13.readClientFinished read client finished_msg OK", .{});
 
         if (!hmac.equal(self.client_finished, finished_msg.verify_data)) {
             self.conn.sendAlert(.decrypt_error) catch {};
@@ -690,6 +742,6 @@ pub const ServerHandshakeStateTls13 = struct {
         }
 
         try self.conn.in.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
-        std.log.debug("ServerHandshakeStateTls13.readClientFinished exit", .{});
+        std.log.info("ServerHandshakeStateTls13.readClientFinished exit", .{});
     }
 };

@@ -82,6 +82,19 @@ pub fn freeElemsAndFreeSliceInError(
     allocator.free(slice);
 }
 
+pub fn deinitElemsAndFreeSliceInError(
+    comptime T: type,
+    slice: []T,
+    allocator: mem.Allocator,
+    end: usize,
+) void {
+    var i: usize = 0;
+    while (i < end) : (i += 1) {
+        slice[i].deinit(allocator);
+    }
+    allocator.free(slice);
+}
+
 pub fn deinitSliceAndElems(
     comptime T: type,
     slice: []T,

@@ -80,6 +80,7 @@ pub const ClientHandshakeStateTls13 = struct {
     }
 
     pub fn handshake(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
+        std.log.info("ClientHandshakeStateTls13 handshake start", .{});
         if (self.conn.handshakes > 0) {
             self.conn.sendAlert(.protocol_version) catch {};
             return error.ServerSelectedTls13InRenegotiation;
@@ -103,14 +104,23 @@ pub const ClientHandshakeStateTls13 = struct {
         self.transcript.update(try self.server_hello.marshal(allocator));
         self.conn.buffering = true;
         try self.processServerHello(allocator);
+        std.log.info("ClientHandshakeStateTls13 after processServerHello", .{});
         try self.sendDummyChangeCipherSpec(allocator);
+        std.log.info("ClientHandshakeStateTls13 after sendDummyChangeCipherSpec", .{});
         try self.establishHandshakeKeys(allocator);
+        std.log.info("ClientHandshakeStateTls13 after establishHandshakeKeys", .{});
         try self.readServerParameters(allocator);
+        std.log.info("ClientHandshakeStateTls13 after readServerParameters", .{});
         try self.readServerCertificate(allocator);
+        std.log.info("ClientHandshakeStateTls13 after readServerCertificate", .{});
         try self.readServerFinished(allocator);
+        std.log.info("ClientHandshakeStateTls13 after readServerFinished", .{});
         try self.sendClientCertificate(allocator);
+        std.log.info("ClientHandshakeStateTls13 after sendClientCertificate", .{});
         try self.sendClientFinished(allocator);
+        std.log.info("ClientHandshakeStateTls13 after sendClientFinished", .{});
         try self.conn.flush();
+        std.log.info("ClientHandshakeStateTls13 after flush", .{});
 
         self.conn.handshake_complete = true;
     }
@@ -619,6 +629,7 @@ pub const ClientHandshakeStateTls13 = struct {
 
             const cert_verify_msg_bytes = try cert_verify_msg.marshal(allocator);
             self.transcript.update(cert_verify_msg_bytes);
+            self.transcript.logFinal("ClientHandshakeStateTls13.transcript after cert_verify: ");
             try self.conn.writeRecord(allocator, .handshake, cert_verify_msg_bytes);
             std.log.info(
                 "ClientHandshakeStateTls13.sendClientCertificate sent cert_verify_msg={}",

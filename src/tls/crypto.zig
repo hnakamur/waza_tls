@@ -76,6 +76,13 @@ pub const Hash = union(HashType) {
             else => @panic("Unsupported HashType"),
         };
     }
+
+    pub fn logFinal(self: *const Hash, label: []const u8) void {
+        var out = DigestArray.init(self.digestLength()) catch unreachable;
+        var out_slice = out.slice();
+        self.finalToSlice(out_slice);
+        std.log.info("{s}{}", .{ label, std.fmt.fmtSliceHexLower(out_slice) });
+    }
 };
 
 pub const Sha256Hash = HashAdapter(std.crypto.hash.sha2.Sha256);
