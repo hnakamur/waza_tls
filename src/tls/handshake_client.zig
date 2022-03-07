@@ -1,14 +1,22 @@
 const std = @import("std");
 const mem = std.mem;
+const HashType = @import("auth.zig").HashType;
+const SignatureType = @import("auth.zig").SignatureType;
+const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
+const CertificateMsgTls12 = @import("handshake_msg.zig").CertificateMsgTls12;
+const CertificateRequestMsgTls12 = @import("handshake_msg.zig").CertificateRequestMsgTls12;
+const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
 const ClientKeyExchangeMsg = @import("handshake_msg.zig").ClientKeyExchangeMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const freeOptionalField = @import("handshake_msg.zig").freeOptionalField;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
+const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
 const CipherSuiteTls12 = @import("cipher_suites.zig").CipherSuiteTls12;
 const cipherSuiteTls12ById = @import("cipher_suites.zig").cipherSuiteTls12ById;
@@ -22,7 +30,9 @@ const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const ClientHandshakeStateTls13 = @import("handshake_client_tls13.zig").ClientHandshakeStateTls13;
+const crypto = @import("crypto.zig");
 const fmtx = @import("../fmtx.zig");
+const memx = @import("../memx.zig");
 
 pub const ClientHandshakeState = union(ProtocolVersion) {
     v1_3: ClientHandshakeStateTls13,
@@ -112,13 +122,24 @@ pub const ClientHandshakeStateTls12 = struct {
 
     pub fn doFullHandshake(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
         var hs_msg = try self.conn.readHandshake(allocator);
-        var cert_msg = switch (hs_msg) {
-            .Certificate => |c| c.v1_2,
+        var cert_msg: CertificateMsgTls12 = undefined;
+        switch (hs_msg) {
+            .Certificate => |*c| {
+                switch (c.*) {
+                    .v1_2 => |c12| cert_msg = c12,
+                    else => {
+                        hs_msg.deinit(allocator);
+                        self.conn.sendAlert(.unexpected_message) catch {};
+                        return error.UnexpectedMessage;
+                    },
+                }
+            },
             else => {
+                hs_msg.deinit(allocator);
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
-        };
+        }
         defer cert_msg.deinit(allocator);
         if (cert_msg.certificates.len == 0) {
             self.conn.sendAlert(.unexpected_message) catch {};
@@ -126,11 +147,10 @@ pub const ClientHandshakeStateTls12 = struct {
         }
 
         try self.finished_hash.?.write(try cert_msg.marshal(allocator));
-        std.log.debug("client: cert {}", .{std.fmt.fmtSliceHexLower(cert_msg.raw.?)});
+        std.log.info("client: cert {}", .{std.fmt.fmtSliceHexLower(cert_msg.raw.?)});
         try self.finished_hash.?.debugLogClientHash(allocator, "client: cert");
 
         hs_msg = try self.conn.readHandshake(allocator);
-        errdefer hs_msg.deinit(allocator);
         switch (hs_msg) {
             .CertificateStatus => |cs| {
                 // RFC4366 on Certificate Status Request:
@@ -157,6 +177,11 @@ pub const ClientHandshakeStateTls12 = struct {
         if (self.conn.handshakes == 0) {
             // If this is the first handshake on a connection, process and
             // (optionally) verify the server's certificates.
+            {
+                for (cert_msg.certificates) |cert, i| {
+                    std.log.info("client: cert_msg cert[{}]=0x{x}", .{ i, @ptrToInt(cert.ptr) });
+                }
+            }
             try self.conn.verifyServerCertificate(cert_msg.certificates);
         } else {
             // TODO: implement
@@ -169,7 +194,7 @@ pub const ClientHandshakeStateTls12 = struct {
                 {
                     defer skx_msg.deinit(allocator);
                     try self.finished_hash.?.write(try skx_msg.marshal(allocator));
-                    std.log.debug("client: skx {}", .{std.fmt.fmtSliceHexLower(skx_msg.raw.?)});
+                    std.log.info("client: skx {}", .{std.fmt.fmtSliceHexLower(skx_msg.raw.?)});
                     try self.finished_hash.?.debugLogClientHash(allocator, "client: skx");
                     key_agreement.processServerKeyExchange(
                         allocator,
@@ -187,22 +212,110 @@ pub const ClientHandshakeStateTls12 = struct {
             else => {},
         }
 
-        // TODO: implement handling of CertificateRequestMsg
+        var cert_requested = false;
+        var cert_req_msg: CertificateRequestMsgTls12 = undefined;
+        var chain_to_send: *const CertificateChain = undefined;
+        switch (hs_msg) {
+            .CertificateRequest => |*m| {
+                std.log.info("client: CertificateRequest={}", .{m.*});
+                switch (m.*) {
+                    .v1_2 => |m2| {
+                        cert_requested = true;
+                        cert_req_msg = m2;
+                        std.log.info(
+                            "client: certReq {}",
+                            .{std.fmt.fmtSliceHexLower(cert_req_msg.raw.?)},
+                        );
+                        std.log.info("client: cert_req_msg={}", .{cert_req_msg});
+
+                        try self.finished_hash.?.write(try cert_req_msg.marshal(allocator));
+                        try self.finished_hash.?.debugLogClientHash(allocator, "client: certReq");
+
+                        const sig_schemes = blk: {
+                            var rsa_avail = false;
+                            var ec_avail = false;
+                            for (cert_req_msg.certificate_types) |cert_type| {
+                                switch (cert_type) {
+                                    .rsa_sign => rsa_avail = true,
+                                    .ecdsa_sign => ec_avail = true,
+                                }
+                            }
+
+                            var schemes = try std.ArrayList(SignatureScheme).initCapacity(
+                                allocator,
+                                cert_req_msg.supported_signature_algorithms.len,
+                            );
+                            errdefer schemes.deinit();
+                            for (cert_req_msg.supported_signature_algorithms) |sig_alg| {
+                                const sig_type = SignatureType.fromSignatureScheme(
+                                    sig_alg,
+                                ) catch continue;
+                                switch (sig_type) {
+                                    .ecdsa, .ed25519 => if (ec_avail) {
+                                        try schemes.append(sig_alg);
+                                    },
+                                    .rsa_pss, .pkcs1v15 => if (rsa_avail) {
+                                        try schemes.append(sig_alg);
+                                    },
+                                    else => {},
+                                }
+                            }
+                            break :blk schemes.toOwnedSlice();
+                        };
+                        defer allocator.free(sig_schemes);
+
+                        // Filter the signature schemes based on the certificate types.
+                        // See RFC 5246, Section 7.4.4 (where it calls this
+                        // "somewhat complicated").
+                        chain_to_send = self.conn.getClientCertificate(
+                            allocator,
+                            cert_req_msg.certificate_authorities,
+                            sig_schemes,
+                            self.conn.version.?,
+                        ) orelse &CertificateChain{};
+
+                        hs_msg = try self.conn.readHandshake(allocator);
+                    },
+                    else => {
+                        hs_msg.deinit(allocator);
+                        self.conn.sendAlert(.unexpected_message) catch {};
+                        return error.UnexpectedMessage;
+                    },
+                }
+            },
+            else => {},
+        }
+        defer if (cert_requested) cert_req_msg.deinit(allocator);
 
         switch (hs_msg) {
             .ServerHelloDone => |*hello_done_msg| {
                 defer hello_done_msg.deinit(allocator);
                 try self.finished_hash.?.write(try hello_done_msg.marshal(allocator));
-                std.log.debug("client: helloDone {}", .{std.fmt.fmtSliceHexLower(hello_done_msg.raw.?)});
+                std.log.info("client: helloDone {}", .{std.fmt.fmtSliceHexLower(hello_done_msg.raw.?)});
                 try self.finished_hash.?.debugLogClientHash(allocator, "client: helloDone");
             },
             else => {
+                hs_msg.deinit(allocator);
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
         }
 
-        // TODO: implement sending client certificate if requested.
+        // If the server requested a certificate then we have to send a
+        // Certificate message, even if it's empty because we don't have a
+        // certificate to send.
+        if (cert_requested) {
+            var client_cert_msg = CertificateMsgTls12{
+                .certificates = try memx.dupeStringList(allocator, chain_to_send.certificate_chain),
+            };
+            defer client_cert_msg.deinit(allocator);
+
+            const client_cert_msg_bytes = try client_cert_msg.marshal(allocator);
+            try self.finished_hash.?.write(client_cert_msg_bytes);
+            std.log.info("client: cert {}", .{std.fmt.fmtSliceHexLower(client_cert_msg_bytes)});
+            try self.finished_hash.?.debugLogClientHash(allocator, "client: cert");
+            try self.conn.writeRecord(allocator, .handshake, client_cert_msg_bytes);
+        }
 
         var pre_master_secret: []const u8 = undefined;
         var ckx_msg: ClientKeyExchangeMsg = undefined;
@@ -223,12 +336,77 @@ pub const ClientHandshakeStateTls12 = struct {
         });
         // TODO: implement for case when cks_msg is not generated.
         const ckx_msg_bytes = try ckx_msg.marshal(allocator);
-        try self.finished_hash.?.write(ckx_msg_bytes);
         std.log.debug("client: ckx {}", .{std.fmt.fmtSliceHexLower(ckx_msg_bytes)});
+        try self.finished_hash.?.write(ckx_msg_bytes);
         try self.finished_hash.?.debugLogClientHash(allocator, "client: ckx");
         try self.conn.writeRecord(allocator, .handshake, ckx_msg_bytes);
 
-        // TODO: implement sending CertVerifyMsg when needed
+        if (cert_requested and chain_to_send.certificate_chain.len > 0) {
+            var cert_verify_msg = blk: {
+                const sig_alg = selectSignatureScheme(
+                    allocator,
+                    self.conn.version.?,
+                    chain_to_send,
+                    cert_req_msg.supported_signature_algorithms,
+                ) catch |err| {
+                    self.conn.sendAlert(.handshake_failure) catch {};
+                    return err;
+                };
+
+                const sig_type = SignatureType.fromSignatureScheme(sig_alg) catch {
+                    try self.conn.sendAlert(.internal_error);
+                };
+                const sig_hash = HashType.fromSignatureScheme(sig_alg) catch {
+                    try self.conn.sendAlert(.internal_error);
+                };
+                var signed = try self.finished_hash.?.hashForClientCertificate(
+                    allocator,
+                    sig_type,
+                    sig_hash,
+                );
+                defer allocator.free(signed);
+                std.log.info(
+                    "ClientHandshakeStateTls12.doFullHandshake signed={}",
+                    .{std.fmt.fmtSliceHexLower(signed)},
+                );
+
+                const sign_opts = if (sig_type == .rsa_pss)
+                    crypto.SignOpts{ .hash_type = sig_hash, .salt_length = .equals_hash }
+                else
+                    crypto.SignOpts{ .hash_type = sig_hash };
+                std.log.info(
+                    "ClientHandshakeStateTls12.doFullHandshake cert={}",
+                    .{std.fmt.fmtSliceHexLower(chain_to_send.certificate_chain[0])},
+                );
+                var sig = chain_to_send.private_key.?.sign(
+                    allocator,
+                    signed,
+                    sign_opts,
+                ) catch {
+                    self.conn.sendAlert(.internal_error) catch {};
+                    return error.SignHandshakeFailed;
+                };
+                std.log.info(
+                    "ClientHandshakeStateTls12.doFullHandshake sig={}",
+                    .{std.fmt.fmtSliceHexLower(sig)},
+                );
+
+                break :blk CertificateVerifyMsg{
+                    .signature_algorithm = sig_alg,
+                    .signature = sig,
+                };
+            };
+            defer cert_verify_msg.deinit(allocator);
+
+            const cert_verify_msg_bytes = try cert_verify_msg.marshal(allocator);
+            try self.finished_hash.?.write(cert_verify_msg_bytes);
+            try self.finished_hash.?.debugLogClientHash(allocator, "client: certVerify");
+            try self.conn.writeRecord(allocator, .handshake, cert_verify_msg_bytes);
+            std.log.info(
+                "ClientHandshakeStateTls12.doFullHandshake sent cert_verify_msg={}",
+                .{std.fmt.fmtSliceHexLower(cert_verify_msg_bytes)},
+            );
+        }
 
         self.master_secret = try masterFromPreMasterSecret(
             allocator,

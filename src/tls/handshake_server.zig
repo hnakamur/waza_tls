@@ -3,11 +3,17 @@ const crypto = std.crypto;
 const fmt = std.fmt;
 const math = std.math;
 const mem = std.mem;
+const HashType = @import("auth.zig").HashType;
+const SignatureType = @import("auth.zig").SignatureType;
+const isSupportedSignatureAlgorithm = @import("auth.zig").isSupportedSignatureAlgorithm;
+const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CertificateMsgTls12 = @import("handshake_msg.zig").CertificateMsgTls12;
+const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
+const CertificateRequestMsgTls12 = @import("handshake_msg.zig").CertificateRequestMsgTls12;
 const ServerHelloDoneMsg = @import("handshake_msg.zig").ServerHelloDoneMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
@@ -33,6 +39,7 @@ const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
+const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const ServerHandshakeStateTls13 = @import("handshake_server_tls13.zig").ServerHandshakeStateTls13;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
@@ -311,6 +318,7 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(server_hello_bytes);
         try self.finished_hash.?.debugLogClientHash(allocator, "server: serverHello");
         try self.conn.writeRecord(allocator, .handshake, server_hello_bytes);
+        std.log.info("server: server_hello: {}", .{std.fmt.fmtSliceHexLower(server_hello_bytes)});
 
         {
             const certificates = try memx.dupeStringList(
@@ -345,12 +353,49 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(skx_bytes);
         try self.finished_hash.?.debugLogClientHash(allocator, "server: skx");
         try self.conn.writeRecord(allocator, .handshake, skx_bytes);
+        std.log.info("server: skx: {}", .{std.fmt.fmtSliceHexLower(skx_bytes)});
 
-        if (@enumToInt(self.conn.config.client_auth) >
+        std.log.info("server: client_auth: {}", .{self.conn.config.client_auth});
+        var cert_req_msg: ?CertificateRequestMsgTls12 = null;
+        if (@enumToInt(self.conn.config.client_auth) >=
             @enumToInt(ClientAuthType.request_client_cert))
         {
-            @panic("not implemented yet");
+            cert_req_msg = blk: {
+                const cert_types = try allocator.dupe(
+                    CertificateRequestMsgTls12.CertificateType,
+                    &[_]CertificateRequestMsgTls12.CertificateType{
+                        .rsa_sign, .ecdsa_sign,
+                    },
+                );
+                errdefer allocator.free(cert_types);
+
+                const sig_algs = try allocator.dupe(
+                    SignatureScheme,
+                    supported_signature_algorithms,
+                );
+
+                // An empty list of certificateAuthorities signals to
+                // the client that it may send any certificate in response
+                // to our request. When we know the CAs we trust, then
+                // we can send them down, so that the client can choose
+                // an appropriate certificate to give to us.
+                const auths = if (self.conn.config.client_cas) |*cas| blk2: {
+                    break :blk2 try cas.subjects(allocator);
+                } else &[_][]u8{};
+
+                break :blk CertificateRequestMsgTls12{
+                    .certificate_types = cert_types,
+                    .supported_signature_algorithms = sig_algs,
+                    .certificate_authorities = auths,
+                };
+            };
+
+            const cert_req_msg_bytes = try cert_req_msg.?.marshal(allocator);
+            try self.finished_hash.?.write(cert_req_msg_bytes);
+            try self.conn.writeRecord(allocator, .handshake, cert_req_msg_bytes);
+            std.log.info("server: certReq: {}", .{std.fmt.fmtSliceHexLower(cert_req_msg_bytes)});
         }
+        defer if (cert_req_msg) |*msg| msg.deinit(allocator);
 
         var hello_done = ServerHelloDoneMsg{};
         defer hello_done.deinit(allocator);
@@ -358,15 +403,57 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(hello_done_bytes);
         try self.finished_hash.?.debugLogClientHash(allocator, "server: helloDone");
         try self.conn.writeRecord(allocator, .handshake, hello_done_bytes);
+        std.log.info("server: helloDone: {}", .{std.fmt.fmtSliceHexLower(hello_done_bytes)});
 
         try self.conn.flush();
 
         var hs_msg = try self.conn.readHandshake(allocator);
+        std.log.info("server supposed ckx={}", .{hs_msg});
+        // If we requested a client certificate, then the client must send a
+        // certificate message, even if it's empty.
+        if (@enumToInt(self.conn.config.client_auth) >=
+            @enumToInt(ClientAuthType.request_client_cert))
+        {
+            {
+                var cert_msg: CertificateMsgTls12 = undefined;
+                switch (hs_msg) {
+                    .Certificate => |*c| {
+                        switch (c.*) {
+                            .v1_2 => |c12| cert_msg = c12,
+                            else => {
+                                hs_msg.deinit(allocator);
+                                self.conn.sendAlert(.unexpected_message) catch {};
+                                return error.UnexpectedMessage;
+                            },
+                        }
+                    },
+                    else => {
+                        hs_msg.deinit(allocator);
+                        self.conn.sendAlert(.unexpected_message) catch {};
+                        return error.UnexpectedMessage;
+                    },
+                }
+                defer cert_msg.deinit(allocator);
+
+                try self.finished_hash.?.write(cert_msg.raw.?);
+
+                try self.conn.processCertsFromClient(allocator, &CertificateChain{
+                    .certificate_chain = cert_msg.certificates,
+                });
+
+                if (cert_msg.certificates.len != 0) {}
+            }
+
+            hs_msg = try self.conn.readHandshake(allocator);
+        }
+
+        // TODO: implement veirfy connection
 
         // Get client key exchange
         var ckx_msg = switch (hs_msg) {
             .ClientKeyExchange => |c| c,
             else => {
+                hs_msg.deinit(allocator);
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
             },
@@ -399,8 +486,66 @@ pub const ServerHandshakeStateTls12 = struct {
             .{fmtx.fmtSliceHexEscapeLower(self.master_secret.?)},
         );
 
+        // If we received a client cert in response to our certificate request message,
+        // the client will send us a certificateVerifyMsg immediately after the
+        // clientKeyExchangeMsg. This message is a digest of all preceding
+        // handshake-layer messages that is signed using the private key corresponding
+        // to the client's certificate. This allows us to verify that the client is in
+        // possession of the private key of the certificate.
         if (self.conn.peer_certificates.len > 0) {
-            @panic("not implemented yet");
+            var cert_verify_msg = blk: {
+                hs_msg = try self.conn.readHandshake(allocator);
+                errdefer hs_msg.deinit(allocator);
+                switch (hs_msg) {
+                    .CertificateVerify => |m| break :blk m,
+                    else => {
+                        self.conn.sendAlert(.unexpected_message) catch {};
+                        return error.UnexpectedMessage;
+                    },
+                }
+            };
+            defer cert_verify_msg.deinit(allocator);
+
+            const sig_alg = cert_verify_msg.signature_algorithm;
+            if (!isSupportedSignatureAlgorithm(
+                sig_alg,
+                cert_req_msg.?.supported_signature_algorithms,
+            )) {
+                self.conn.sendAlert(.illegal_parameter) catch {};
+                return error.InvalidSignatureAlgorithmInClientCertificate;
+            }
+
+            const sig_type = SignatureType.fromSignatureScheme(sig_alg) catch {
+                try self.conn.sendAlert(.internal_error);
+            };
+            const sig_hash = HashType.fromSignatureScheme(sig_alg) catch {
+                try self.conn.sendAlert(.internal_error);
+            };
+            var signed = try self.finished_hash.?.hashForClientCertificate(
+                allocator,
+                sig_type,
+                sig_hash,
+            );
+            defer allocator.free(signed);
+            std.log.info(
+                "ServerHandshakeStateTls12.doFullHandshake signed={}",
+                .{std.fmt.fmtSliceHexLower(signed)},
+            );
+
+            verifyHandshakeSignature(
+                allocator,
+                sig_type,
+                self.conn.peer_certificates[0].public_key,
+                sig_hash,
+                signed,
+                cert_verify_msg.signature,
+            ) catch {
+                self.conn.sendAlert(.decrypt_error) catch {};
+                return error.InvalidSignatureByClientCertificate;
+            };
+
+            try self.finished_hash.?.write(try cert_verify_msg.marshal(allocator));
+            try self.finished_hash.?.debugLogClientHash(allocator, "server: certVerify");
         }
 
         self.finished_hash.?.discardHandshakeBuffer();

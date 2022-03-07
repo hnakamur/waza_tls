@@ -3,6 +3,8 @@ const assert = std.debug.assert;
 const fifo = std.fifo;
 const math = std.math;
 const mem = std.mem;
+const HashType = @import("auth.zig").HashType;
+const SignatureType = @import("auth.zig").SignatureType;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const crypto = @import("crypto.zig");
 const Sha256Hash = @import("crypto.zig").Sha256Hash;
@@ -121,5 +123,27 @@ pub const FinishedHash = struct {
         var out: [finished_verify_length]u8 = undefined;
         try self.prf(allocator, master_secret, server_finished_label, seed, &out);
         return out;
+    }
+
+    // hashForClientCertificate returns the handshake messages so far, pre-hashed if
+    // necessary, suitable for signing by a TLS client certificate.
+    pub fn hashForClientCertificate(
+        self: *const FinishedHash,
+        allocator: mem.Allocator,
+        sig_type: SignatureType,
+        sig_hash: HashType,
+    ) ![]const u8 {
+        if (sig_type == .ed25519 and self.buffer == null) {
+            @panic("tls: handshake hash for a client certificate requested after discarding the handshake buffer");
+        }
+
+        const buf = self.buffer.?.readableSlice(0);
+        if (sig_type == .ed25519) {
+            return try allocator.dupe(u8, buf);
+        }
+
+        var h = crypto.Hash.init(sig_hash);
+        h.update(buf);
+        return try h.allocFinal(allocator);
     }
 };

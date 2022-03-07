@@ -160,7 +160,7 @@ test "ClientServer_tls12_rsa2048" {
     }.runTest();
 }
 
-test "ClientServer_tls12_p256" {
+test "ClientServer_tls12_p256_no_client_certificate" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
@@ -223,6 +223,106 @@ test "ClientServer_tls12_p256" {
                     .max_version = .v1_2,
                 },
             );
+            defer server.deinit();
+
+            const t = try std.Thread.spawn(
+                .{},
+                testClient,
+                .{ server.server.listen_address, allocator },
+            );
+            defer t.join();
+
+            try testServer(&server);
+        }
+    }.runTest();
+}
+
+test "ClientServer_tls12_p256_client_certificate" {
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+    const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+    const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
+
+    testing.log_level = .info;
+
+    try struct {
+        fn testServer(server: *Server) !void {
+            var client = try server.accept();
+            const allocator = server.allocator;
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+            std.log.debug(
+                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("hello", buffer[0..n]);
+
+            _ = try client.conn.write("How do you do?");
+        }
+
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client = blk: {
+                const cert_pem = @embedFile("../../tests/client_cert/my-client.crt");
+                const key_pem = @embedFile("../../tests/client_cert/my-client.key");
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+                errdefer certificates[0].deinit(allocator);
+
+                break :blk try Client.init(allocator, addr, .{
+                    .max_version = .v1_2,
+                    .insecure_skip_verify = true,
+                    .certificates = certificates,
+                });
+            };
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("hello");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+
+            const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
+            const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
+
+            const ca_pem = @embedFile("../../tests/client_cert/my-root-ca.crt");
+
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var server = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+                errdefer certificates[0].deinit(allocator);
+
+                var client_cas = try CertPool.init(allocator, false);
+                errdefer client_cas.deinit();
+                try client_cas.appendCertsFromPem(ca_pem);
+
+                break :blk try Server.init(
+                    allocator,
+                    listen_addr,
+                    .{},
+                    .{
+                        .certificates = certificates,
+                        .max_version = .v1_2,
+                        .client_auth = .request_client_cert,
+                        .client_cas = client_cas,
+                    },
+                );
+            };
             defer server.deinit();
 
             const t = try std.Thread.spawn(

@@ -663,13 +663,14 @@ pub const ServerHandshakeStateTls13 = struct {
         if (cert_msg.cert_chain.certificate_chain.len != 0) {
             var cert_verify_msg = blk: {
                 var hs_msg = try self.conn.readHandshake(allocator);
-                break :blk switch (hs_msg) {
-                    .CertificateVerify => |m| m,
+                errdefer hs_msg.deinit(allocator);
+                switch (hs_msg) {
+                    .CertificateVerify => |m| break :blk m,
                     else => {
                         self.conn.sendAlert(.unexpected_message) catch {};
                         return error.UnexpectedMessage;
                     },
-                };
+                }
             };
             defer cert_verify_msg.deinit(allocator);
 

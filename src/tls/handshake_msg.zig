@@ -1121,12 +1121,18 @@ pub const CertificateRequestMsg = union(ProtocolVersion) {
 };
 
 pub const CertificateRequestMsgTls12 = struct {
+    pub const CertificateType = enum(u8) {
+        rsa_sign = 1,
+        ecdsa_sign = 2,
+    };
+
     raw: ?[]const u8 = null,
-    certificate_types: []const u8 = "",
-    supported_signature_algorithms: []SignatureScheme = &.{},
+    certificate_types: []const CertificateType = &.{},
+    supported_signature_algorithms: []const SignatureScheme = &.{},
     certificate_authorities: []const []const u8 = &.{},
 
     pub fn deinit(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) void {
+        std.log.info("CertificateRequestMsgTls12.deinit start, self=0x{x}", .{@ptrToInt(self)});
         if (self.raw) |raw| allocator.free(raw);
         if (self.certificate_types.len > 0) {
             allocator.free(self.certificate_types);
@@ -1134,6 +1140,10 @@ pub const CertificateRequestMsgTls12 = struct {
         if (self.supported_signature_algorithms.len > 0) {
             allocator.free(self.supported_signature_algorithms);
         }
+        std.log.info(
+            "CertificateRequestMsgTls12.deinit self.certificate_authorities.len={}",
+            .{self.certificate_authorities.len},
+        );
         if (self.certificate_authorities.len > 0) {
             for (self.certificate_authorities) |auth| allocator.free(auth);
             allocator.free(self.certificate_authorities);
@@ -1146,40 +1156,15 @@ pub const CertificateRequestMsgTls12 = struct {
         var bv = BytesView.init(raw);
         bv.skip(handshake_msg_header_len);
 
-        const cert_types = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u8, .Big));
+        const cert_types = try readEnumList(u8, CertificateType, allocator, &bv);
         errdefer allocator.free(cert_types);
 
         // CertificateRequestMsgTls12 has always signature algorithms
-        const sig_and_hash_len = try bv.readIntBig(u16);
-        const sig_and_hash_count = sig_and_hash_len / @sizeOf(SignatureScheme);
-        var sig_and_algs = try allocator.alloc(SignatureScheme, sig_and_hash_count);
+        const sig_and_algs = try readEnumList(u16, SignatureScheme, allocator, &bv);
         errdefer allocator.free(sig_and_algs);
-        var i: usize = 0;
-        while (i < sig_and_hash_count) : (i += 1) {
-            sig_and_algs[i] = try bv.readEnum(SignatureScheme, .Big);
-        }
 
-        var auths = BytesView.init(try bv.readLenPrefixedBytes(u16, .Big));
-        if (auths.empty()) {
-            return error.InvalidCertificateRequestMsgTls12;
-        }
-
-        var count: usize = 0;
-        var auths_count = auths;
-        while (!auths_count.empty()) : (count += 1) {
-            const ca = try auths_count.readLenPrefixedBytes(u16, .Big);
-            if (ca.len == 0) {
-                return error.InvalidCertificateRequestMsgTls12;
-            }
-        }
-
-        i = 0;
-        var authorities = try allocator.alloc([]const u8, count);
-        errdefer memx.freeElemsAndFreeSliceInError([]const u8, authorities, allocator, i);
-        while (!auths.empty()) : (i += 1) {
-            const ca = try auths.readLenPrefixedBytes(u16, .Big);
-            authorities[i] = try allocator.dupe(u8, ca);
-        }
+        var authorities = try readStringList(u16, u16, allocator, &bv);
+        errdefer memx.freeElemsAndFreeSlice([]const u8, authorities, allocator);
 
         if (!bv.empty()) {
             return error.InvalidCertificateRequestMsgTls12;
@@ -1219,7 +1204,14 @@ pub const CertificateRequestMsgTls12 = struct {
         try writeInt(u8, MsgType.CertificateRequest, writer);
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
-        try writeLenAndBytes(u8, self.certificate_types, writer);
+        // try writeLenAndBytes(u8, self.certificate_types, writer);
+        try writeLenAndIntSlice(
+            u8,
+            u8,
+            CertificateType,
+            self.certificate_types,
+            writer,
+        );
         try writeLenAndIntSlice(
             u16,
             u16,
@@ -1242,7 +1234,7 @@ test "CertificateRequestMsgTls12" {
 
     const msg_data = "\x0d" ++ // index: 0
         "\x00\x00\x25" ++ // index: 1
-        "\x02\xab\xcd" ++ // index: 4
+        "\x02\x01\x02" ++ // index: 4
         "\x00\x06" ++ // index: 7
         "\x08\x04" ++ // index: 9
         "\x04\x03" ++ // index: 11
@@ -1255,8 +1247,14 @@ test "CertificateRequestMsgTls12" {
     var msg = try CertificateRequestMsgTls12.unmarshal(allocator, msg_data);
     defer msg.deinit(allocator);
 
-    const want_certificate_types = "\xab\xcd";
-    try testing.expectEqualSlices(u8, want_certificate_types, msg.certificate_types);
+    const want_certificate_types = &[_]CertificateRequestMsgTls12.CertificateType{
+        .rsa_sign, .ecdsa_sign,
+    };
+    try testing.expectEqualSlices(
+        CertificateRequestMsgTls12.CertificateType,
+        want_certificate_types,
+        msg.certificate_types,
+    );
     const want_supported_signature_algorithms = &[_]SignatureScheme{
         .pss_with_sha256,
         .ecdsa_with_p256_and_sha256,

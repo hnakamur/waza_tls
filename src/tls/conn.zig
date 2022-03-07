@@ -969,7 +969,8 @@ pub const Conn = struct {
             allocator.free(certs);
         }
         for (certificates) |cert_der, i| {
-            std.log.debug("i={}, cert_der={}", .{ i, fmtx.fmtSliceHexEscapeLower(cert_der) });
+            std.log.info("i={}, cert_der.ptr=0x{x}", .{ i, @ptrToInt(cert_der.ptr) });
+            // std.log.info("i={}, cert_der={}", .{ i, fmtx.fmtSliceHexEscapeLower(cert_der) });
             var cert = x509.Certificate.parse(allocator, cert_der) catch {
                 std.log.err("bad_certificate i={}", .{i});
                 self.sendAlert(.bad_certificate) catch {};
@@ -1039,11 +1040,19 @@ pub const Conn = struct {
             }
 
             for (cert_chain.certificate_chain) |cert, j| {
+                std.log.info(
+                    "getClientCertificate j={}, cert={}",
+                    .{ j, std.fmt.fmtSliceHexLower(cert) },
+                );
                 var x509_cert = if (j == 0 and cert_chain.leaf != null)
                     cert_chain.leaf.?.*
                 else
-                    x509.Certificate.parse(allocator, cert) catch continue;
+                    x509.Certificate.parse(allocator, cert) catch |err| {
+                        std.log.err("getClientCertificate parse error: {s}", .{@errorName(err)});
+                        continue;
+                    };
                 defer if (j != 0 or cert_chain.leaf == null) {
+                    std.log.info("getClientCertificate j={}", .{j});
                     x509_cert.deinit(allocator);
                 };
                 for (available_authorities) |auth| {
