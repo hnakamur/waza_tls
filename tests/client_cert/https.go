@@ -142,6 +142,8 @@ func runClient(args []string) error {
 	certFilename := fs.String("cert", "", "client certificate filename")
 	keyFilename := fs.String("key", "", "client key filename")
 	caFilename := fs.String("ca", "", "certificate authority filename")
+	reqCount := fs.Int("req-count", 1, "request count")
+	clientSessionCacheCapacity := fs.Int("client-session-cache-capacity", 0, "client session cache capacity (0=disabled)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -167,29 +169,36 @@ func runClient(args []string) error {
 		caCertPool.AppendCertsFromPEM(caCert)
 		tr.TLSClientConfig.RootCAs = caCertPool
 	}
+	if *clientSessionCacheCapacity > 0 {
+		tr.TLSClientConfig.ClientSessionCache = tls.NewLRUClientSessionCache(*clientSessionCacheCapacity)
+	}
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(*port)))
 	}
+
 	c := http.Client{Transport: tr}
 	u := url.URL{Scheme: "https", Host: net.JoinHostPort(*host, strconv.Itoa(*port))}
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
-	if err != nil {
-		return err
-	}
-	req.Host = *host
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	for i := 0; i < *reqCount; i++ {
+		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+		if err != nil {
+			return err
+		}
+		req.Host = *host
+		resp, err := c.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
 
-	_, err = io.Copy(io.Discard, resp.Body)
-	if err != nil {
-		return err
-	}
+		_, err = io.Copy(io.Discard, resp.Body)
+		if err != nil {
+			return err
+		}
 
-	log.Printf("status=%d", resp.StatusCode)
+		log.Printf("status=%d", resp.StatusCode)
+		c.CloseIdleConnections()
+	}
 	return nil
 }
 
