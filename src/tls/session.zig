@@ -44,7 +44,14 @@ pub const ClientSessionState = struct {
     }
 };
 
-const LruSessionCache = struct {
+pub const LoadSessionResult = struct {
+    cache_key: []const u8 = "",
+    session: ?*ClientSessionState = null,
+    early_secret: []const u8 = "",
+    binder_key: []const u8 = "",
+};
+
+pub const LruSessionCache = struct {
     const Self = @This();
     const Queue = std.TailQueue(ClientSessionState);
     const Node = Queue.Node;
@@ -111,11 +118,11 @@ const LruSessionCache = struct {
     }
 
     // LruSessionCache owns the memory for the returned value.
-    pub fn get(self: *Self, session_key: []const u8) ?ClientSessionState {
+    pub fn getPtr(self: *Self, session_key: []const u8) ?*ClientSessionState {
         if (self.map.get(session_key)) |*node_ptr| {
             self.queue.remove(node_ptr);
             self.queue.prepend(node_ptr);
-            return node_ptr.data;
+            return &node_ptr.data;
         } else {
             return null;
         }
@@ -213,9 +220,9 @@ test "LruSessionCache" {
         });
     }
 
-    var cs = cache.get("key2");
-    std.log.debug("cs for key2={}", .{cs});
+    var cs = cache.getPtr("key2");
     try testing.expect(cs != null);
+    std.log.debug("cs for key2={}", .{cs.?.*});
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
@@ -250,7 +257,7 @@ test "LruSessionCache" {
         });
     }
 
-    cs = cache.get("key2");
+    cs = cache.getPtr("key2");
     try testing.expect(cs == null);
 
     cache.remove("key1");

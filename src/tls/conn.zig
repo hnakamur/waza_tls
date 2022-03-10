@@ -19,6 +19,7 @@ const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
+const PskMode = @import("handshake_msg.zig").PskMode;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const random_length = @import("handshake_msg.zig").random_length;
@@ -45,6 +46,8 @@ const VerifyOptions = @import("verify.zig").VerifyOptions;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
+const LoadSessionResult = @import("session.zig").LoadSessionResult;
+const LruSessionCache = @import("session.zig").LruSessionCache;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -143,6 +146,10 @@ pub const Conn = struct {
         // also disabled if ClientSessionCache is nil.
         session_tickets_disabled: bool = false,
 
+        // ClientSessionCache is a cache of ClientSessionState entries for TLS
+        // session resumption. It is only used by clients.
+        client_session_cache: ?LruSessionCache = null,
+
         // MinVersion contains the minimum TLS version that is acceptable.
         //
         // By default, TLS 1.2 is currently used as the minimum when acting as a
@@ -170,6 +177,7 @@ pub const Conn = struct {
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
             if (self.client_cas) |*cas| cas.deinit();
+            if (self.client_session_cache) |*cache| cache.deinit();
         }
 
         pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
@@ -227,6 +235,7 @@ pub const Conn = struct {
 
     role: Role,
     allocator: mem.Allocator,
+    remote_address: net.Address,
     stream: net.Stream,
     in: HalfConn,
     out: HalfConn,
@@ -269,6 +278,7 @@ pub const Conn = struct {
     pub fn init(
         allocator: mem.Allocator,
         role: Role,
+        remote_address: net.Address,
         stream: net.Stream,
         in: HalfConn,
         out: HalfConn,
@@ -277,6 +287,7 @@ pub const Conn = struct {
         return .{
             .allocator = allocator,
             .role = role,
+            .remote_address = remote_address,
             .stream = stream,
             .in = in,
             .out = out,
@@ -396,9 +407,9 @@ pub const Conn = struct {
             var ecdhe_params: ?EcdheParameters = null;
             errdefer if (ecdhe_params) |*params| params.deinit(allocator);
             var client_hello = try self.makeClientHello(allocator, &ecdhe_params);
+            errdefer client_hello.deinit(allocator);
 
             const client_hello_bytes = try client_hello.marshal(allocator);
-            errdefer client_hello.deinit(allocator);
             try self.writeRecord(allocator, .handshake, client_hello_bytes);
 
             var hs_msg = try self.readHandshake(allocator);
@@ -1134,6 +1145,40 @@ pub const Conn = struct {
 
         // TODO: implement
         std.log.info("Conn.processCertsFromClient ok", .{});
+    }
+
+    pub fn loadSession(
+        self: *Conn,
+        allocator: mem.Allocator,
+        hello: *ClientHelloMsg,
+    ) !LoadSessionResult {
+        if (self.config.session_tickets_disabled or self.config.client_session_cache == null) {
+            return LoadSessionResult{};
+        }
+
+        hello.ticket_supported = true;
+
+        if (hello.supported_versions[0] == .v1_3) {
+            // Require DHE on resumption as it guarantees forward secrecy against
+            // compromise of the session ticket key. See RFC 8446, Section 4.2.9.
+            if (hello.psk_modes.len > 0) {
+                allocator.free(hello.psk_modes);
+            }
+            hello.psk_modes = try allocator.dupe(PskMode, &[_]PskMode{.dhe});
+        }
+
+        // Session resumption is not allowed if renegotiating because
+        // renegotiation is primarily used to allow a client to send a client
+        // certificate, which would be skipped if session resumption occurred.
+        if (self.handshakes != 0) {
+            return LoadSessionResult{};
+        }
+
+        // Try to resume a previously negotiated TLS session, if available.
+
+        // TODO: implement
+
+        return LoadSessionResult{};
     }
 };
 

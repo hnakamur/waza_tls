@@ -7,7 +7,7 @@ const default_cipher_suites_tls13 = @import("cipher_suites.zig").default_cipher_
 
 const Server = struct {
     server: net.StreamServer,
-    connections: std.ArrayListUnmanaged(ServerConn),
+    connections: std.ArrayListUnmanaged(Conn),
     allocator: mem.Allocator,
     conn_config: Conn.Config,
 
@@ -21,7 +21,7 @@ const Server = struct {
         try server.listen(address);
         return Server{
             .server = server,
-            .connections = try std.ArrayListUnmanaged(ServerConn).initCapacity(allocator, 1),
+            .connections = try std.ArrayListUnmanaged(Conn).initCapacity(allocator, 1),
             .allocator = allocator,
             .conn_config = conn_config,
         };
@@ -31,34 +31,19 @@ const Server = struct {
         self.connections.deinit(self.allocator);
     }
 
-    pub fn accept(self: *Server) !ServerConn {
+    pub fn accept(self: *Server) !Conn {
         var conn = try self.server.accept();
-        const c = ServerConn{
-            .address = conn.address,
-            .conn = Conn.init(
-                self.allocator,
-                .server,
-                conn.stream,
-                .{},
-                .{},
-                self.conn_config,
-            ),
-        };
+        const c = Conn.init(
+            self.allocator,
+            .server,
+            conn.address,
+            conn.stream,
+            .{},
+            .{},
+            self.conn_config,
+        );
         try self.connections.append(self.allocator, c);
         return c;
-    }
-};
-
-const ServerConn = struct {
-    address: net.Address,
-    conn: Conn,
-
-    pub fn deinit(self: *ServerConn, allocator: mem.Allocator) void {
-        self.conn.deinit(allocator);
-    }
-
-    pub fn close(self: *ServerConn) !void {
-        try self.conn.close();
     }
 };
 
@@ -68,7 +53,7 @@ const Client = struct {
     pub fn init(allocator: mem.Allocator, addr: net.Address, conn_config: Conn.Config) !Client {
         var stream = try net.tcpConnectToAddress(addr);
         return Client{
-            .conn = Conn.init(allocator, .client, stream, .{}, .{}, conn_config),
+            .conn = Conn.init(allocator, .client, addr, stream, .{}, .{}, conn_config),
         };
     }
 
@@ -92,20 +77,20 @@ test "ClientServer_tls12_rsa2048" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            const n = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
-            _ = try client.conn.write("How do you do?");
+            _ = try conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -169,20 +154,20 @@ test "ClientServer_tls12_p256_no_client_certificate" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            const n = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
-            _ = try client.conn.write("How do you do?");
+            _ = try conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -246,20 +231,20 @@ test "ClientServer_tls12_p256_client_certificate" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
+            const n = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
-            _ = try client.conn.write("How do you do?");
+            _ = try conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -348,20 +333,20 @@ test "ClientServer_tls13_rsa2048" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            const n = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
-            _ = try client.conn.write("How do you do?");
+            _ = try conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -428,20 +413,20 @@ test "ClientServer_tls13_p256_no_client_certificate" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            const n = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
-            _ = try client.conn.write("How do you do?");
+            _ = try conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -509,20 +494,20 @@ test "ClientServer_tls13_p256_client_certificate" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            const n = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), conn.version);
             try testing.expectEqualStrings("hello", buffer[0..n]);
 
-            _ = try client.conn.write("How do you do?");
+            _ = try conn.write("How do you do?");
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -615,17 +600,17 @@ test "ServerOnly_tls13_p256" {
 
     try struct {
         fn testServer(server: *Server) !void {
-            var client = try server.accept();
+            var conn = try server.accept();
             const allocator = server.allocator;
-            defer client.deinit(allocator);
-            defer client.close() catch {};
+            defer conn.deinit(allocator);
+            defer conn.close() catch {};
             std.log.debug(
-                "testServer &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
-                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+                "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
+                .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
             );
             var buffer = [_]u8{0} ** 1024;
-            _ = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            _ = try conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), conn.version);
 
             var resp = std.ArrayList(u8).init(allocator);
             defer resp.deinit();
@@ -637,7 +622,7 @@ test "ServerOnly_tls13_p256" {
             _ = try resp_writer.write("\r\n");
             _ = try resp_writer.write("This is an example server.\n");
 
-            _ = try client.conn.write(resp.items);
+            _ = try conn.write(resp.items);
         }
 
         fn runTest() !void {
