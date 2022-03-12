@@ -42,7 +42,6 @@ const supported_signature_algorithms = @import("common.zig").supported_signature
 const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
 
-
 // max_client_psk_identities is the number of client PSK identities the server will
 // attempt to validate. It will ignore the rest not to let cheap ClientHello
 // messages cause too much work in session ticket decryption attempts.
@@ -264,7 +263,7 @@ pub const ServerHandshakeStateTls13 = struct {
             return;
         }
 
-        if (!memx.containsScalar(PdkMode, self.client_hello.pdk_modes, .dhe)) {
+        if (!memx.containsScalar(PskMode, self.client_hello.pdk_modes, .dhe)) {
             return;
         }
 
@@ -276,12 +275,13 @@ pub const ServerHandshakeStateTls13 = struct {
             return;
         }
 
-        
         for (self.client_hello.pdk_identities) |identity, i| {
             if (i >= max_client_psk_identities) {
                 break;
             }
 
+            // TODO: implement
+            _ = identity;
         }
         _ = allocator;
         // TODO: implement
