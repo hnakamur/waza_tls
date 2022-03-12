@@ -29,13 +29,10 @@ const server_application_traffic_label = @import("key_schedule.zig").server_appl
 const server_signature_context = @import("auth.zig").server_signature_context;
 const client_signature_context = @import("auth.zig").client_signature_context;
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
+const ClientSessionState = @import("session.zig").ClientSessionState;
 const hmac = @import("hmac.zig");
 const crypto = @import("crypto.zig");
 const memx = @import("../memx.zig");
-
-const ClientSessionState = struct {
-    cipher_suite: CipherSuiteId,
-};
 
 pub const ClientHandshakeStateTls13 = struct {
     conn: *Conn,
@@ -53,28 +50,17 @@ pub const ClientHandshakeStateTls13 = struct {
 
     using_psk: bool = false,
     early_secret: []const u8 = "",
+    binder_key: []const u8 = "",
 
-    session: ?ClientSessionState = null,
-
-    pub fn init(
-        conn: *Conn,
-        client_hello: ClientHelloMsg,
-        server_hello: ServerHelloMsg,
-        ecdhe_params: EcdheParameters,
-    ) ClientHandshakeStateTls13 {
-        return .{
-            .hello = client_hello,
-            .server_hello = server_hello,
-            .conn = conn,
-            .ecdhe_params = ecdhe_params,
-        };
-    }
+    // ClientHandshakeStateTls13 does not own session.
+    session: ?*ClientSessionState = null,
 
     pub fn deinit(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);
         self.server_hello.deinit(allocator);
         if (self.cert_req) |*cert_req| cert_req.deinit(allocator);
         if (self.early_secret.len > 0) allocator.free(self.early_secret);
+        if (self.binder_key.len > 0) allocator.free(self.binder_key);
         if (self.master_secret.len > 0) allocator.free(self.master_secret);
         if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
     }

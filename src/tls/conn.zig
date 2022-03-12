@@ -13,6 +13,7 @@ const CipherSuite = @import("cipher_suites.zig").CipherSuite;
 const default_cipher_suites = @import("cipher_suites.zig").default_cipher_suites;
 const makeCipherPreferenceList = @import("cipher_suites.zig").makeCipherPreferenceList;
 const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
+const cipherSuiteTls13ById = @import("cipher_suites.zig").cipherSuiteTls13ById;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
@@ -26,6 +27,7 @@ const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
+const PskIdentity = @import("handshake_msg.zig").PskIdentity;
 const handshake_msg_header_len = @import("handshake_msg.zig").handshake_msg_header_len;
 const finished_verify_length = @import("prf.zig").finished_verify_length;
 const RecordType = @import("record.zig").RecordType;
@@ -41,6 +43,7 @@ const AlertError = @import("alert.zig").AlertError;
 const AlertLevel = @import("alert.zig").AlertLevel;
 const AlertDescription = @import("alert.zig").AlertDescription;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+const mutualCipherSuiteTls12 = @import("cipher_suites.zig").mutualCipherSuiteTls12;
 const x509 = @import("x509.zig");
 const VerifyOptions = @import("verify.zig").VerifyOptions;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
@@ -48,6 +51,9 @@ const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 const LoadSessionResult = @import("session.zig").LoadSessionResult;
 const LruSessionCache = @import("session.zig").LruSessionCache;
+const resumption_label = @import("key_schedule.zig").resumption_label;
+const resumption_binder_label = @import("key_schedule.zig").resumption_binder_label;
+const crypto = @import("crypto.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -403,11 +409,23 @@ pub const Conn = struct {
     }
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
+        var load_result: ?LoadSessionResult = null;
         self.handshake_state = blk: {
             var ecdhe_params: ?EcdheParameters = null;
             errdefer if (ecdhe_params) |*params| params.deinit(allocator);
             var client_hello = try self.makeClientHello(allocator, &ecdhe_params);
             errdefer client_hello.deinit(allocator);
+
+            load_result = try self.loadSession(allocator, &client_hello);
+            errdefer if (load_result.?.cache_key.len > 0 and load_result.?.session != null) {
+                // If we got a handshake failure when resuming a session, throw away
+                // the session ticket. See RFC 5077, Section 3.2.
+                //
+                // RFC 8446 makes no mention of dropping tickets on failure, but it
+                // does require servers to abort on invalid binders, so we need to
+                // delete tickets to recover from a corrupted PSK.
+                self.config.client_session_cache.?.remove(load_result.?.cache_key);
+            };
 
             const client_hello_bytes = try client_hello.marshal(allocator);
             try self.writeRecord(allocator, .handshake, client_hello_bytes);
@@ -441,30 +459,46 @@ pub const Conn = struct {
                 return error.DowngradeAttemptDetected;
             }
 
-            break :blk HandshakeState{
-                .client = if (self.version.? == .v1_3)
-                    ClientHandshakeState{
-                        .v1_3 = ClientHandshakeStateTls13.init(
-                            self,
-                            client_hello,
-                            server_hello,
-                            ecdhe_params.?,
-                        ),
-                    }
-                else
-                    ClientHandshakeState{
-                        .v1_2 = ClientHandshakeStateTls12.init(
-                            self,
-                            client_hello,
-                            server_hello,
-                        ),
+            if (self.version.? == .v1_3) {
+                break :blk HandshakeState{
+                    .client = ClientHandshakeState{
+                        .v1_3 = ClientHandshakeStateTls13{
+                            .hello = client_hello,
+                            .server_hello = server_hello,
+                            .conn = self,
+                            .ecdhe_params = ecdhe_params.?,
+                            .session = load_result.?.session,
+                            .early_secret = load_result.?.early_secret,
+                            .binder_key = load_result.?.binder_key,
+                        },
                     },
+                };
+            }
+
+            break :blk HandshakeState{
+                .client = ClientHandshakeState{
+                    .v1_2 = ClientHandshakeStateTls12{
+                        .hello = client_hello,
+                        .server_hello = server_hello,
+                        .conn = self,
+                        .session = load_result.?.session,
+                    },
+                },
             };
         };
 
         try self.handshake_state.?.client.handshake(allocator);
 
-        // TODO: implement
+        // If we had a successful handshake and hs.session is different from
+        // the one already cached - cache a new one.
+        if (load_result) |res| {
+            var hs_session = self.handshake_state.?.client.getSession();
+            if (res.cache_key.len > 0 and hs_session != null and
+                res.session != null and res.session.? != hs_session.?)
+            {
+                try self.config.client_session_cache.?.put(res.cache_key, hs_session.?.*);
+            }
+        }
     }
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
@@ -1175,12 +1209,159 @@ pub const Conn = struct {
         }
 
         // Try to resume a previously negotiated TLS session, if available.
+        const cache_key = try clientSessionCacheKey(allocator, self.remote_address, &self.config);
+        var ret = LoadSessionResult{ .cache_key = cache_key };
+        errdefer ret.deinit(allocator);
 
-        // TODO: implement
+        var session = self.config.client_session_cache.?.getPtr(cache_key);
+        if (session == null) {
+            return ret;
+        }
 
-        return LoadSessionResult{};
+        // Check that version used for the previous session is still valid.
+        if (!memx.containsScalar(ProtocolVersion, hello.supported_versions, session.?.ver)) {
+            return ret;
+        }
+
+        // Check that the cached server certificate is not expired, and that it's
+        // valid for the ServerName. This should be ensured by the cache key, but
+        // protect the application from a faulty ClientSessionCache implementation.
+        if (!self.config.insecure_skip_verify) {
+            if (session.?.verified_chains.len == 0) {
+                // The original connection had InsecureSkipVerify, while this doesn't.
+                return ret;
+            }
+
+            const server_cert = session.?.server_certificates[0];
+            const now = datetime.datetime.Datetime.now();
+            if (now.gt(server_cert.not_after)) {
+                // Expired certificate, delete the entry.
+                self.config.client_session_cache.?.remove(cache_key);
+                return ret;
+            }
+            server_cert.verifyHostname(self.config.server_name) catch {
+                return ret;
+            };
+        }
+
+        if (session.?.ver != .v1_3) {
+            // In TLS 1.2 the cipher suite must match the resumed session. Ensure we
+            // are still offering it.
+            if (mutualCipherSuiteTls12(hello.cipher_suites, session.?.cipher_suite) == null) {
+                return ret;
+            }
+
+            if (hello.session_ticket.len > 0) {
+                allocator.free(hello.session_ticket);
+            }
+            hello.session_ticket = try allocator.dupe(u8, session.?.session_ticket);
+            return ret;
+        }
+
+        // Check that the session ticket is not expired.
+        const now = datetime.datetime.Datetime.now();
+        if (session.?.use_by != null and now.gt(session.?.use_by.?)) {
+            self.config.client_session_cache.?.remove(cache_key);
+            return ret;
+        }
+
+        // In TLS 1.3 the KDF hash must match the resumed session. Ensure we
+        // offer at least one cipher suite with that hash.
+        const cipher_suite = cipherSuiteTls13ById(session.?.cipher_suite);
+        if (cipher_suite == null) {
+            return ret;
+        }
+        var cipher_suite_ok = false;
+        for (hello.cipher_suites) |offered_id| {
+            const offered_suite = cipherSuiteTls13ById(offered_id);
+            if (offered_suite != null and offered_suite.?.hash_type == cipher_suite.?.hash_type) {
+                cipher_suite_ok = true;
+                break;
+            }
+        }
+        if (!cipher_suite_ok) {
+            return ret;
+        }
+
+        // Set the pre_shared_key extension. See RFC 8446, Section 4.2.11.1.
+        const ticket_age = @intCast(u32, now.toTimestamp() - session.?.received_at.toTimestamp());
+        if (hello.psk_identities.len > 0) {
+            allocator.free(hello.psk_identities);
+            hello.psk_identities = &.{};
+        }
+        hello.psk_identities = blk: {
+            const label = try allocator.dupe(u8, session.?.session_ticket);
+            errdefer allocator.free(label);
+            break :blk try allocator.dupe(PskIdentity, &[_]PskIdentity{
+                .{
+                    .label = label,
+                    .obfuscated_ticket_age = ticket_age + session.?.age_add,
+                },
+            });
+        };
+
+        ret.session = session;
+
+        const psk = try cipher_suite.?.expandLabel(
+            allocator,
+            session.?.master_secret,
+            resumption_label,
+            session.?.nonce,
+            @intCast(u16, cipher_suite.?.hash_type.digestLength()),
+        );
+        defer allocator.free(psk);
+
+        const early_secret = try cipher_suite.?.extract(allocator, psk, null);
+        ret.early_secret = early_secret;
+
+        const binder_key = try cipher_suite.?.deriveSecret(
+            allocator,
+            early_secret,
+            resumption_binder_label,
+            null,
+        );
+        ret.binder_key = binder_key;
+
+        var transcript = crypto.Hash.init(cipher_suite.?.hash_type);
+        transcript.update(try hello.marshalWithoutBinders(allocator));
+
+        // Compute the PSK binders. See RFC 8446, Section 4.2.11.2.
+        var psk_binders = blk: {
+            var binder = try cipher_suite.?.finishedHash(allocator, binder_key, transcript);
+            errdefer allocator.free(binder);
+            break :blk try allocator.dupe([]const u8, &[_][]const u8{binder});
+        };
+        errdefer memx.freeElemsAndFreeSlice(psk_binders);
+
+        try hello.updateBinders(allocator, psk_binders);
+
+        return ret;
     }
 };
+
+fn clientSessionCacheKey(
+    allocator: mem.Allocator,
+    server_address: net.Address,
+    config: *const Conn.Config,
+) ![]const u8 {
+    if (config.server_name.len > 0) {
+        return try allocator.dupe(u8, config.server_name);
+    }
+    return try std.fmt.allocPrint(allocator, "{s}", .{server_address});
+}
+
+test "clientSessionCacheKey" {
+    const allocator = testing.allocator;
+    const addr = try net.Address.parseIp("127.0.0.1", 8443);
+
+    const key1 = try clientSessionCacheKey(allocator, addr, &Conn.Config{});
+    defer allocator.free(key1);
+    try testing.expectEqualStrings("127.0.0.1:8443", key1);
+
+    const key2 = try clientSessionCacheKey(allocator, addr, &Conn.Config{ .server_name = "www.example.com" });
+    defer allocator.free(key2);
+    try testing.expectEqualStrings("www.example.com", key2);
+}
 
 const HalfConn = struct {
     ver: ?ProtocolVersion = null,

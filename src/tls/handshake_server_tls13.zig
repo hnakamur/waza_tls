@@ -42,6 +42,12 @@ const supported_signature_algorithms = @import("common.zig").supported_signature
 const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
 
+
+// max_client_psk_identities is the number of client PSK identities the server will
+// attempt to validate. It will ignore the rest not to let cheap ClientHello
+// messages cause too much work in session ticket decryption attempts.
+const max_client_psk_identities = 5;
+
 pub const ServerHandshakeStateTls13 = struct {
     conn: *Conn,
     client_hello: ClientHelloMsg,
@@ -253,8 +259,29 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn checkForResumption(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        std.log.info("ServerHandshakeStateTls13.checkForResumption start", .{});
         if (self.conn.config.session_tickets_disabled) {
             return;
+        }
+
+        if (!memx.containsScalar(PdkMode, self.client_hello.pdk_modes, .dhe)) {
+            return;
+        }
+
+        if (self.client_hello.psk_identities.len != self.client_hello.pdk_binders.len) {
+            self.conn.sendAlert(.illegal_parameter) catch {};
+            return error.InvalidOrMissingPskBinders;
+        }
+        if (self.client_hello.psk_identities.len == 0) {
+            return;
+        }
+
+        
+        for (self.client_hello.pdk_identities) |identity, i| {
+            if (i >= max_client_psk_identities) {
+                break;
+            }
+
         }
         _ = allocator;
         // TODO: implement

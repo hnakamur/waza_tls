@@ -30,6 +30,7 @@ const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const ClientHandshakeStateTls13 = @import("handshake_client_tls13.zig").ClientHandshakeStateTls13;
+const ClientSessionState = @import("session.zig").ClientSessionState;
 const crypto = @import("crypto.zig");
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
@@ -55,6 +56,14 @@ pub const ClientHandshakeState = union(ProtocolVersion) {
             .v1_1, .v1_0 => @panic("unsupported version"),
         }
     }
+
+    pub fn getSession(self: *const ClientHandshakeState) ?*ClientSessionState {
+        return switch (self.*) {
+            .v1_3 => |*hs| hs.session,
+            .v1_2 => |*hs| hs.session,
+            .v1_1, .v1_0 => @panic("unsupported version"),
+        };
+    }
 };
 
 pub const ClientHandshakeStateTls12 = struct {
@@ -64,18 +73,8 @@ pub const ClientHandshakeStateTls12 = struct {
     suite: ?*const CipherSuiteTls12 = null,
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
-
-    pub fn init(
-        conn: *Conn,
-        client_hello: ClientHelloMsg,
-        server_hello: ServerHelloMsg,
-    ) ClientHandshakeStateTls12 {
-        return .{
-            .hello = client_hello,
-            .server_hello = server_hello,
-            .conn = conn,
-        };
-    }
+    // ClientHandshakeStateTls12 does not own session.
+    session: ?*ClientSessionState = null,
 
     pub fn deinit(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);

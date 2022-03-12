@@ -3,34 +3,34 @@ const mem = std.mem;
 const Datetime = @import("datetime").datetime.Datetime;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
-const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+const x509 = @import("x509.zig");
 
 pub const ClientSessionState = struct {
     session_ticket: []const u8 = "",
     ver: ProtocolVersion = undefined,
     cipher_suite: CipherSuiteId = undefined,
     master_secret: []const u8 = "",
-    server_certificates: []*CertificateChain = &.{},
-    verified_chains: [][]*CertificateChain = &.{},
+    server_certificates: []x509.Certificate = &.{},
+    verified_chains: [][]x509.Certificate = &.{},
     received_at: Datetime = undefined,
     ocsp_response: []const u8 = "",
     scts: [][]const u8 = &.{},
 
     // TLS 1.3 fields
     nonce: []const u8 = "",
-    used_by: ?Datetime = null,
+    use_by: ?Datetime = null,
     age_add: u32 = 0,
 
     pub fn deinit(self: *ClientSessionState, allocator: mem.Allocator) void {
         if (self.session_ticket.len > 0) allocator.free(self.session_ticket);
         if (self.master_secret.len > 0) allocator.free(self.master_secret);
         if (self.server_certificates.len > 0) {
-            for (self.server_certificates) |cert| cert.deinit(allocator);
+            for (self.server_certificates) |*cert| cert.deinit(allocator);
             allocator.free(self.server_certificates);
         }
         if (self.verified_chains.len > 0) {
             for (self.verified_chains) |chain| {
-                for (chain) |cert| cert.deinit(allocator);
+                for (chain) |*cert| cert.deinit(allocator);
                 allocator.free(chain);
             }
             allocator.free(self.verified_chains);
@@ -46,9 +46,16 @@ pub const ClientSessionState = struct {
 
 pub const LoadSessionResult = struct {
     cache_key: []const u8 = "",
+    // LoadSessionResult does not owns session.
     session: ?*ClientSessionState = null,
     early_secret: []const u8 = "",
     binder_key: []const u8 = "",
+
+    pub fn deinit(self: *LoadSessionResult, allocator: mem.Allocator) void {
+        if (self.cache_key.len > 0) allocator.free(self.cache_key);
+        if (self.early_secret.len > 0) allocator.free(self.early_secret);
+        if (self.binder_key.len > 0) allocator.free(self.binder_key);
+    }
 };
 
 pub const LruSessionCache = struct {

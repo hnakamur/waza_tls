@@ -283,6 +283,35 @@ pub const ClientHelloMsg = struct {
         return raw;
     }
 
+    // marshalWithoutBinders returns the ClientHello through the
+    // PreSharedKeyExtension.identities field, according to RFC 8446, Section
+    // 4.2.11.2. Note that m.pskBinders must be set to slices of the correct length.
+    //
+    // self owns the returned memory.
+    pub fn marshalWithoutBinders(self: *ClientHelloMsg, allocator: mem.Allocator) ![]const u8 {
+        var binders_len: usize = u16_size;
+        for (self.psk_binders) |binder| {
+            binders_len += u8_size + binder.len;
+        }
+
+        const full_message = try self.marshal(allocator);
+        return full_message[0 .. full_message.len - binders_len];
+    }
+
+    // self takes ownership of psk_binders.
+    pub fn updateBinders(
+        self: *ClientHelloMsg,
+        allocator: mem.Allocator,
+        psk_binders: [][]const u8,
+    ) !void {
+        memx.freeElemsAndFreeSlice([]const u8, self.psk_binders, allocator);
+        self.psk_binders = psk_binders;
+        if (self.raw != null) {
+            allocator.free(self.raw.?);
+            self.raw = null;
+        }
+    }
+
     fn unmarshalExtensions(self: *ClientHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
         const extensions_len = try bv.readIntBig(u16);
         try bv.ensureRestLen(extensions_len);

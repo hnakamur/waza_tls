@@ -70,7 +70,7 @@ pub const CipherSuiteTls13 = struct {
     hash_type: HashType,
 
     // expandLabel implements HKDF-Expand-Label from RFC 8446, Section 7.1.
-    fn expandLabel(
+    pub fn expandLabel(
         self: *const CipherSuiteTls13,
         allocator: mem.Allocator,
         secret: []const u8,
