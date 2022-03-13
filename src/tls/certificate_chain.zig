@@ -1,7 +1,10 @@
 const std = @import("std");
 const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
+const ExtensionType = @import("handshake_msg.zig").ExtensionType;
+const status_type_ocsp = @import("handshake_msg.zig").status_type_ocsp;
 const crypto = @import("crypto.zig");
+const BytesView = @import("../BytesView.zig");
 const memx = @import("../memx.zig");
 const pem = @import("pem.zig");
 const x509 = @import("x509.zig");
@@ -43,6 +46,72 @@ pub const CertificateChain = struct {
         if (self.leaf) |leaf| {
             leaf.deinit(allocator);
         }
+    }
+
+    pub fn unmarshal(
+        allocator: mem.Allocator,
+        data: []const u8,
+    ) !CertificateChain {
+        var bv = BytesView.init(data);
+        var certificates_len = try bv.readIntBig(u24);
+        try bv.ensureRestLen(certificates_len);
+        const certificates_end_pos = bv.pos + certificates_len;
+        var certificates = std.ArrayListUnmanaged([]const u8){};
+        errdefer {
+            for (certificates.items) |cert| allocator.free(cert);
+            certificates.deinit(allocator);
+        }
+        var ocsp_staple: []const u8 = "";
+        errdefer if (ocsp_staple.len > 0) allocator.free(ocsp_staple);
+        var scts = std.ArrayListUnmanaged([]const u8){};
+        errdefer {
+            for (scts.items) |sct| allocator.free(sct);
+            scts.deinit(allocator);
+        }
+        while (bv.pos < certificates_end_pos) {
+            {
+                const cert = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u24, .Big));
+                errdefer allocator.free(cert);
+                try certificates.append(allocator, cert);
+            }
+            const extensions_len = try bv.readIntBig(u16);
+            const extensions_end_pos = bv.pos + extensions_len;
+            while (bv.pos < extensions_end_pos) {
+                const ext_type = try bv.readEnum(ExtensionType, .Big);
+                const ext_len = try bv.readIntBig(u16);
+                switch (ext_type) {
+                    .StatusRequest => {
+                        const status_type = try bv.readByte();
+                        if (status_type != status_type_ocsp) {
+                            return error.InvalidCertificateMsgTls12;
+                        }
+                        ocsp_staple = try allocator.dupe(
+                            u8,
+                            try bv.readLenPrefixedBytes(u24, .Big),
+                        );
+                    },
+                    .Sct => {
+                        const scts_len = try bv.readIntBig(u16);
+                        const scts_end_pos = bv.pos + scts_len;
+                        while (bv.pos < scts_end_pos) {
+                            const sct = try allocator.dupe(
+                                u8,
+                                try bv.readLenPrefixedBytes(u16, .Big),
+                            );
+                            errdefer allocator.free(sct);
+                            try scts.append(allocator, sct);
+                        }
+                    },
+                    else => bv.skip(ext_len),
+                }
+            }
+        }
+
+        return CertificateChain{
+            .certificate_chain = certificates.toOwnedSlice(allocator),
+            .ocsp_staple = ocsp_staple,
+            .signed_certificate_timestamps = scts.toOwnedSlice(allocator),
+        };
     }
 };
 

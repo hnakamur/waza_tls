@@ -53,10 +53,8 @@ const LoadSessionResult = @import("session.zig").LoadSessionResult;
 const LruSessionCache = @import("session.zig").LruSessionCache;
 const resumption_label = @import("key_schedule.zig").resumption_label;
 const resumption_binder_label = @import("key_schedule.zig").resumption_binder_label;
-const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const crypto = @import("crypto.zig");
-const AesBlock = @import("aes.zig").AesBlock;
-const Ctr = @import("ctr.zig").Ctr;
+const TicketKey = @import("ticket.zig").TicketKey;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -1343,93 +1341,6 @@ pub const Conn = struct {
 
         return ret;
     }
-};
-
-fn decryptTicket(
-    allocator: mem.Allocator,
-    ticket_keys: []const TicketKey,
-    encrypted: []const u8,
-    out_used_old_key: *bool,
-) ![]const u8 {
-    const aes_block_len = std.crypto.core.aes.Block.block_length;
-    const sha256_len = std.crypto.hash.sha2.Sha256.digest_length;
-    if (encrypted.len < TicketKey.name_len + aes_block_len + sha256_len) {
-        return "";
-    }
-
-    const key_name = encrypted[0..TicketKey.name_len];
-    const iv = encrypted[TicketKey.name_len .. TicketKey.name_len + aes_block_len];
-    const mac_bytes = encrypted[encrypted.len-sha256_len..];
-    const ciphertext = encrypted[TicketKey.name_len + aes_block_len..encrypted.len-sha256_len];
-
-    var key_index: ?usize = null;
-    for (ticket_keys) |key, i| {
-        if (mem.eql(u8, key_name, &key.key_name)) {
-            key_index = i;
-            break;
-        }
-    }
-    if (key_index == null) {
-        return "";
-    }
-    const key = ticket_keys[key_index.?];
-    const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
-    var mac = HmacSha256.init(&key.hmac_key);
-    mac.update(encrypted[0..encrypted.len-sha256_len]);
-    var expected: [HmacSha256.mac_length]u8 = undefined;
-    mac.final(&expected);
-    if (constantTimeEqlBytes(mac_bytes, &expected) != 1) {
-        return "";
-    }
-
-    var block = try AesBlock.init(&key.aes_key);
-    var ctr = try Ctr.init(allocator, block, iv);
-    defer ctr.deinit(allocator);
-
-    var plaintext = try allocator.alloc(u8, ciphertext.len);
-    ctr.xorKeyStream(plaintext, ciphertext);
-
-    out_used_old_key.* = key_index != null and key_index.? > 0;
-    return plaintext;
-}
-
-test "decryptTicket" {
-    testing.log_level = .debug;
-    const allocator = testing.allocator;
-
-    const ticket_keys = &[_]TicketKey{.{
-        .key_name = [_]u8{ 0xb6, 0x8e, 0x55, 0x74, 0xb1, 0x2d, 0x8d, 0x6a, 0x97, 0x6f, 0x68, 0x50, 0x82, 0x1c, 0x04, 0x4a },
-        .aes_key = [_]u8{ 0x63, 0x6f, 0x5b, 0x6f, 0x0c, 0x0e, 0xda, 0xff, 0xae, 0xae, 0x17, 0x7a, 0x16, 0xba, 0xb1, 0x6a },
-        .hmac_key = [_]u8{ 0x3d, 0x75, 0x4e, 0x57, 0xb3, 0xac, 0x0f, 0xc8, 0x7b, 0x1c, 0x10, 0x27, 0xda, 0x15, 0xe4, 0xb2 },
-        .created = datetime.datetime.Datetime{
-            .date = datetime.datetime.Date.create(2022, 3, 12) catch unreachable,
-            .time = datetime.datetime.Time.create(21, 19, 44, 698849475) catch unreachable,
-            .zone = &datetime.timezones.Asia.Tokyo,
-        },
-    }};
-    const encrypted = "\xb6\x8e\x55\x74\xb1\x2d\x8d\x6a\x97\x6f\x68\x50\x82\x1c\x04\x4a\x79\x68\x0e\x18\xd8\x8a\x5f\xa9\x64\xae\xeb\x48\xf7\x7c\x80\xbf\x60\x58\x61\x14\x0d\xfc\xcd\x2c\xae\x65\x0c\x06\x06\xff\xeb\x87\x44\x4e\x18\x4e\x39\x41\x2e\x76\xca\x3a\x1c\xb2\xe3\x7f\x28\xa9\x8c\xb0\x34\x92\x91\xcf\x92\xdf\xcf\xc6\x72\xdb\x22\x59\xd2\xbd\xd8\x9b\xa4\x30\xf5\x6d\xe5\x39\x7d\xb5\x19\xb3\xc1\xb9\xf8\x13\x80\x95\xe3\x17\xe0\xf6\xe1\xcf\xaf\x67\xa5\xf7\xce\xa5\x09\x31\x7a";
-
-    var used_old_key: bool = undefined;
-    const plaintext = try decryptTicket(allocator, ticket_keys, encrypted, &used_old_key);
-    defer allocator.free(plaintext);
-    const want_plaintext = "\x03\x04\x00\x13\x01\x00\x00\x00\x00\x62\x2c\x8f\xe0\x20\x45\x1f\x6c\x6e\xaf\xe7\xd0\x59\x41\x17\xeb\xdc\x50\x3f\xed\x57\x01\xec\xc9\xab\xd5\xed\x63\xa1\xea\xdb\xa6\x79\xd0\x63\xa9\x01\x00\x00\x00";
-    const want_used_old_key = false;
-
-    try testing.expectEqualSlices(u8, want_plaintext, plaintext);
-    try testing.expectEqual(want_used_old_key, used_old_key);
-}
-
-// TicketKey is the internal representation of a session ticket key.
-const TicketKey = struct {
-    const name_len = 16;
-
-    // key_name is an opaque byte string that serves to identify the session
-    // ticket key. It's exposed as plaintext in every session ticket.
-    key_name: [name_len]u8,
-    aes_key: [16]u8,
-    hmac_key: [16]u8,
-    // created is the time at which this ticket key was created. See Config.ticketKeys.
-    created: datetime.datetime.Datetime,
 };
 
 fn clientSessionCacheKey(

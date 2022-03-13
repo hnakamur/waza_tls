@@ -39,6 +39,7 @@ const isSupportedSignatureAlgorithm = @import("auth.zig").isSupportedSignatureAl
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
+const decryptTicket = @import("ticket.zig").decryptTicket;
 const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
 
@@ -280,10 +281,20 @@ pub const ServerHandshakeStateTls13 = struct {
                 break;
             }
 
+            var used_old_key: bool = undefined;
+            const plaintext = try decryptTicket(
+                allocator,
+                self.conn.ticket_keys,
+                identity.label,
+                &used_old_key,
+            );
+            if (plaintext.len == 0) {
+                continue;
+            }
+            defer allocator.free(plaintext);
+
             // TODO: implement
-            _ = identity;
         }
-        _ = allocator;
         // TODO: implement
     }
 

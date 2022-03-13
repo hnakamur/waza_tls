@@ -953,7 +953,7 @@ pub const CertificateMsgTls12 = struct {
 };
 
 // TLS CertificateStatusType (RFC 3546)
-const status_type_ocsp: u8 = 1;
+pub const status_type_ocsp: u8 = 1;
 
 pub const CertificateMsgTls13 = struct {
     raw: ?[]const u8 = null,
@@ -977,61 +977,14 @@ pub const CertificateMsgTls13 = struct {
         if (context != 0) {
             return error.InvalidCertificateMsgTls12;
         }
-        var certificates_len = try bv.readIntBig(u24);
-        try bv.ensureRestLen(certificates_len);
-        const certificates_end_pos = bv.pos + certificates_len;
-        var certificates = std.ArrayListUnmanaged([]const u8){};
-        errdefer {
-            for (certificates.items) |cert| allocator.free(cert);
-            certificates.deinit(allocator);
-        }
-        var ocsp_staple: []const u8 = "";
-        errdefer if (ocsp_staple.len > 0) allocator.free(ocsp_staple);
-        var scts = std.ArrayListUnmanaged([]const u8){};
-        errdefer {
-            for (scts.items) |sct| allocator.free(sct);
-            scts.deinit(allocator);
-        }
-        while (bv.pos < certificates_end_pos) {
-            try certificates.append(allocator, try allocator.dupe(u8, try readString(u24, &bv)));
-            const extensions_len = try bv.readIntBig(u16);
-            const extensions_end_pos = bv.pos + extensions_len;
-            while (bv.pos < extensions_end_pos) {
-                const ext_type = try readEnum(ExtensionType, &bv);
-                const ext_len = try bv.readIntBig(u16);
-                switch (ext_type) {
-                    .StatusRequest => {
-                        const status_type = try bv.readByte();
-                        if (status_type != status_type_ocsp) {
-                            return error.InvalidCertificateMsgTls12;
-                        }
-                        ocsp_staple = try allocator.dupe(u8, try readString(u24, &bv));
-                    },
-                    .Sct => {
-                        const scts_len = try bv.readIntBig(u16);
-                        const scts_end_pos = bv.pos + scts_len;
-                        while (bv.pos < scts_end_pos) {
-                            try scts.append(
-                                allocator,
-                                try allocator.dupe(u8, try readString(u16, &bv)),
-                            );
-                        }
-                    },
-                    else => bv.skip(ext_len),
-                }
-            }
-        }
 
-        const cert_chain = CertificateChain{
-            .certificate_chain = certificates.toOwnedSlice(allocator),
-            .ocsp_staple = ocsp_staple,
-            .signed_certificate_timestamps = scts.toOwnedSlice(allocator),
-        };
+        const cert_chain = try CertificateChain.unmarshal(allocator, bv.rest());
 
         return CertificateMsgTls13{
             .cert_chain = cert_chain,
-            .ocsp_stapling = ocsp_staple.len > 0,
-            .scts = scts.items.len > 0,
+            .ocsp_stapling = cert_chain.ocsp_staple.len > 0,
+            .scts = cert_chain.signed_certificate_timestamps != null and
+                cert_chain.signed_certificate_timestamps.?.len > 0,
             .raw = raw,
         };
     }
@@ -1888,7 +1841,7 @@ pub const CompressionMethod = enum(u8) {
 };
 
 // TLS extension numbers
-const ExtensionType = enum(u16) {
+pub const ExtensionType = enum(u16) {
     ServerName = 0,
     StatusRequest = 5,
     SupportedCurves = 10, // supported_groups in TLS 1.3, see RFC 8446, Section 4.2.7
@@ -3253,7 +3206,7 @@ test "EncryptedExtensionsMsg.marshal" {
     try testing.expectEqualStrings(msg.alpn_protocol, msg2.alpn_protocol);
 }
 
-test "CertificateMsgTls13.marshal" {
+test "CertificateMsgTls13.marshal case1" {
     testing.log_level = .err;
     const allocator = testing.allocator;
 
@@ -3302,7 +3255,7 @@ test "CertificateMsgTls13.marshal" {
     }
 }
 
-test "CertificateMsgTls13.marshal" {
+test "CertificateMsgTls13.marshal case2" {
     testing.log_level = .err;
     const allocator = testing.allocator;
 
