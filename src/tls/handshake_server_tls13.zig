@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const datetime = @import("datetime");
 const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
@@ -16,6 +17,7 @@ const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteTls13 = @import("cipher_suites.zig").CipherSuiteTls13;
+const cipherSuiteTls13ById = @import("cipher_suites.zig").cipherSuiteTls13ById;
 const mutualCipherSuiteTls13 = @import("cipher_suites.zig").mutualCipherSuiteTls13;
 const has_aes_gcm_hardware_support = @import("cipher_suites.zig").has_aes_gcm_hardware_support;
 const aesgcmPreferred = @import("cipher_suites.zig").aesgcmPreferred;
@@ -27,6 +29,8 @@ const client_handshake_traffic_label = @import("key_schedule.zig").client_handsh
 const server_handshake_traffic_label = @import("key_schedule.zig").server_handshake_traffic_label;
 const client_application_traffic_label = @import("key_schedule.zig").client_application_traffic_label;
 const server_application_traffic_label = @import("key_schedule.zig").server_application_traffic_label;
+const resumption_binder_label = @import("key_schedule.zig").resumption_binder_label;
+const resumption_master_label = @import("key_schedule.zig").resumption_master_label;
 const negotiateAlpn = @import("handshake_server.zig").negotiateAlpn;
 const crypto = @import("crypto.zig");
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
@@ -40,6 +44,8 @@ const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const decryptTicket = @import("ticket.zig").decryptTicket;
+const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
+const SessionStateTls13 = @import("ticket.zig").SessionStateTls13;
 const hmac = @import("hmac.zig");
 const memx = @import("../memx.zig");
 
@@ -264,11 +270,11 @@ pub const ServerHandshakeStateTls13 = struct {
             return;
         }
 
-        if (!memx.containsScalar(PskMode, self.client_hello.pdk_modes, .dhe)) {
+        if (!memx.containsScalar(PskMode, self.client_hello.psk_modes, .dhe)) {
             return;
         }
 
-        if (self.client_hello.psk_identities.len != self.client_hello.pdk_binders.len) {
+        if (self.client_hello.psk_identities.len != self.client_hello.psk_binders.len) {
             self.conn.sendAlert(.illegal_parameter) catch {};
             return error.InvalidOrMissingPskBinders;
         }
@@ -276,7 +282,7 @@ pub const ServerHandshakeStateTls13 = struct {
             return;
         }
 
-        for (self.client_hello.pdk_identities) |identity, i| {
+        for (self.client_hello.psk_identities) |identity, i| {
             if (i >= max_client_psk_identities) {
                 break;
             }
@@ -293,14 +299,89 @@ pub const ServerHandshakeStateTls13 = struct {
             }
             defer allocator.free(plaintext);
 
-            // TODO: implement
+            var session_state = SessionStateTls13.unmarshal(
+                allocator,
+                plaintext,
+            ) catch continue;
+            defer session_state.deinit(allocator);
+
+            const now = datetime.datetime.Datetime.now();
+            if (@divTrunc(now.toTimestamp(), std.time.ms_per_s) - session_state.created_at >
+                max_session_ticket_lifetime_seconds)
+            {
+                continue;
+            }
+
+            // We don't check the obfuscated ticket age because it's affected by
+            // clock skew and it's only a freshness signal useful for shrinking the
+            // window for replay attacks, which don't affect us as we don't do 0-RTT.
+
+            const psk_suite = cipherSuiteTls13ById(session_state.cipher_suite);
+            if (psk_suite == null or psk_suite.?.hash_type != self.suite.?.hash_type) {
+                continue;
+            }
+
+            // PSK connections don't re-establish client certificates, but carry
+            // them over in the session ticket. Ensure the presence of client certs
+            // in the ticket is consistent with the configured requirements.
+            const session_has_client_certs = session_state.certificate.certificate_chain.len != 0;
+            const needs_client_certs = self.conn.config.client_auth.requiresClientCert();
+            if (needs_client_certs and !session_has_client_certs) {
+                continue;
+            }
+            if (session_has_client_certs and self.conn.config.client_auth == .no_client_cert) {
+                continue;
+            }
+
+            const psk = try self.suite.?.expandLabel(
+                allocator,
+                session_state.resumption_secret,
+                resumption_binder_label,
+                "",
+                @intCast(u16, self.suite.?.hash_type.digestLength()),
+            );
+            defer allocator.free(psk);
+
+            const early_secret = try self.suite.?.extract(allocator, psk, null);
+            if (self.early_secret) |secret| allocator.free(secret);
+            self.early_secret = early_secret;
+
+            const binder_key = try self.suite.?.deriveSecret(
+                allocator,
+                early_secret,
+                resumption_binder_label,
+                null,
+            );
+            defer allocator.free(binder_key);
+
+            var transcript = self.transcript.clone();
+            transcript.update(try self.client_hello.marshalWithoutBinders(allocator));
+            const psk_binder = try self.suite.?.finishedHash(allocator, binder_key, transcript);
+            defer allocator.free(psk_binder);
+            if (!hmac.equal(self.client_hello.psk_binders[i], psk_binder)) {
+                self.conn.sendAlert(.decrypt_error) catch {};
+                return error.TlsInvalidPskBinder;
+            }
+
+            self.conn.did_resume = true;
+            try self.conn.processCertsFromClient(allocator, &session_state.certificate);
+            self.hello.?.selected_identity = @intCast(u16, i);
+            std.log.info(
+                "ServerHandshakeStateTls13.checkForResumption set server_hello.selected_identity to {}",
+                .{i},
+            );
+            self.using_psk = true;
+            return;
         }
-        // TODO: implement
     }
 
     fn pickCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
-        // TODO: implement
         std.log.debug("ServerHandshakeStateTls13.pickCertificate start", .{});
+
+        // Only one of PSK and certificates are used at a time.
+        if (self.using_psk) {
+            return;
+        }
 
         // signature_algorithms is required in TLS 1.3. See RFC 8446, Section 4.2.3.
         if (self.client_hello.supported_signature_algorithms.len == 0) {
@@ -632,15 +713,18 @@ pub const ServerHandshakeStateTls13 = struct {
     }
 
     fn shouldSendSessionTickets(self: *const ServerHandshakeStateTls13) bool {
+        std.log.info("ServerHandshakeStateTls13.shouldSendSessionTickets self.conn.config.session_tickets_disabled={}", .{self.conn.config.session_tickets_disabled});
         if (self.conn.config.session_tickets_disabled) {
             return false;
         }
 
         // Don't send tickets the client wouldn't use. See RFC 8446, Section 4.2.9.
+        std.log.info("ServerHandshakeStateTls13.shouldSendSessionTickets self.client_hello.psk_modes={any}", .{self.client_hello.psk_modes});
         return memx.containsScalar(PskMode, self.client_hello.psk_modes, .dhe);
     }
 
     fn sendSessionTickets(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
+        std.log.info("ServerHandshakeStateTls13.sendSessionTickets start", .{});
         self.client_finished = try self.suite.?.finishedHash(
             allocator,
             self.conn.in.traffic_secret,
@@ -657,9 +741,51 @@ pub const ServerHandshakeStateTls13 = struct {
             self.transcript.update(finished_msg_bytes);
         }
 
+        std.log.info("ServerHandshakeStateTls13.sendSessionTickets before shouldSendSessionTickets", .{});
         if (!self.shouldSendSessionTickets()) {
             return;
         }
+
+        std.log.info("ServerHandshakeStateTls13.sendSessionTickets after shouldSendSessionTickets", .{});
+        const resumption_secret = try self.suite.?.deriveSecret(
+            allocator,
+            self.master_secret,
+            resumption_master_label,
+            self.transcript,
+        );
+        errdefer allocator.free(resumption_secret);
+
+        var state = blk_state: {
+            var certs_from_client = blk_certs: {
+                var certs = try allocator.alloc([]const u8, self.conn.peer_certificates.len);
+                var i: usize = 0;
+                errdefer memx.freeElemsAndFreeSliceInError([]const u8, certs, allocator, i);
+                while (i < self.conn.peer_certificates.len) : (i += 1) {
+                    certs[i] = try allocator.dupe(u8, self.conn.peer_certificates[i].raw);
+                }
+                break :blk_certs certs;
+            };
+            errdefer memx.freeElemsAndFreeSlice([]const u8, certs_from_client, allocator);
+
+            var ocsp_response = try allocator.dupe(u8, self.conn.ocsp_response);
+            errdefer allocator.free(ocsp_response);
+
+            var scts = try memx.dupeStringList(allocator, self.conn.scts);
+            errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
+
+            const now = datetime.datetime.Datetime.now();
+            break :blk_state SessionStateTls13{
+                .cipher_suite = self.suite.?.id,
+                .created_at = @divTrunc(now.toTimestamp(), std.time.ms_per_s),
+                .resumption_secret = resumption_secret,
+                .certificate = CertificateChain{
+                    .certificate_chain = certs_from_client,
+                    .ocsp_staple = ocsp_response,
+                    .signed_certificate_timestamps = scts,
+                },
+            };
+        };
+        defer state.deinit(allocator);
 
         @panic("not implemented yet");
     }

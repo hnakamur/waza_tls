@@ -283,6 +283,7 @@ pub const Conn = struct {
     peer_certificates: []x509.Certificate = &[_]x509.Certificate{},
 
     ticket_keys: []TicketKey = &.{},
+    did_resume: bool = false,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -339,7 +340,7 @@ pub const Conn = struct {
 
         while (self.input.readableLength() == 0) {
             try self.readRecord(self.allocator);
-            if (self.handshake_bytes.len > 0) {
+            while (self.handshake_bytes.len > 0) {
                 @panic("not implemented yet");
             }
         }
@@ -495,12 +496,16 @@ pub const Conn = struct {
 
         // If we had a successful handshake and hs.session is different from
         // the one already cached - cache a new one.
+        std.log.info("Conn.clientHandshake before checking load_result", .{});
         if (load_result) |res| {
+            std.log.info("Conn.clientHandshake load_result is not null, cache_key={s}, res.session={}", .{ res.cache_key, res.session });
             var hs_session = self.handshake_state.?.client.getSession();
+            std.log.info("Conn.clientHandshake hs_session={}", .{hs_session});
             if (res.cache_key.len > 0 and hs_session != null and
-                res.session != null and res.session.? != hs_session.?)
+                (res.session == null or res.session.? != hs_session.?))
             {
                 try self.config.client_session_cache.?.put(res.cache_key, hs_session.?.*);
+                std.log.info("Conn.clientHandshake put session, cache_key={s}", .{res.cache_key});
             }
         }
     }
@@ -1190,12 +1195,15 @@ pub const Conn = struct {
         allocator: mem.Allocator,
         hello: *ClientHelloMsg,
     ) !LoadSessionResult {
+        std.log.info("Conn.loadSession start", .{});
         if (self.config.session_tickets_disabled or self.config.client_session_cache == null) {
+            std.log.info("Conn.loadSession early exit#1", .{});
             return LoadSessionResult{};
         }
 
         hello.ticket_supported = true;
 
+        std.log.info("Conn.loadSession clientHello.supported_versions={any}", .{hello.supported_versions});
         if (hello.supported_versions[0] == .v1_3) {
             // Require DHE on resumption as it guarantees forward secrecy against
             // compromise of the session ticket key. See RFC 8446, Section 4.2.9.
@@ -1203,27 +1211,32 @@ pub const Conn = struct {
                 allocator.free(hello.psk_modes);
             }
             hello.psk_modes = try allocator.dupe(PskMode, &[_]PskMode{.dhe});
+            std.log.info("Conn.loadSession set clientHello.psk_modes to dhe", .{});
         }
 
         // Session resumption is not allowed if renegotiating because
         // renegotiation is primarily used to allow a client to send a client
         // certificate, which would be skipped if session resumption occurred.
         if (self.handshakes != 0) {
+            std.log.info("Conn.loadSession early exit#2", .{});
             return LoadSessionResult{};
         }
 
         // Try to resume a previously negotiated TLS session, if available.
         const cache_key = try clientSessionCacheKey(allocator, self.remote_address, &self.config);
+        std.log.info("Conn.loadSession cache_key={s}", .{cache_key});
         var ret = LoadSessionResult{ .cache_key = cache_key };
         errdefer ret.deinit(allocator);
 
         var session = self.config.client_session_cache.?.getPtr(cache_key);
         if (session == null) {
+            std.log.info("Conn.loadSession early exit#3", .{});
             return ret;
         }
 
         // Check that version used for the previous session is still valid.
         if (!memx.containsScalar(ProtocolVersion, hello.supported_versions, session.?.ver)) {
+            std.log.info("Conn.loadSession early exit#4", .{});
             return ret;
         }
 
@@ -1233,6 +1246,7 @@ pub const Conn = struct {
         if (!self.config.insecure_skip_verify) {
             if (session.?.verified_chains.len == 0) {
                 // The original connection had InsecureSkipVerify, while this doesn't.
+                std.log.info("Conn.loadSession early exit#5", .{});
                 return ret;
             }
 
@@ -1241,9 +1255,11 @@ pub const Conn = struct {
             if (now.gt(server_cert.not_after)) {
                 // Expired certificate, delete the entry.
                 self.config.client_session_cache.?.remove(cache_key);
+                std.log.info("Conn.loadSession early exit#6", .{});
                 return ret;
             }
             server_cert.verifyHostname(self.config.server_name) catch {
+                std.log.info("Conn.loadSession early exit#7", .{});
                 return ret;
             };
         }
@@ -1252,6 +1268,7 @@ pub const Conn = struct {
             // In TLS 1.2 the cipher suite must match the resumed session. Ensure we
             // are still offering it.
             if (mutualCipherSuiteTls12(hello.cipher_suites, session.?.cipher_suite) == null) {
+                std.log.info("Conn.loadSession early exit#8", .{});
                 return ret;
             }
 
@@ -1259,6 +1276,7 @@ pub const Conn = struct {
                 allocator.free(hello.session_ticket);
             }
             hello.session_ticket = try allocator.dupe(u8, session.?.session_ticket);
+            std.log.info("Conn.loadSession early exit#9", .{});
             return ret;
         }
 
@@ -1266,6 +1284,7 @@ pub const Conn = struct {
         const now = datetime.datetime.Datetime.now();
         if (session.?.use_by != null and now.gt(session.?.use_by.?)) {
             self.config.client_session_cache.?.remove(cache_key);
+            std.log.info("Conn.loadSession early exit#10", .{});
             return ret;
         }
 
@@ -1273,6 +1292,7 @@ pub const Conn = struct {
         // offer at least one cipher suite with that hash.
         const cipher_suite = cipherSuiteTls13ById(session.?.cipher_suite);
         if (cipher_suite == null) {
+            std.log.info("Conn.loadSession early exit#11", .{});
             return ret;
         }
         var cipher_suite_ok = false;
@@ -1284,6 +1304,7 @@ pub const Conn = struct {
             }
         }
         if (!cipher_suite_ok) {
+            std.log.info("Conn.loadSession early exit#12", .{});
             return ret;
         }
 
@@ -1339,6 +1360,7 @@ pub const Conn = struct {
 
         try hello.updateBinders(allocator, psk_binders);
 
+        std.log.info("Conn.loadSession exit with session found", .{});
         return ret;
     }
 };

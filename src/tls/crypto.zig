@@ -77,6 +77,16 @@ pub const Hash = union(HashType) {
         };
     }
 
+    pub fn clone(self: *const Hash) Hash {
+        return switch (self.*) {
+            .sha256 => |s| Hash{ .sha256 = s.clone() },
+            .sha384 => |s| Hash{ .sha384 = s.clone() },
+            .sha512 => |s| Hash{ .sha512 = s.clone() },
+            .sha1 => |s| Hash{ .sha1 = s.clone() },
+            else => @panic("Unsupported HashType"),
+        };
+    }
+
     pub fn logFinal(self: *const Hash, label: []const u8) void {
         var out = DigestArray.init(self.digestLength()) catch unreachable;
         var out_slice = out.slice();
@@ -136,6 +146,10 @@ fn HashAdapter(comptime HashImpl: type) type {
             var sum = try allocator.alloc(u8, digest_length);
             self.finalToSlice(sum);
             return sum;
+        }
+
+        pub fn clone(self: *const Self) Self {
+            return .{ .inner_hash = self.inner_hash };
         }
     };
 }

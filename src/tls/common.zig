@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const datetime = @import("datetime");
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 
 // supportedSignatureAlgorithms contains the signature and hash algorithms that
@@ -29,3 +30,7 @@ pub const hello_retry_request_random = [_]u8{ // See RFC 8446, Section 4.1.3.
     0xC2, 0xA2, 0x11, 0x16, 0x7A, 0xBB, 0x8C, 0x5E,
     0x07, 0x9E, 0x09, 0xE2, 0xC8, 0xA8, 0x33, 0x9C,
 };
+
+// max_session_ticket_lifetime_seconds is the maximum allowed lifetime of a TLS 1.3 session
+// ticket, and the lifetime we set for tickets we send.
+pub const max_session_ticket_lifetime_seconds = 7 * 24 * 60 * 60;

@@ -126,6 +126,9 @@ pub const HandshakeMsg = union(MsgType) {
             .ServerHello => return HandshakeMsg{
                 .ServerHello = try ServerHelloMsg.unmarshal(allocator, msg_data),
             },
+            .NewSessionTicket => return HandshakeMsg{
+                .NewSessionTicket = try NewSessionTicketMsg.unmarshal(allocator, msg_data, ver.?),
+            },
             .EncryptedExtensions => return HandshakeMsg{
                 .EncryptedExtensions = try EncryptedExtensionsMsg.unmarshal(allocator, msg_data),
             },
@@ -158,7 +161,6 @@ pub const HandshakeMsg = union(MsgType) {
 pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
 const HelloRequestMsg = void;
-const NewSessionTicketMsg = void;
 const EndOfEarlyDataMsg = void;
 const CertificateStatusMsg = void;
 const KeyUpdateMsg = void;
@@ -287,7 +289,7 @@ pub const ClientHelloMsg = struct {
     // PreSharedKeyExtension.identities field, according to RFC 8446, Section
     // 4.2.11.2. Note that m.pskBinders must be set to slices of the correct length.
     //
-    // self owns the returned memory.
+    // The caller must not free the returned memory.
     pub fn marshalWithoutBinders(self: *ClientHelloMsg, allocator: mem.Allocator) ![]const u8 {
         var binders_len: usize = u16_size;
         for (self.psk_binders) |binder| {
@@ -1670,6 +1672,88 @@ pub const FinishedMsg = struct {
         try writeLenAndBytes(u24, self.verify_data, writer);
         self.raw = raw;
         return raw;
+    }
+};
+
+pub const NewSessionTicketMsg = union(ProtocolVersion) {
+    v1_3: NewSessionTicketMsgTls13,
+    v1_2: NewSessionTicketMsgTls12,
+    v1_1: void,
+    v1_0: void,
+
+    pub fn deinit(self: *NewSessionTicketMsg, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .v1_3 => |*m| m.deinit(allocator),
+            .v1_2 => |*m| m.deinit(allocator),
+            else => {},
+        }
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+        ver: ProtocolVersion,
+    ) !NewSessionTicketMsg {
+        return switch (ver) {
+            .v1_3 => NewSessionTicketMsg{
+                .v1_3 = try NewSessionTicketMsgTls13.unmarshal(allocator, msg_data),
+            },
+            .v1_2 => NewSessionTicketMsg{
+                .v1_2 = try NewSessionTicketMsgTls12.unmarshal(allocator, msg_data),
+            },
+            else => @panic("unsupported TLS version"),
+        };
+    }
+
+    pub fn marshal(self: *NewSessionTicketMsg, allocator: mem.Allocator) ![]const u8 {
+        return switch (self.*) {
+            .v1_3 => |*m| try m.marshal(allocator),
+            .v1_2 => |*m| try m.marshal(allocator),
+            else => {},
+        };
+    }
+};
+
+pub const NewSessionTicketMsgTls12 = struct {
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+    ) !NewSessionTicketMsgTls12 {
+        _ = allocator;
+        _ = msg_data;
+        // TODO: implement
+        // @panic("not implemented yet");
+        // return NewSessionTicketMsgTls12{};
+        return error.NotImplementedYet;
+    }
+
+    pub fn marshal(self: *NewSessionTicketMsgTls12, allocator: mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
+        // @panic("not implemented yet");
+        return "";
+    }
+};
+
+pub const NewSessionTicketMsgTls13 = struct {
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+    ) !NewSessionTicketMsgTls13 {
+        _ = allocator;
+        _ = msg_data;
+        // TODO: implement
+        // @panic("not implemented yet");
+        return NewSessionTicketMsgTls13{};
+    }
+
+    pub fn marshal(self: *NewSessionTicketMsgTls13, allocator: mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+        // TODO: implement
+        // @panic("not implemented yet");
+        return "";
     }
 };
 
