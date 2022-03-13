@@ -2054,7 +2054,7 @@ fn writeLenLenAndBytes(
     try writeLenAndBytes(LenType2, bytes, writer);
 }
 
-fn writeLenAndBytes(comptime LenType: type, bytes: []const u8, writer: anytype) !void {
+pub fn writeLenAndBytes(comptime LenType: type, bytes: []const u8, writer: anytype) !void {
     try writeInt(LenType, bytes.len, writer);
     try writeBytes(bytes, writer);
 }

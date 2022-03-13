@@ -8,6 +8,14 @@ const BytesView = @import("../BytesView.zig");
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const AesBlock = @import("aes.zig").AesBlock;
 const Ctr = @import("ctr.zig").Ctr;
+const u24_size = @import("handshake_msg.zig").u24_size;
+const u16_size = @import("handshake_msg.zig").u16_size;
+const u8_size = @import("handshake_msg.zig").u8_size;
+const writeInt = @import("handshake_msg.zig").writeInt;
+const writeBytes = @import("handshake_msg.zig").writeBytes;
+const writeLenAndBytes = @import("handshake_msg.zig").writeLenAndBytes;
+
+const u64_size = @divExact(@typeInfo(u64).Int.bits, @bitSizeOf(u8));
 
 // SessionStateTls12 contains the information that is serialized into a session
 // ticket in order to later resume a connection.
@@ -66,9 +74,21 @@ pub const SessionStateTls13 = struct {
     }
 
     pub fn marshal(self: *const SessionStateTls13, allocator: mem.Allocator) ![]const u8 {
-        _ = self;
-        _ = allocator;
-        return "";
+        const msg_len = u16_size + u8_size + u16_size + u64_size +
+            u8_size + self.resumption_secret.len + self.certificate.marshaledLen();
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+        var fbs = std.io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+
+        try writeInt(u16, ProtocolVersion.v1_3, writer);
+        try writeInt(u8, 0, writer); // revision
+        try writeInt(u16, self.cipher_suite, writer);
+        try writeInt(u64, self.created_at, writer);
+        try writeLenAndBytes(u8, self.resumption_secret, writer);
+        try self.certificate.writeTo(writer);
+        return raw;
     }
 };
 
@@ -99,8 +119,8 @@ pub fn decryptTicket(
 
     const key_name = encrypted[0..TicketKey.name_len];
     const iv = encrypted[TicketKey.name_len .. TicketKey.name_len + aes_block_len];
-    const mac_bytes = encrypted[encrypted.len-sha256_len..];
-    const ciphertext = encrypted[TicketKey.name_len + aes_block_len..encrypted.len-sha256_len];
+    const mac_bytes = encrypted[encrypted.len - sha256_len ..];
+    const ciphertext = encrypted[TicketKey.name_len + aes_block_len .. encrypted.len - sha256_len];
 
     var key_index: ?usize = null;
     for (ticket_keys) |key, i| {
@@ -115,7 +135,7 @@ pub fn decryptTicket(
     const key = ticket_keys[key_index.?];
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac = HmacSha256.init(&key.hmac_key);
-    mac.update(encrypted[0..encrypted.len-sha256_len]);
+    mac.update(encrypted[0 .. encrypted.len - sha256_len]);
     var expected: [HmacSha256.mac_length]u8 = undefined;
     mac.final(&expected);
     if (constantTimeEqlBytes(mac_bytes, &expected) != 1) {
@@ -142,7 +162,11 @@ test "SessionStateTls13.unmarshal" {
     const plaintext = "\x03\x04\x00\x13\x01\x00\x00\x00\x00\x62\x2c\x8f\xe0\x20\x45\x1f\x6c\x6e\xaf\xe7\xd0\x59\x41\x17\xeb\xdc\x50\x3f\xed\x57\x01\xec\xc9\xab\xd5\xed\x63\xa1\xea\xdb\xa6\x79\xd0\x63\xa9\x01\x00\x00\x00";
     var state = try SessionStateTls13.unmarshal(allocator, plaintext);
     defer state.deinit(allocator);
-    std.log.debug("state={}", .{state});
+    // std.log.debug("state={}", .{state});
+
+    const got = try state.marshal(allocator);
+    defer allocator.free(got);
+    try testing.expectEqualSlices(u8, plaintext, got);
 }
 
 test "decryptTicket" {
