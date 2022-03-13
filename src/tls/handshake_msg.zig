@@ -994,26 +994,16 @@ pub const CertificateMsgTls13 = struct {
             return raw;
         }
 
-        var msg_len: usize = u8_size + u24_size + u8_size + u24_size;
-        var ocsp_stapling_marshaled_len: usize = 0;
-        var scts_marshaled_len: usize = 0;
-        for (self.cert_chain.certificate_chain) |cert, i| {
-            msg_len += u24_size + cert.len + u16_size;
-            if (i == 0) {
-                if (self.cert_chain.ocsp_staple.len > 0) {
-                    ocsp_stapling_marshaled_len = u16_size * 2 + u8_size + u24_size +
-                        self.cert_chain.ocsp_staple.len;
-                    msg_len += ocsp_stapling_marshaled_len;
-                }
-                if (self.cert_chain.signed_certificate_timestamps) |scts| {
-                    scts_marshaled_len = u16_size * 3;
-                    for (scts) |sct| {
-                        scts_marshaled_len += u16_size + sct.len;
-                    }
-                    msg_len += scts_marshaled_len;
-                }
-            }
-        }
+        const cert_chain = CertificateChain{
+            .certificate_chain = self.cert_chain.certificate_chain,
+            .ocsp_staple = if (self.ocsp_stapling) self.cert_chain.ocsp_staple else "",
+            .signed_certificate_timestamps = if (self.scts)
+                self.cert_chain.signed_certificate_timestamps
+            else
+                null,
+        };
+
+        var msg_len: usize = u8_size + u24_size + u8_size + cert_chain.marshaledLen();
 
         var raw = try allocator.alloc(u8, msg_len);
         errdefer allocator.free(raw);
@@ -1025,38 +1015,7 @@ pub const CertificateMsgTls13 = struct {
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
         try writeInt(u8, 0, writer); // certificate_request_context
-        rest_len -= u8_size + u24_size;
-
-        try writeInt(u24, rest_len, writer);
-        for (self.cert_chain.certificate_chain) |cert, i| {
-            try writeInt(u24, cert.len, writer);
-            try writeBytes(cert, writer);
-            const ext_len = if (i == 0) ocsp_stapling_marshaled_len + scts_marshaled_len else 0;
-            try writeInt(u16, ext_len, writer);
-            // This library only supports OCSP and SCT for leaf certificates.
-            if (i == 0) {
-                if (self.ocsp_stapling) {
-                    try writeInt(u16, ExtensionType.StatusRequest, writer);
-                    try writeInt(u16, u8_size + u24_size + self.cert_chain.ocsp_staple.len, writer);
-                    try writeInt(u8, status_type_ocsp, writer);
-                    try writeInt(u24, self.cert_chain.ocsp_staple.len, writer);
-                    try writeBytes(self.cert_chain.ocsp_staple, writer);
-                }
-                if (self.scts) {
-                    if (self.cert_chain.signed_certificate_timestamps) |scts| {
-                        try writeInt(u16, ExtensionType.Sct, writer);
-                        rest_len = scts_marshaled_len - u16_size * 2;
-                        try writeInt(u16, rest_len, writer);
-                        rest_len -= u16_size;
-                        try writeInt(u16, rest_len, writer);
-                        for (scts) |sct| {
-                            try writeInt(u16, sct.len, writer);
-                            try writeBytes(sct, writer);
-                        }
-                    }
-                }
-            }
-        }
+        try cert_chain.writeTo(writer);
 
         self.raw = raw;
         return raw;
@@ -2100,7 +2059,7 @@ fn writeLenAndBytes(comptime LenType: type, bytes: []const u8, writer: anytype) 
     try writeBytes(bytes, writer);
 }
 
-fn writeBytes(bytes: []const u8, writer: anytype) !void {
+pub fn writeBytes(bytes: []const u8, writer: anytype) !void {
     try writer.writeAll(bytes);
 }
 
@@ -2154,7 +2113,7 @@ fn writeIntSlice(
     }
 }
 
-fn writeInt(comptime T: type, val: anytype, writer: anytype) !void {
+pub fn writeInt(comptime T: type, val: anytype, writer: anytype) !void {
     try writer.writeIntBig(T, toInt(T, val));
 }
 
@@ -2175,9 +2134,9 @@ pub fn generateRandom(
     return random_bytes[0..random_length];
 }
 
-const u8_size = @typeInfo(u8).Int.bits / 8;
-const u16_size = @typeInfo(u16).Int.bits / 8;
-const u24_size = @typeInfo(u24).Int.bits / 8;
+pub const u8_size = @divExact(@typeInfo(u8).Int.bits, @bitSizeOf(u8));
+pub const u16_size = @divExact(@typeInfo(u16).Int.bits, @bitSizeOf(u8));
+pub const u24_size = @divExact(@typeInfo(u24).Int.bits, @bitSizeOf(u8));
 
 pub const EncryptedExtensionsMsg = struct {
     raw: ?[]const u8 = null,

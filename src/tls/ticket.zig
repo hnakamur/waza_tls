@@ -4,6 +4,7 @@ const datetime = @import("datetime");
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
+const BytesView = @import("../BytesView.zig");
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const AesBlock = @import("aes.zig").AesBlock;
 const Ctr = @import("ctr.zig").Ctr;
@@ -40,10 +41,34 @@ pub const SessionStateTls13 = struct {
         self.certificate.deinit(allocator);
     }
 
-    pub fn unmarshal(self: *SessionStateTls13, allocator: mem.Allocator, data: []const u8) !void {
+    pub fn unmarshal(allocator: mem.Allocator, data: []const u8) !SessionStateTls13 {
+        var bv = BytesView.init(data);
+        const version = try bv.readEnum(ProtocolVersion, .Big);
+        if (version != .v1_3) {
+            return error.InvalidSessionStateTls13;
+        }
+        const revision = try bv.readByte();
+        if (revision != 0) {
+            return error.InvalidSessionStateTls13;
+        }
+        const cipher_suite = try bv.readEnum(CipherSuiteId, .Big);
+        const created_at = try bv.readIntBig(u64);
+        const resumption_secret = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u8, .Big));
+        errdefer allocator.free(resumption_secret);
+        var certificate = try CertificateChain.unmarshal(allocator, bv.rest());
+        errdefer certificate.deinit(allocator);
+        return SessionStateTls13{
+            .cipher_suite = cipher_suite,
+            .created_at = created_at,
+            .resumption_secret = resumption_secret,
+            .certificate = certificate,
+        };
+    }
+
+    pub fn marshal(self: *const SessionStateTls13, allocator: mem.Allocator) ![]const u8 {
         _ = self;
         _ = allocator;
-        _ = data;
+        return "";
     }
 };
 
@@ -109,6 +134,16 @@ pub fn decryptTicket(
 }
 
 const testing = std.testing;
+
+test "SessionStateTls13.unmarshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const plaintext = "\x03\x04\x00\x13\x01\x00\x00\x00\x00\x62\x2c\x8f\xe0\x20\x45\x1f\x6c\x6e\xaf\xe7\xd0\x59\x41\x17\xeb\xdc\x50\x3f\xed\x57\x01\xec\xc9\xab\xd5\xed\x63\xa1\xea\xdb\xa6\x79\xd0\x63\xa9\x01\x00\x00\x00";
+    var state = try SessionStateTls13.unmarshal(allocator, plaintext);
+    defer state.deinit(allocator);
+    std.log.debug("state={}", .{state});
+}
 
 test "decryptTicket" {
     testing.log_level = .debug;

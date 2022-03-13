@@ -3,6 +3,11 @@ const mem = std.mem;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const ExtensionType = @import("handshake_msg.zig").ExtensionType;
 const status_type_ocsp = @import("handshake_msg.zig").status_type_ocsp;
+const u24_size = @import("handshake_msg.zig").u24_size;
+const u16_size = @import("handshake_msg.zig").u16_size;
+const u8_size = @import("handshake_msg.zig").u8_size;
+const writeInt = @import("handshake_msg.zig").writeInt;
+const writeBytes = @import("handshake_msg.zig").writeBytes;
 const crypto = @import("crypto.zig");
 const BytesView = @import("../BytesView.zig");
 const memx = @import("../memx.zig");
@@ -112,6 +117,70 @@ pub const CertificateChain = struct {
             .ocsp_staple = ocsp_staple,
             .signed_certificate_timestamps = scts.toOwnedSlice(allocator),
         };
+    }
+
+    pub fn marshaledLen(self: *const CertificateChain) usize {
+        var total_len: usize = u24_size;
+        for (self.certificate_chain) |cert, i| {
+            total_len += u24_size + cert.len + u16_size;
+            if (i == 0) {
+                total_len += self.ocspStaplingMarshaledLen() + self.sctsMarshaledLen();
+            }
+        }
+        return total_len;
+    }
+
+    pub fn ocspStaplingMarshaledLen(self: *const CertificateChain) usize {
+        return if (self.ocsp_staple.len > 0)
+            u16_size * 2 + u8_size + u24_size + self.ocsp_staple.len
+        else
+            0;
+    }
+
+    pub fn sctsMarshaledLen(self: *const CertificateChain) usize {
+        var scts_marshaled_len: usize = 0;
+        if (self.signed_certificate_timestamps) |scts| {
+            scts_marshaled_len = u16_size * 3;
+            for (scts) |sct| {
+                scts_marshaled_len += u16_size + sct.len;
+            }
+        }
+        return scts_marshaled_len;
+    }
+
+    pub fn writeTo(self: *const CertificateChain, writer: anytype) !void {
+        try writeInt(u24, self.marshaledLen() - u24_size, writer);
+        for (self.certificate_chain) |cert, i| {
+            try writeInt(u24, cert.len, writer);
+            try writeBytes(cert, writer);
+            const oscp_stapling_len = if (i == 0) self.ocspStaplingMarshaledLen() else 0;
+            const scts_len = if (i == 0) self.sctsMarshaledLen() else 0;
+            const ext_len = if (i == 0) oscp_stapling_len + scts_len else 0;
+            try writeInt(u16, ext_len, writer);
+            // This library only supports OCSP and SCT for leaf certificates.
+            if (i == 0) {
+                if (self.ocsp_staple.len > 0) {
+                    try writeInt(u16, ExtensionType.StatusRequest, writer);
+                    try writeInt(u16, oscp_stapling_len - u16_size * 2, writer);
+                    try writeInt(u8, status_type_ocsp, writer);
+                    try writeInt(u24, self.ocsp_staple.len, writer);
+                    try writeBytes(self.ocsp_staple, writer);
+                }
+                if (self.signed_certificate_timestamps != null) {
+                    if (self.signed_certificate_timestamps) |scts| {
+                        try writeInt(u16, ExtensionType.Sct, writer);
+                        var rest_len = scts_len - u16_size * 2;
+                        try writeInt(u16, rest_len, writer);
+                        rest_len -= u16_size;
+                        try writeInt(u16, rest_len, writer);
+                        for (scts) |sct| {
+                            try writeInt(u16, sct.len, writer);
+                            try writeBytes(sct, writer);
+                        }
+                    }
+                }
+            }
+        }
     }
 };
 
