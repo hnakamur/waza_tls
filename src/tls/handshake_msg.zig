@@ -1737,25 +1737,126 @@ pub const NewSessionTicketMsgTls12 = struct {
 };
 
 pub const NewSessionTicketMsgTls13 = struct {
+    raw: ?[]const u8 = null,
+    lifetime: u32 = 0,
+    age_add: u32 = 0,
+    nonce: []const u8 = "",
+    label: []const u8 = "",
+    max_early_data: u32 = 0,
+
+    pub fn deinit(self: *NewSessionTicketMsgTls13, allocator: mem.Allocator) void {
+        if (self.raw) |raw| allocator.free(raw);
+        if (self.nonce.len > 0) allocator.free(self.nonce);
+        if (self.label.len > 0) allocator.free(self.label);
+    }
+
     fn unmarshal(
         allocator: mem.Allocator,
         msg_data: []const u8,
     ) !NewSessionTicketMsgTls13 {
-        _ = allocator;
-        _ = msg_data;
-        // TODO: implement
-        // @panic("not implemented yet");
-        return NewSessionTicketMsgTls13{};
+        const raw = try allocator.dupe(u8, msg_data);
+        var bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const lifetime = try bv.readIntBig(u32);
+        const age_add = try bv.readIntBig(u32);
+        const nonce = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u8, .Big));
+        errdefer allocator.free(nonce);
+        const label = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u16, .Big));
+        errdefer allocator.free(label);
+        var extensions = BytesView.init(try bv.readLenPrefixedBytes(u16, .Big));
+        if (!bv.empty()) {
+            return error.InvalidNewSessionTicketMsgTls13;
+        }
+
+        var max_early_data: u32 = 0;
+        while (!extensions.empty()) {
+            const ext_type = try extensions.readEnum(ExtensionType, .Big);
+            var ext_data = BytesView.init(try extensions.readLenPrefixedBytes(u16, .Big));
+            switch (ext_type) {
+                .EarlyData => max_early_data = try ext_data.readIntBig(u32),
+                else => continue,
+            }
+
+            if (!ext_data.empty()) {
+                return error.InvalidNewSessionTicketMsgTls13;
+            }
+        }
+
+        return NewSessionTicketMsgTls13{
+            .raw = raw,
+            .lifetime = lifetime,
+            .age_add = age_add,
+            .nonce = nonce,
+            .label = label,
+            .max_early_data = max_early_data,
+        };
     }
 
     pub fn marshal(self: *NewSessionTicketMsgTls13, allocator: mem.Allocator) ![]const u8 {
-        _ = self;
-        _ = allocator;
-        // TODO: implement
-        // @panic("not implemented yet");
-        return "";
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        const early_data_len = if (self.max_early_data > 0)
+            u16_size * 2 + u32_size
+        else
+            @as(usize, 0);
+        const msg_len = u8_size + u24_size + u32_size * 2 + u8_size + self.nonce.len +
+            u16_size + self.label.len +
+            u16_size + early_data_len;
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+
+        try writeInt(u8, MsgType.NewSessionTicket, writer);
+        var rest_len = msg_len - u8_size - u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u32, self.lifetime, writer);
+        try writeInt(u32, self.age_add, writer);
+        try writeLenAndBytes(u8, self.nonce, writer);
+        try writeLenAndBytes(u16, self.label, writer);
+        try writeInt(u16, early_data_len, writer);
+        if (self.max_early_data > 0) {
+            try writeInt(u16, ExtensionType.EarlyData, writer);
+            try writeInt(u16, u32_size, writer);
+            try writeInt(u32, self.max_early_data, writer);
+        }
+
+        self.raw = raw;
+        return raw;
     }
 };
+
+test "NewSessionTicketMsgTls13.marshal" {
+    const allocator = testing.allocator;
+
+    var msg = NewSessionTicketMsgTls13{
+        .lifetime = 0x12345678,
+        .age_add = 0x33445566,
+        .nonce = "nonce",
+        .label = "label",
+        .max_early_data = 0xffeeddcc,
+    };
+
+    const marshaled = try msg.marshal(allocator);
+    defer allocator.free(marshaled);
+
+    const want = "\x04\x00\x00\x1f\x12\x34\x56\x78\x33\x44\x55\x66\x05\x6e\x6f\x6e\x63\x65\x00\x05\x6c\x61\x62\x65\x6c\x00\x08\x00\x2a\x00\x04\xff\xee\xdd\xcc";
+    try testing.expectEqualSlices(u8, want, marshaled);
+
+    var msg2 = try NewSessionTicketMsgTls13.unmarshal(allocator, marshaled);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqual(msg.lifetime, msg2.lifetime);
+    try testing.expectEqual(msg.age_add, msg2.age_add);
+    try testing.expectEqualSlices(u8, msg.nonce, msg2.nonce);
+    try testing.expectEqualSlices(u8, msg.label, msg2.label);
+    try testing.expectEqual(msg.max_early_data, msg2.max_early_data);
+}
 
 pub fn freeOptionalField(
     lhs: anytype,
@@ -2221,6 +2322,7 @@ pub fn generateRandom(
 pub const u8_size = @divExact(@typeInfo(u8).Int.bits, @bitSizeOf(u8));
 pub const u16_size = @divExact(@typeInfo(u16).Int.bits, @bitSizeOf(u8));
 pub const u24_size = @divExact(@typeInfo(u24).Int.bits, @bitSizeOf(u8));
+pub const u32_size = @divExact(@typeInfo(u32).Int.bits, @bitSizeOf(u8));
 
 pub const EncryptedExtensionsMsg = struct {
     raw: ?[]const u8 = null,

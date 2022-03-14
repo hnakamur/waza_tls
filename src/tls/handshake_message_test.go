@@ -650,3 +650,58 @@ func TestCertificateRequestMsg(t *testing.T) {
 		t.Errorf("result mismatch, got=%x, want=%x", got, want)
 	}
 }
+
+func TestNewSessionTicketMsgTLS13(t *testing.T) {
+	msg := newSessionTicketMsgTLS13{
+		lifetime:     0x12345678,
+		ageAdd:       0x33445566,
+		nonce:        []byte("nonce"),
+		label:        []byte("label"),
+		maxEarlyData: 0xffeeddcc,
+	}
+	marshaled := msg.marshal()
+	want := []byte("\x04\x00\x00\x1f\x12\x34\x56\x78\x33\x44\x55\x66\x05\x6e\x6f\x6e\x63\x65\x00\x05\x6c\x61\x62\x65\x6c\x00\x08\x00\x2a\x00\x04\xff\xee\xdd\xcc")
+	if got := marshaled; !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
+}
+
+type newSessionTicketMsgTLS13 struct {
+	raw          []byte
+	lifetime     uint32
+	ageAdd       uint32
+	nonce        []byte
+	label        []byte
+	maxEarlyData uint32
+}
+
+func (m *newSessionTicketMsgTLS13) marshal() []byte {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	var b cryptobyte.Builder
+	b.AddUint8(typeNewSessionTicket)
+	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddUint32(m.lifetime)
+		b.AddUint32(m.ageAdd)
+		b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes(m.nonce)
+		})
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes(m.label)
+		})
+
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			if m.maxEarlyData > 0 {
+				b.AddUint16(extensionEarlyData)
+				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+					b.AddUint32(m.maxEarlyData)
+				})
+			}
+		})
+	})
+
+	m.raw = b.BytesOrPanic()
+	return m.raw
+}

@@ -44,6 +44,7 @@ const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const decryptTicket = @import("ticket.zig").decryptTicket;
+const encryptTicket = @import("ticket.zig").encryptTicket;
 const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
 const SessionStateTls13 = @import("ticket.zig").SessionStateTls13;
 const hmac = @import("hmac.zig");
@@ -787,6 +788,15 @@ pub const ServerHandshakeStateTls13 = struct {
         };
         defer state.deinit(allocator);
 
+        const state_bytes = try state.marshal(allocator);
+        defer allocator.free(state_bytes);
+        const label = try encryptTicket(
+            allocator,
+            self.conn.ticket_keys,
+            state_bytes,
+            self.conn.config.random,
+        );
+        _= label;
         @panic("not implemented yet");
     }
 
