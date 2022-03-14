@@ -57,6 +57,7 @@ const resumption_binder_label = @import("key_schedule.zig").resumption_binder_la
 const crypto = @import("crypto.zig");
 const ClientSessionState = @import("session.zig").ClientSessionState;
 const TicketKey = @import("ticket.zig").TicketKey;
+const tiket_key_lifetime_seconds = @import("ticket.zig").tiket_key_lifetime_seconds;
 const ticket_key_rotation_seconds = @import("ticket.zig").ticket_key_rotation_seconds;
 const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
 
@@ -199,10 +200,8 @@ pub const Conn = struct {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
             if (self.client_cas) |*cas| cas.deinit();
             if (self.client_session_cache) |*cache| cache.deinit();
-            if (self.session_ticket_keys.len > 0) allocator.free(self.session_ticket_keys);
-            if (self.auto_session_ticket_keys.len > 0) {
-                allocator.free(self.auto_session_ticket_keys);
-            }
+            allocator.free(self.session_ticket_keys);
+            allocator.free(self.auto_session_ticket_keys);
         }
 
         pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
@@ -288,7 +287,7 @@ pub const Conn = struct {
             // Re-check the condition in case it changed since obtaining the new lock.
             if (self.auto_session_ticket_keys.len == 0 or
                 ((datetime.datetime.Datetime.now().toTimestamp() -
-                self.auto_session_ticket_keys[0].created.toTimestamp()) <
+                self.auto_session_ticket_keys[0].created.toTimestamp()) >=
                 ticket_key_rotation_seconds * std.time.ms_per_s))
             {
                 var new_key: [32]u8 = undefined;
@@ -304,15 +303,13 @@ pub const Conn = struct {
                 for (self.auto_session_ticket_keys) |key| {
                     // While rotating the current key, also remove any expired ones.
                     if ((datetime.datetime.Datetime.now().toTimestamp() -
-                        self.auto_session_ticket_keys[0].created.toTimestamp()) <
-                        ticket_key_rotation_seconds * std.time.ms_per_s)
+                        key.created.toTimestamp()) <
+                        tiket_key_lifetime_seconds * std.time.ms_per_s)
                     {
                         try valid_keys.append(key);
                     }
                 }
-                if (self.auto_session_ticket_keys.len > 0) {
-                    allocator.free(self.auto_session_ticket_keys);
-                }
+                allocator.free(self.auto_session_ticket_keys);
                 self.auto_session_ticket_keys = valid_keys.toOwnedSlice();
                 std.log.info(
                     "Config.ticketKeys updated self.auto_session_ticket_keys, len={}",
@@ -424,7 +421,7 @@ pub const Conn = struct {
         memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
         x509.Certificate.deinitChains(self.verified_chains, allocator);
         if (self.resumption_secret.len > 0) allocator.free(self.resumption_secret);
-        if (self.ticket_keys.len > 0) allocator.free(self.ticket_keys);
+        allocator.free(self.ticket_keys);
         self.in.deinit(allocator);
         self.out.deinit(allocator);
     }
@@ -979,7 +976,7 @@ pub const Conn = struct {
         // TODO: implement for case when Config.getConfigForClient is not null.
 
         const ticket_keys = try self.config.ticketKeys(allocator, null);
-        if (self.ticket_keys.len > 0) allocator.free(self.ticket_keys);
+        allocator.free(self.ticket_keys);
         self.ticket_keys = ticket_keys;
         std.log.info("Conn.readClientHello updated ticket_keys.len={}", .{self.ticket_keys.len});
 
@@ -2039,4 +2036,9 @@ test "Config.supportedVersions" {
     try f(.{ .max_version = .v1_3, .min_version = .v1_2 }, &supported_versions);
     try f(.{ .max_version = .v1_3, .min_version = .v1_3 }, supported_versions[0..1]);
     try f(.{ .max_version = .v1_2, .min_version = .v1_2 }, supported_versions[1..]);
+}
+
+test "free empty" {
+    const allocator = testing.allocator;
+    allocator.free("");
 }

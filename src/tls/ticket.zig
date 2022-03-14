@@ -92,6 +92,7 @@ pub const SessionStateTls13 = struct {
     }
 };
 
+pub const tiket_key_lifetime_seconds = 7 * std.time.s_per_day;
 pub const ticket_key_rotation_seconds = 24 * std.time.s_per_hour;
 
 // TicketKey is the internal representation of a session ticket key.
