@@ -92,9 +92,11 @@ pub const SessionStateTls13 = struct {
     }
 };
 
+pub const ticket_key_rotation_seconds = 24 * std.time.s_per_hour;
+
 // TicketKey is the internal representation of a session ticket key.
 pub const TicketKey = struct {
-    const name_len = 16;
+    pub const name_len = 16;
 
     // key_name is an opaque byte string that serves to identify the session
     // ticket key. It's exposed as plaintext in every session ticket.

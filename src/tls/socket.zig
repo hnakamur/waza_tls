@@ -499,8 +499,10 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
             while (i < 2) : (i += 1) {
                 var conn = try server.accept();
                 const allocator = server.allocator;
-                defer conn.deinit(allocator);
-                defer conn.close() catch {};
+                defer {
+                    conn.close() catch {};
+                    conn.deinit(allocator);
+                }
                 std.log.debug(
                     "testServer &conn=0x{x} &conn.in=0x{x}, &conn.out=0x{x}",
                     .{ @ptrToInt(&conn), @ptrToInt(&conn.in), @ptrToInt(&conn.out) },
@@ -516,13 +518,13 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var cache = try LruSessionCache.init(allocator, 1);
-            defer cache.deinit();
             var client_config = Conn.Config{
                 .max_version = .v1_3,
                 .insecure_skip_verify = true,
                 .cipher_suites = &default_cipher_suites_tls13,
                 .client_session_cache = cache,
             };
+            defer client_config.deinit(allocator);
 
             var i: usize = 0;
             while (i < 2) : (i += 1) {
@@ -551,17 +553,23 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+            var server_config = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
+                break :blk Conn.Config{
+                    .certificates = certificates,
+                    .max_version = .v1_3,
+                    .session_tickets_disabled = false,
+                };
+            };
+            defer server_config.deinit(allocator);
             var server = try Server.init(
                 allocator,
                 listen_addr,
                 .{},
-                .{
-                    .certificates = certificates,
-                    .max_version = .v1_3,
-                    .session_tickets_disabled = false,
-                },
+                server_config,
             );
             defer server.deinit();
 

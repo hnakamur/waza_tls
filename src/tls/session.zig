@@ -14,7 +14,7 @@ pub const ClientSessionState = struct {
     verified_chains: [][]x509.Certificate = &.{},
     received_at: Datetime = undefined,
     ocsp_response: []const u8 = "",
-    scts: [][]const u8 = &.{},
+    scts: []const []const u8 = &.{},
 
     // TLS 1.3 fields
     nonce: []const u8 = "",

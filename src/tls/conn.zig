@@ -22,6 +22,7 @@ const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
 const PskMode = @import("handshake_msg.zig").PskMode;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
+const NewSessionTicketMsgTls13 = @import("handshake_msg.zig").NewSessionTicketMsgTls13;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
 const random_length = @import("handshake_msg.zig").random_length;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
@@ -54,7 +55,10 @@ const LruSessionCache = @import("session.zig").LruSessionCache;
 const resumption_label = @import("key_schedule.zig").resumption_label;
 const resumption_binder_label = @import("key_schedule.zig").resumption_binder_label;
 const crypto = @import("crypto.zig");
+const ClientSessionState = @import("session.zig").ClientSessionState;
 const TicketKey = @import("ticket.zig").TicketKey;
+const ticket_key_rotation_seconds = @import("ticket.zig").ticket_key_rotation_seconds;
+const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -97,20 +101,20 @@ pub const Conn = struct {
         // The Reader must be safe for use by multiple goroutines.
         random: std.rand.Random = std.crypto.random,
 
-        // Certificates contains one or more certificate chains to present to the
+        // certificates contains one or more certificate chains to present to the
         // other side of the connection. The first certificate compatible with the
         // peer's requirements is selected automatically.
         //
-        // Server configurations must set one of Certificates, GetCertificate or
+        // Server configurations must set one of certificates, GetCertificate or
         // GetConfigForClient. Clients doing client-authentication may set either
-        // Certificates or GetClientCertificate.
+        // certificates or GetClientCertificate.
         //
-        // Note: if there are multiple Certificates, and they don't have the
+        // Note: if there are multiple certificates, and they don't have the
         // optional field Leaf set, certificate selection will incur a significant
         // per-handshake performance cost.
         certificates: []CertificateChain = &[_]CertificateChain{},
 
-        // NextProtos is a list of supported application level protocols, in
+        // next_protos is a list of supported application level protocols, in
         // order of preference. If both peers support ALPN, the selected
         // protocol will be one from this list, and the connection will fail
         // if there is no mutually supported protocol. If NextProtos is empty
@@ -118,46 +122,46 @@ pub const Conn = struct {
         // ConnectionState.NegotiatedProtocol will be empty.
         next_protos: []const []const u8 = &[_][]u8{},
 
-        // ServerName is used to verify the hostname on the returned
+        // server_name is used to verify the hostname on the returned
         // certificates unless InsecureSkipVerify is given. It is also included
         // in the client's handshake to support virtual hosting unless it is
         // an IP address.
         server_name: []const u8 = "",
 
-        // ClientAuth determines the server's policy for
+        // client_auth determines the server's policy for
         // TLS Client Authentication. The default is NoClientCert.
         client_auth: ClientAuthType = .no_client_cert,
 
-        // ClientCAs defines the set of root certificate authorities
+        // client_cas defines the set of root certificate authorities
         // that servers use if required to verify a client certificate
         // by the policy in ClientAuth.
         client_cas: ?CertPool = null,
 
-        // InsecureSkipVerify controls whether a client verifies the server's
-        // certificate chain and host name. If InsecureSkipVerify is true, crypto/tls
+        // insecure_skip_verify controls whether a client verifies the server's
+        // certificate chain and host name. If insecure_skip_verify is true, crypto/tls
         // accepts any certificate presented by the server and any host name in that
         // certificate. In this mode, TLS is susceptible to machine-in-the-middle
         // attacks unless custom verification is used. This should be used only for
         // testing or in combination with VerifyConnection or VerifyPeerCertificate.
         insecure_skip_verify: bool = false,
 
-        // CipherSuites is a list of enabled TLS 1.0–1.2 cipher suites. The order of
+        // cipher_suites is a list of enabled TLS 1.0–1.2 cipher suites. The order of
         // the list is ignored. Note that TLS 1.3 ciphersuites are not configurable.
         //
         // If CipherSuites is nil, a safe default list is used. The default cipher
         // suites might change over time.
         cipher_suites: []const CipherSuiteId = &default_cipher_suites,
 
-        // SessionTicketsDisabled may be set to true to disable session ticket and
+        // session_tickets_disabled may be set to true to disable session ticket and
         // PSK (resumption) support. Note that on clients, session ticket support is
         // also disabled if ClientSessionCache is nil.
         session_tickets_disabled: bool = false,
 
-        // ClientSessionCache is a cache of ClientSessionState entries for TLS
+        // client_session_cache is a cache of ClientSessionState entries for TLS
         // session resumption. It is only used by clients.
         client_session_cache: ?LruSessionCache = null,
 
-        // MinVersion contains the minimum TLS version that is acceptable.
+        // min_version contains the minimum TLS version that is acceptable.
         //
         // By default, TLS 1.2 is currently used as the minimum when acting as a
         // client, and TLS 1.0 when acting as a server. TLS 1.0 is the minimum
@@ -169,22 +173,36 @@ pub const Conn = struct {
         // possible to set this field to VersionTLS10 explicitly).
         min_version: ProtocolVersion = .v1_2,
 
-        // MaxVersion contains the maximum TLS version that is acceptable.
+        // max_version contains the maximum TLS version that is acceptable.
         //
         // By default, the maximum version supported by this package is used,
         // which is currently TLS 1.3.
         max_version: ProtocolVersion = .v1_3,
 
-        // CurvePreferences contains the elliptic curves that will be used in
+        // curve_preferences contains the elliptic curves that will be used in
         // an ECDHE handshake, in preference order. If empty, the default will
         // be used. The client will use the first preference as the type for
         // its key share in TLS 1.3. This may change in the future.
         curve_preferences: []const CurveId = &default_curve_preferences,
 
+        // session_ticket_keys contains zero or more ticket keys. If set, it means the
+        // the keys were set with SessionTicketKey or SetSessionTicketKeys. The
+        // first key is used for new tickets and any subsequent keys can be used to
+        // decrypt old tickets. The slice contents are not protected by the mutex
+        // and are immutable.
+        session_ticket_keys: []TicketKey = &.{},
+        // auto_session_ticket_keys is like sessionTicketKeys but is owned by the
+        // auto-rotation logic. See Config.ticketKeys.
+        auto_session_ticket_keys: []TicketKey = &.{},
+
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
             if (self.client_cas) |*cas| cas.deinit();
             if (self.client_session_cache) |*cache| cache.deinit();
+            if (self.session_ticket_keys.len > 0) allocator.free(self.session_ticket_keys);
+            if (self.auto_session_ticket_keys.len > 0) {
+                allocator.free(self.auto_session_ticket_keys);
+            }
         }
 
         pub fn maxSupportedVersion(self: *const Config) ProtocolVersion {
@@ -234,7 +252,94 @@ pub const Conn = struct {
         }
 
         pub fn getCertificate(self: *const Config) *CertificateChain {
+            std.log.info("Config.getCertificate, self.certificates.len={}", .{self.certificates.len});
             return &self.certificates[0];
+        }
+
+        pub fn ticketKeys(
+            self: *Config,
+            allocator: mem.Allocator,
+            config_for_client: ?*const Config,
+        ) ![]TicketKey {
+            // TODO: lock self
+
+            if (config_for_client) |cli_conf| {
+                _ = cli_conf;
+                @panic("not implemented yet");
+            }
+
+            if (self.session_tickets_disabled) {
+                return &[_]TicketKey{};
+            }
+            if (self.session_ticket_keys.len > 0) {
+                return try allocator.dupe(TicketKey, self.session_ticket_keys);
+            }
+            // Fast path for the common case where the key is fresh enough.
+            if (self.auto_session_ticket_keys.len > 0 and
+                ((datetime.datetime.Datetime.now().toTimestamp() -
+                self.auto_session_ticket_keys[0].created.toTimestamp()) <
+                ticket_key_rotation_seconds * std.time.ms_per_s))
+            {
+                return try allocator.dupe(TicketKey, self.auto_session_ticket_keys);
+            }
+
+            // auto_session_ticket_keys are managed by auto-rotation.
+
+            // Re-check the condition in case it changed since obtaining the new lock.
+            if (self.auto_session_ticket_keys.len == 0 or
+                ((datetime.datetime.Datetime.now().toTimestamp() -
+                self.auto_session_ticket_keys[0].created.toTimestamp()) <
+                ticket_key_rotation_seconds * std.time.ms_per_s))
+            {
+                var new_key: [32]u8 = undefined;
+                self.random.bytes(&new_key);
+
+                var valid_keys = try std.ArrayList(TicketKey).initCapacity(
+                    allocator,
+                    self.auto_session_ticket_keys.len + 1,
+                );
+                std.log.info("Config.ticketKeys initialized valid_keys", .{});
+                errdefer valid_keys.deinit();
+                try valid_keys.append(self.ticketKeyFromBytes(new_key));
+                for (self.auto_session_ticket_keys) |key| {
+                    // While rotating the current key, also remove any expired ones.
+                    if ((datetime.datetime.Datetime.now().toTimestamp() -
+                        self.auto_session_ticket_keys[0].created.toTimestamp()) <
+                        ticket_key_rotation_seconds * std.time.ms_per_s)
+                    {
+                        try valid_keys.append(key);
+                    }
+                }
+                if (self.auto_session_ticket_keys.len > 0) {
+                    allocator.free(self.auto_session_ticket_keys);
+                }
+                self.auto_session_ticket_keys = valid_keys.toOwnedSlice();
+                std.log.info(
+                    "Config.ticketKeys updated self.auto_session_ticket_keys, len={}",
+                    .{self.auto_session_ticket_keys.len},
+                );
+            }
+
+            return try allocator.dupe(TicketKey, self.auto_session_ticket_keys);
+        }
+
+        // ticketKeyFromBytes converts from the external representation of a session
+        // ticket key to a ticketKey. Externally, session ticket keys are 32 random
+        // bytes and this function expands that into sufficient name and key material.
+        fn ticketKeyFromBytes(
+            self: *Config,
+            b: [32]u8,
+        ) TicketKey {
+            _ = self;
+            const Sha512 = std.crypto.hash.sha2.Sha512;
+            var hashed: [Sha512.digest_length]u8 = undefined;
+            Sha512.hash(&b, &hashed, .{});
+            return .{
+                .key_name = hashed[0..TicketKey.name_len].*,
+                .aes_key = hashed[TicketKey.name_len .. TicketKey.name_len + 16].*,
+                .hmac_key = hashed[TicketKey.name_len + 16 .. TicketKey.name_len + 32].*,
+                .created = datetime.datetime.Datetime.now(),
+            };
         }
     };
 
@@ -280,8 +385,10 @@ pub const Conn = struct {
     client_finished: [finished_verify_length]u8 = undefined,
     server_finished: [finished_verify_length]u8 = undefined,
 
-    peer_certificates: []x509.Certificate = &[_]x509.Certificate{},
+    peer_certificates: []x509.Certificate = &.{},
+    verified_chains: [][]x509.Certificate = &.{},
 
+    resumption_secret: []const u8 = "",
     ticket_keys: []TicketKey = &.{},
     did_resume: bool = false,
 
@@ -307,7 +414,6 @@ pub const Conn = struct {
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
-        self.config.deinit(allocator);
         self.send_buf.deinit(allocator);
         if (self.ocsp_response.len > 0) allocator.free(self.ocsp_response);
         if (self.scts.len > 0) memx.freeElemsAndFreeSlice([]const u8, self.scts, allocator);
@@ -316,6 +422,8 @@ pub const Conn = struct {
         if (self.handshake_state) |*hs| hs.deinit(allocator);
         if (self.client_protocol.len > 0) allocator.free(self.client_protocol);
         memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
+        x509.Certificate.deinitChains(self.verified_chains, allocator);
+        if (self.resumption_secret.len > 0) allocator.free(self.resumption_secret);
         if (self.ticket_keys.len > 0) allocator.free(self.ticket_keys);
         self.in.deinit(allocator);
         self.out.deinit(allocator);
@@ -341,7 +449,7 @@ pub const Conn = struct {
         while (self.input.readableLength() == 0) {
             try self.readRecord(self.allocator);
             while (self.handshake_bytes.len > 0) {
-                @panic("not implemented yet");
+                try self.handlePostHandshakeMessage(self.allocator);
             }
         }
 
@@ -387,6 +495,116 @@ pub const Conn = struct {
         }
     }
 
+    fn handlePostHandshakeMessage(self: *Conn, allocator: mem.Allocator) !void {
+        if (self.version.? != .v1_3) {
+            @panic("not implemented yet");
+        }
+
+        var hs_msg = try self.readHandshake(allocator);
+        defer hs_msg.deinit(allocator);
+        self.retry_count += 1;
+        if (self.retry_count > max_useless_records) {
+            self.sendAlert(.unexpected_message) catch {};
+            return error.TlsTooManyNonAdvancingRecords;
+        }
+
+        switch (hs_msg) {
+            .NewSessionTicket => |*m| {
+                switch (m.*) {
+                    .v1_3 => |*msg| try self.handleNewSessionTicket(allocator, msg),
+                    else => @panic("unsupported tls version"),
+                }
+            },
+            .KeyUpdate => @panic("not implemented yet"),
+            else => {
+                self.sendAlert(.unexpected_message) catch {};
+                return error.TlsUnexpectedHandshakeMessageType;
+            },
+        }
+    }
+
+    fn handleNewSessionTicket(
+        self: *Conn,
+        allocator: mem.Allocator,
+        msg: *NewSessionTicketMsgTls13,
+    ) !void {
+        if (self.role != .client) {
+            self.sendAlert(.unexpected_message) catch {};
+            return error.TlsReceivedNewSessionTicketFromClient;
+        }
+
+        if (self.config.session_tickets_disabled or self.config.client_session_cache == null) {
+            return;
+        }
+
+        // See RFC 8446, Section 4.6.1.
+        if (msg.lifetime == 0) {
+            return;
+        }
+        if (msg.lifetime > max_session_ticket_lifetime_seconds) {
+            self.sendAlert(.illegal_parameter) catch {};
+            return error.TlsReceivedNewSessionTicketWithInvalidLifetime;
+        }
+
+        const cipher_suite = cipherSuiteTls13ById(self.cipher_suite_id.?);
+        if (cipher_suite == null or self.resumption_secret.len == 0) {
+            std.log.err(
+                "Conn.handleNewSessionTicket internal_error cipher_suite={}, self.resumption_secret={s}",
+                .{ cipher_suite, self.resumption_secret },
+            );
+            try self.sendAlert(.internal_error);
+        }
+
+        // Save the resumption_master_secret and nonce instead of deriving the PSK
+        // to do the least amount of work on NewSessionTicket messages before we
+        // know if the ticket will be used. Forward secrecy of resumed connections
+        // is guaranteed by the requirement for pskModeDHE.
+        const session = blk: {
+            const session_ticket = msg.label;
+            msg.label = "";
+
+            const master_secret = try allocator.dupe(u8, self.resumption_secret);
+            errdefer allocator.free(master_secret);
+
+            const nonce = msg.nonce;
+            msg.nonce = "";
+
+            var server_certificates = try x509.Certificate.cloneSlice(self.peer_certificates, allocator);
+            errdefer memx.deinitSliceAndElems(x509.Certificate, server_certificates, allocator);
+
+            var verified_chains = try x509.Certificate.cloneChains(self.verified_chains, allocator);
+            errdefer x509.Certificate.deinitChains(verified_chains, allocator);
+
+            const ocsp_response = try allocator.dupe(u8, self.ocsp_response);
+            errdefer allocator.free(ocsp_response);
+
+            const scts = try memx.dupeStringList(allocator, self.scts);
+            errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
+
+            const now = datetime.datetime.Datetime.now();
+
+            break :blk ClientSessionState{
+                .session_ticket = session_ticket,
+                .ver = self.version.?,
+                .cipher_suite = self.cipher_suite_id.?,
+                .master_secret = master_secret,
+                .server_certificates = server_certificates,
+                .verified_chains = verified_chains,
+                .received_at = now,
+                .ocsp_response = ocsp_response,
+                .scts = scts,
+                .nonce = nonce,
+                .use_by = now.shiftSeconds(msg.lifetime),
+                .age_add = msg.age_add,
+            };
+        };
+
+        const cache_key = try clientSessionCacheKey(allocator, self.remote_address, &self.config);
+        defer allocator.free(cache_key);
+        try self.config.client_session_cache.?.put(cache_key, session);
+        std.log.info("Conn.handleNewSessionTicket put client_session_cache, cache_key={s}", .{cache_key});
+    }
+
     pub fn sendAlert(self: *Conn, desc: AlertDescription) !void {
         const level = desc.level();
         std.log.debug("Conn.sendAlert, level={}, desc={}", .{ level, desc });
@@ -415,6 +633,7 @@ pub const Conn = struct {
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
         var load_result: ?LoadSessionResult = null;
+        defer if (load_result) |*res| res.deinit(allocator);
         self.handshake_state = blk: {
             var ecdhe_params: ?EcdheParameters = null;
             errdefer if (ecdhe_params) |*params| params.deinit(allocator);
@@ -498,9 +717,9 @@ pub const Conn = struct {
         // the one already cached - cache a new one.
         std.log.info("Conn.clientHandshake before checking load_result", .{});
         if (load_result) |res| {
-            std.log.info("Conn.clientHandshake load_result is not null, cache_key={s}, res.session={}", .{ res.cache_key, res.session });
+            std.log.info("Conn.clientHandshake load_result is not null, cache_key={s}", .{res.cache_key});
             var hs_session = self.handshake_state.?.client.getSession();
-            std.log.info("Conn.clientHandshake hs_session={}", .{hs_session});
+            std.log.info("Conn.clientHandshake hs_session={any}", .{hs_session});
             if (res.cache_key.len > 0 and hs_session != null and
                 (res.session == null or res.session.? != hs_session.?))
             {
@@ -756,6 +975,13 @@ pub const Conn = struct {
                 return error.UnexpectedMessage;
             },
         };
+
+        // TODO: implement for case when Config.getConfigForClient is not null.
+
+        const ticket_keys = try self.config.ticketKeys(allocator, null);
+        if (self.ticket_keys.len > 0) allocator.free(self.ticket_keys);
+        self.ticket_keys = ticket_keys;
+        std.log.info("Conn.readClientHello updated ticket_keys.len={}", .{self.ticket_keys.len});
 
         const client_versions = if (client_hello.supported_versions.len > 0)
             client_hello.supported_versions

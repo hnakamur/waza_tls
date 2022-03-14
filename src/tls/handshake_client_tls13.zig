@@ -26,6 +26,7 @@ const client_handshake_traffic_label = @import("key_schedule.zig").client_handsh
 const server_handshake_traffic_label = @import("key_schedule.zig").server_handshake_traffic_label;
 const client_application_traffic_label = @import("key_schedule.zig").client_application_traffic_label;
 const server_application_traffic_label = @import("key_schedule.zig").server_application_traffic_label;
+const resumption_master_label = @import("key_schedule.zig").resumption_master_label;
 const server_signature_context = @import("auth.zig").server_signature_context;
 const client_signature_context = @import("auth.zig").client_signature_context;
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
@@ -641,6 +642,23 @@ pub const ClientHandshakeStateTls13 = struct {
 
         try self.conn.out.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
 
-        // TODO: implement
+        if (!self.conn.config.session_tickets_disabled and
+            self.conn.config.client_session_cache != null)
+        {
+            const resumption_secret = try self.suite.?.deriveSecret(
+                allocator,
+                self.master_secret,
+                resumption_master_label,
+                self.transcript,
+            );
+            if (self.conn.resumption_secret.len > 0) {
+                allocator.free(self.conn.resumption_secret);
+            }
+            self.conn.resumption_secret = resumption_secret;
+            std.log.info(
+                "ClientHandshakeStateTls13.sendClientFinished updated resumption_secret={}",
+                .{std.fmt.fmtSliceHexLower(resumption_secret)},
+            );
+        }
     }
 };

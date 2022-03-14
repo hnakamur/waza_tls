@@ -392,6 +392,7 @@ fn signatureSchemesForCertificate(
     ver: ProtocolVersion,
     cert: *const CertificateChain,
 ) ![]SignatureScheme {
+    std.debug.assert(cert.private_key != null);
     const priv_key = cert.private_key.?;
     var sig_algs = blk: {
         switch (priv_key.public()) {

@@ -93,6 +93,7 @@ pub const HandshakeMsg = union(MsgType) {
         switch (self.*) {
             .ClientHello => |*msg| msg.deinit(allocator),
             .ServerHello => |*msg| msg.deinit(allocator),
+            .NewSessionTicket => |*msg| msg.deinit(allocator),
             .Certificate => |*msg| msg.deinit(allocator),
             .ServerKeyExchange => |*msg| msg.deinit(allocator),
             .ServerHelloDone => |*msg| msg.deinit(allocator),
@@ -1715,6 +1716,11 @@ pub const NewSessionTicketMsg = union(ProtocolVersion) {
 };
 
 pub const NewSessionTicketMsgTls12 = struct {
+    pub fn deinit(self: *NewSessionTicketMsgTls12, allocator: mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+    }
+
     fn unmarshal(
         allocator: mem.Allocator,
         msg_data: []const u8,

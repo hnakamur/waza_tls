@@ -9,6 +9,7 @@ const CertificateMsgTls13 = @import("handshake_msg.zig").CertificateMsgTls13;
 const CertificateRequestMsgTls13 = @import("handshake_msg.zig").CertificateRequestMsgTls13;
 const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
+const NewSessionTicketMsgTls13 = @import("handshake_msg.zig").NewSessionTicketMsgTls13;
 const PskMode = @import("handshake_msg.zig").PskMode;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CurveId = @import("handshake_msg.zig").CurveId;
@@ -392,7 +393,7 @@ pub const ServerHandshakeStateTls13 = struct {
 
         // TODO: check client_hello
         var cert_chain = self.conn.config.getCertificate();
-        errdefer cert_chain.deinit(allocator);
+        // errdefer cert_chain.deinit(allocator);
 
         self.sig_alg = selectSignatureScheme(
             allocator,
@@ -748,56 +749,67 @@ pub const ServerHandshakeStateTls13 = struct {
         }
 
         std.log.info("ServerHandshakeStateTls13.sendSessionTickets after shouldSendSessionTickets", .{});
-        const resumption_secret = try self.suite.?.deriveSecret(
-            allocator,
-            self.master_secret,
-            resumption_master_label,
-            self.transcript,
-        );
-        errdefer allocator.free(resumption_secret);
 
-        var state = blk_state: {
-            var certs_from_client = blk_certs: {
-                var certs = try allocator.alloc([]const u8, self.conn.peer_certificates.len);
-                var i: usize = 0;
-                errdefer memx.freeElemsAndFreeSliceInError([]const u8, certs, allocator, i);
-                while (i < self.conn.peer_certificates.len) : (i += 1) {
-                    certs[i] = try allocator.dupe(u8, self.conn.peer_certificates[i].raw);
-                }
-                break :blk_certs certs;
+        const label = blk_label: {
+            var state = blk_state: {
+                const resumption_secret = try self.suite.?.deriveSecret(
+                    allocator,
+                    self.master_secret,
+                    resumption_master_label,
+                    self.transcript,
+                );
+                errdefer allocator.free(resumption_secret);
+
+                var certs_from_client = blk_certs: {
+                    var certs = try allocator.alloc([]const u8, self.conn.peer_certificates.len);
+                    var i: usize = 0;
+                    errdefer memx.freeElemsAndFreeSliceInError([]const u8, certs, allocator, i);
+                    while (i < self.conn.peer_certificates.len) : (i += 1) {
+                        certs[i] = try allocator.dupe(u8, self.conn.peer_certificates[i].raw);
+                    }
+                    break :blk_certs certs;
+                };
+                errdefer memx.freeElemsAndFreeSlice([]const u8, certs_from_client, allocator);
+
+                var ocsp_response = try allocator.dupe(u8, self.conn.ocsp_response);
+                errdefer allocator.free(ocsp_response);
+
+                var scts = try memx.dupeStringList(allocator, self.conn.scts);
+                errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
+
+                const now = datetime.datetime.Datetime.now();
+                break :blk_state SessionStateTls13{
+                    .cipher_suite = self.suite.?.id,
+                    .created_at = @intCast(u64, @divTrunc(now.toTimestamp(), std.time.ms_per_s)),
+                    .resumption_secret = resumption_secret,
+                    .certificate = CertificateChain{
+                        .certificate_chain = certs_from_client,
+                        .ocsp_staple = ocsp_response,
+                        .signed_certificate_timestamps = scts,
+                    },
+                };
             };
-            errdefer memx.freeElemsAndFreeSlice([]const u8, certs_from_client, allocator);
+            defer state.deinit(allocator);
 
-            var ocsp_response = try allocator.dupe(u8, self.conn.ocsp_response);
-            errdefer allocator.free(ocsp_response);
+            const state_bytes = try state.marshal(allocator);
+            defer allocator.free(state_bytes);
 
-            var scts = try memx.dupeStringList(allocator, self.conn.scts);
-            errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
-
-            const now = datetime.datetime.Datetime.now();
-            break :blk_state SessionStateTls13{
-                .cipher_suite = self.suite.?.id,
-                .created_at = @divTrunc(now.toTimestamp(), std.time.ms_per_s),
-                .resumption_secret = resumption_secret,
-                .certificate = CertificateChain{
-                    .certificate_chain = certs_from_client,
-                    .ocsp_staple = ocsp_response,
-                    .signed_certificate_timestamps = scts,
-                },
-            };
+            break :blk_label try encryptTicket(
+                allocator,
+                self.conn.ticket_keys,
+                state_bytes,
+                self.conn.config.random,
+            );
         };
-        defer state.deinit(allocator);
 
-        const state_bytes = try state.marshal(allocator);
-        defer allocator.free(state_bytes);
-        const label = try encryptTicket(
-            allocator,
-            self.conn.ticket_keys,
-            state_bytes,
-            self.conn.config.random,
-        );
-        _= label;
-        @panic("not implemented yet");
+        var msg = NewSessionTicketMsgTls13{
+            .lifetime = max_session_ticket_lifetime_seconds,
+            .label = label,
+        };
+        defer msg.deinit(allocator);
+
+        try self.conn.writeRecord(allocator, .handshake, try msg.marshal(allocator));
+        std.log.info("ServerHandshakeStateTls13.sendSessionTickets written NewSessionTicketMsgTls13", .{});
     }
 
     fn readClientCertificate(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {

@@ -634,6 +634,58 @@ pub const Certificate = struct {
         }
     }
 
+    pub fn clone(
+        self: *const Certificate,
+        allocator: mem.Allocator,
+    ) !Certificate {
+        return Certificate.parse(allocator, self.raw);
+    }
+
+    pub fn cloneSlice(
+        slice: []Certificate,
+        allocator: mem.Allocator,
+    ) ![]Certificate {
+        var copy = try allocator.alloc(Certificate, slice.len);
+        var i: usize = 0;
+        errdefer memx.deinitElemsAndFreeSliceInError(Certificate, copy, allocator, i);
+        while (i < slice.len) : (i += 1) {
+            copy[i] = try slice[i].clone(allocator);
+        }
+        return copy;
+    }
+
+    pub fn cloneChains(
+        chains: [][]Certificate,
+        allocator: mem.Allocator,
+    ) ![][]Certificate {
+        var copy = try allocator.alloc([]Certificate, chains.len);
+        var i: usize = 0;
+        errdefer {
+            var j: usize = 0;
+            while (j < i) : (j += 1) {
+                memx.deinitSliceAndElems(Certificate, chains[j], allocator);
+            }
+            allocator.free(chains);
+        }
+        while (i < chains.len) : (i += 1) {
+            copy[i] = try Certificate.cloneSlice(chains[i], allocator);
+        }
+        return copy;
+    }
+
+    pub fn deinitChains(
+        chains: [][]Certificate,
+        allocator: mem.Allocator,
+    ) void {
+        if (chains.len == 0) {
+            return;
+        }
+        for (chains) |slice| {
+            memx.deinitSliceAndElems(Certificate, slice, allocator);
+        }
+        allocator.free(chains);
+    }
+
     pub fn format(
         self: Certificate,
         comptime fmt: []const u8,
