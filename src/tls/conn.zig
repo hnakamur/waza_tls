@@ -649,6 +649,7 @@ pub const Conn = struct {
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
         var load_result: ?LoadSessionResult = null;
+        defer if (load_result) |*res| res.deinit(allocator);
         self.handshake_state = blk: {
             var ecdhe_params: ?EcdheParameters = null;
             errdefer if (ecdhe_params) |*params| params.deinit(allocator);

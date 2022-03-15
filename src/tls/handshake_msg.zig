@@ -192,7 +192,7 @@ pub const ClientHelloMsg = struct {
     key_shares: []KeyShare = &[_]KeyShare{},
     early_data: bool = false,
     psk_modes: []const PskMode = &[_]PskMode{},
-    psk_identities: []const PskIdentity = &[_]PskIdentity{},
+    psk_identities: []PskIdentity = &[_]PskIdentity{},
     psk_binders: []const []const u8 = &[_][]u8{},
 
     pub fn deinit(self: *ClientHelloMsg, allocator: mem.Allocator) void {
@@ -223,7 +223,10 @@ pub const ClientHelloMsg = struct {
             allocator.free(self.key_shares);
         }
         if (self.psk_modes.len > 0) allocator.free(self.psk_modes);
-        if (self.psk_identities.len > 0) allocator.free(self.psk_identities);
+
+        for (self.psk_identities) |*identity| identity.deinit(allocator);
+        allocator.free(self.psk_identities);
+
         if (self.psk_binders.len > 0) {
             for (self.psk_binders) |psk_binder| allocator.free(psk_binder);
             allocator.free(self.psk_binders);
@@ -1983,6 +1986,10 @@ pub const PskMode = enum(u8) {
 pub const PskIdentity = struct {
     label: []const u8,
     obfuscated_ticket_age: u32,
+
+    pub fn deinit(self: *PskIdentity, allocator: mem.Allocator) void {
+        allocator.free(self.label);
+    }
 };
 
 // TLS compression types.
@@ -2128,7 +2135,7 @@ fn readKeyShareList(allocator: mem.Allocator, bv: *BytesView) ![]KeyShare {
     return values;
 }
 
-fn readPskIdentityList(allocator: mem.Allocator, bv: *BytesView) ![]const PskIdentity {
+fn readPskIdentityList(allocator: mem.Allocator, bv: *BytesView) ![]PskIdentity {
     const list_len = try bv.readIntBig(u16);
     try bv.ensureRestLen(list_len);
 
@@ -2148,11 +2155,10 @@ fn readPskIdentityList(allocator: mem.Allocator, bv: *BytesView) ![]const PskIde
     bv.pos = start_pos;
 
     var values = try allocator.alloc(PskIdentity, n);
-    errdefer allocator.free(values);
-
     var i: usize = 0;
+    errdefer memx.deinitElemsAndFreeSliceInError(PskIdentity, values, allocator, i);
     while (i < n) : (i += 1) {
-        const label = try readString(u16, bv);
+        const label = try allocator.dupe(u8, try readString(u16, bv));
         const age = try bv.readIntBig(u32);
         values[i] = PskIdentity{ .label = label, .obfuscated_ticket_age = age };
     }
@@ -2637,20 +2643,29 @@ fn testCreateClientHelloMsgWithExtensions(allocator: mem.Allocator) !ClientHello
         &[_]PskMode{ .plain, .dhe },
     );
     errdefer allocator.free(psk_modes);
-    const psk_identities = try allocator.dupe(
-        PskIdentity,
-        &[_]PskIdentity{.{ .label = "my id 1", .obfuscated_ticket_age = 0x778899aa }},
-    );
-    errdefer allocator.free(psk_identities);
-    const binder1 = try allocator.dupe(u8, "binder1");
-    errdefer allocator.free(binder1);
-    const binder2 = try allocator.dupe(u8, "binder2");
-    errdefer allocator.free(binder2);
-    const psk_binders = try allocator.dupe(
-        []const u8,
-        &[_][]const u8{ binder1, binder2 },
-    );
-    errdefer allocator.free(psk_binders);
+
+    const psk_identities = blk_identities: {
+        const psk_identity_label = try allocator.dupe(u8, "my id 1");
+        errdefer allocator.free(psk_identity_label);
+        break :blk_identities try allocator.dupe(
+            PskIdentity,
+            &[_]PskIdentity{.{ .label = psk_identity_label, .obfuscated_ticket_age = 0x778899aa }},
+        );
+    };
+    errdefer memx.deinitSliceAndElems(PskIdentity, psk_identities, allocator);
+
+    const psk_binders = blk_binders: {
+        const binder1 = try allocator.dupe(u8, "binder1");
+        errdefer allocator.free(binder1);
+        const binder2 = try allocator.dupe(u8, "binder2");
+        errdefer allocator.free(binder2);
+        break :blk_binders try allocator.dupe(
+            []const u8,
+            &[_][]const u8{ binder1, binder2 },
+        );
+    };
+    errdefer memx.freeElemsAndFreeSlice([]const u8, psk_binders, allocator);
+
     return ClientHelloMsg{
         .vers = .v1_3,
         .random = random,
