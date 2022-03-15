@@ -184,7 +184,7 @@ pub const ServerHandshakeStateTls12 = struct {
         self.cert_chain = self.conn.config.getCertificate();
 
         self.ecdhe_ok = supportsEcdHe(
-            &self.conn.config,
+            self.conn.config,
             self.client_hello.supported_curves,
             self.client_hello.supported_points,
         );

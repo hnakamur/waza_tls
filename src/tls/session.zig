@@ -42,6 +42,8 @@ pub const ClientSessionState = struct {
         }
         if (self.nonce.len > 0) allocator.free(self.nonce);
     }
+
+    // pub fn clone(self: *const ClientSessionState, allocator: mem.Allocator) !ClientSessionState {}
 };
 
 pub const LoadSessionResult = struct {
@@ -85,52 +87,118 @@ pub const LruSessionCache = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        var it = self.map.valueIterator();
-        while (it.next()) |value_ptr| {
-            self.removeHelper(value_ptr);
+        std.log.info("LruSessionCache.deinit self=0x{x}", .{@ptrToInt(self)});
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            // std.log.info("LruSessionCache.deinit &value_ptr.data=0x{x}", .{@ptrToInt(&value_ptr.data)});
+            self.map.allocator.free(entry.key_ptr.*);
+            self.removeHelper(entry.value_ptr);
         }
         self.map.deinit();
     }
 
     // LruSessionCache take ownership of cs.
     // cs must be created with the allocator which was passed to init.
-    pub fn put(self: *Self, session_key: []const u8, cs: ClientSessionState) !void {
+    pub fn put(self: *Self, session_key: []const u8, cs: *const ClientSessionState) !void {
+        std.log.info("LruSessionCache.put start, self=0x{x}, session_key={s}, cs=0x{x}", .{
+            @ptrToInt(self),
+            session_key,
+            @ptrToInt(cs),
+        });
         var result = try self.map.getOrPut(session_key);
         if (result.found_existing) {
+            if (&result.value_ptr.data == cs) {
+                std.log.info("LruSessionCache.put just touch value, self=0x{x}, session_key={s}, cs=0x{x}", .{
+                    @ptrToInt(self),
+                    session_key,
+                    @ptrToInt(cs),
+                });
+                self.queue.remove(result.value_ptr);
+                self.queue.append(result.value_ptr);
+                return;
+            }
+            std.log.info("LruSessionCache.put found different value, self=0x{x}, session_key={s}, cs=0x{x}", .{
+                @ptrToInt(self),
+                session_key,
+                @ptrToInt(cs),
+            });
             self.queue.remove(result.value_ptr);
             self.removeHelper(result.value_ptr);
             try self.putHelper(result, cs);
             return;
         }
 
+        const allocator = self.map.allocator;
+        result.key_ptr.* = allocator.dupe(u8, session_key) catch |err| {
+            _ = self.map.remove(session_key);
+            return err;
+        };
+
+        std.log.info("LruSessionCache.put put new value, self=0x{x}, queue.len={}, capacity={}", .{ @ptrToInt(self), self.queue.len, self.capacity });
         if (self.queue.len < self.capacity) {
+            std.log.info("LruSessionCache.put put new value, self=0x{x}, session_key={s}, cs=0x{x}", .{
+                @ptrToInt(self),
+                session_key,
+                @ptrToInt(cs),
+            });
             try self.putHelper(result, cs);
             return;
         }
 
-        const oldest_value_ptr = self.queue.pop().?;
+        const oldest_value_ptr = self.queue.popFirst().?;
         const map_index = self.getMapIndexFromValuePtr(oldest_value_ptr);
         const oldest_key = self.getMapKeys()[map_index];
+        std.log.info("LruSessionCache.put remove oldest, self=0x{x}, oldest_key={s}, cs=0x{x}", .{
+            @ptrToInt(self),
+            oldest_key,
+            @ptrToInt(&oldest_value_ptr.data),
+        });
         self.removeHelper(oldest_value_ptr);
-        _ = self.map.remove(oldest_key);
+        const kv = self.map.fetchRemove(oldest_key).?;
+        self.map.allocator.free(kv.key);
+
         try self.putHelper(result, cs);
     }
 
     pub fn remove(self: *Self, session_key: []const u8) void {
-        if (self.map.get(session_key)) |*node_ptr| {
-            _ = self.map.remove(session_key);
+        std.log.info("LruSessionCache.remove start, self=0x{x}, session_key={s}", .{
+            @ptrToInt(self),
+            session_key,
+        });
+        if (self.map.getPtr(session_key)) |node_ptr| {
+            std.log.info("LruSessionCache.remove, self=0x{x}, session_key={s}, removed 0x{x}", .{
+                @ptrToInt(self),
+                session_key,
+                @ptrToInt(&node_ptr.data),
+            });
             self.queue.remove(node_ptr);
             self.removeHelper(node_ptr);
+            const kv = self.map.fetchRemove(session_key).?;
+            self.map.allocator.free(kv.key);
+            std.log.info("LruSessionCache.remove, self=0x{x}, session_key={s}, removed queue.len={}", .{
+                @ptrToInt(self),
+                session_key,
+                self.queue.len,
+            });
         }
     }
 
     // LruSessionCache owns the memory for the returned value.
     pub fn getPtr(self: *Self, session_key: []const u8) ?*ClientSessionState {
-        if (self.map.get(session_key)) |*node_ptr| {
+        if (self.map.getPtr(session_key)) |node_ptr| {
             self.queue.remove(node_ptr);
-            self.queue.prepend(node_ptr);
+            self.queue.append(node_ptr);
+            std.log.info("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=0x{x}", .{
+                @ptrToInt(self),
+                session_key,
+                @ptrToInt(&node_ptr.data),
+            });
             return &node_ptr.data;
         } else {
+            std.log.info("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=null", .{
+                @ptrToInt(self),
+                session_key,
+            });
             return null;
         }
     }
@@ -138,17 +206,31 @@ pub const LruSessionCache = struct {
     fn putHelper(
         self: *Self,
         result: Map.GetOrPutResult,
-        cs: ClientSessionState,
+        cs: *const ClientSessionState,
     ) !void {
-        result.value_ptr.* = .{
-            .data = cs,
-        };
-        self.queue.prepend(result.value_ptr);
+        result.value_ptr.data = cs.*;
+        self.queue.append(result.value_ptr);
+        std.log.info("LruSessionCache.putHelper, &node.data=0x{x}, queue.len={}", .{
+            @ptrToInt(&result.value_ptr.data),
+            self.queue.len,
+        });
     }
 
     fn removeHelper(self: *Self, node: *Node) void {
         const allocator = self.map.allocator;
+        std.log.info("LruSessionCache.removeHelper, &node.data=0x{x}", .{@ptrToInt(&node.data)});
         node.data.deinit(allocator);
+    }
+
+    fn debugLogKeys(self: *const Self) void {
+        std.log.info("LruSessionCache.debugLogKeys start", .{});
+        var it = self.queue.first;
+        while (it) |node_ptr| : (it = node_ptr.next) {
+            const map_index = self.getMapIndexFromValuePtr(node_ptr);
+            const key = self.getMapKeys()[map_index];
+            std.log.info("key={s}", .{key});
+        }
+        std.log.info("LruSessionCache.debugLogKeys exit", .{});
     }
 
     const MapHeader = packed struct {
@@ -197,74 +279,82 @@ test "LruSessionCache" {
     {
         var ticket1 = try allocator.dupe(u8, "ticket1");
         errdefer allocator.free(ticket1);
-        try cache.put("key1", .{
+        try cache.put("key1", &.{
             .session_ticket = ticket1,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         });
+        cache.debugLogKeys();
     }
 
     {
         var ticket2 = try allocator.dupe(u8, "ticket2");
         errdefer allocator.free(ticket2);
-        try cache.put("key1", .{
+        try cache.put("key1", &.{
             .session_ticket = ticket2,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         });
+        cache.debugLogKeys();
     }
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        try cache.put("key2", .{
+        try cache.put("key2", &.{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         });
+        cache.debugLogKeys();
     }
 
-    var cs = cache.getPtr("key2");
+    var cs = cache.getPtr("key1");
     try testing.expect(cs != null);
-    std.log.debug("cs for key2={}", .{cs.?.*});
+    std.log.debug("cs for key1={}", .{cs.?.*});
+    cache.debugLogKeys();
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        try cache.put("key2", .{
+        try cache.put("key2", &.{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         });
+        cache.debugLogKeys();
     }
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        try cache.put("key3", .{
+        try cache.put("key3", &.{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         });
+        cache.debugLogKeys();
     }
 
     {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        try cache.put("key4", .{
+        try cache.put("key4", &.{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         });
+        cache.debugLogKeys();
     }
 
     cs = cache.getPtr("key2");
+    // std.log.info("key2 value cs=0x{x}", .{@ptrToInt(cs.?)});
     try testing.expect(cs == null);
 
     cache.remove("key1");

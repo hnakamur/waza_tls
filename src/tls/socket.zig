@@ -9,13 +9,13 @@ const Server = struct {
     server: net.StreamServer,
     connections: std.ArrayListUnmanaged(Conn),
     allocator: mem.Allocator,
-    conn_config: Conn.Config,
+    conn_config: *Conn.Config,
 
     pub fn init(
         allocator: mem.Allocator,
         address: net.Address,
         options: net.StreamServer.Options,
-        conn_config: Conn.Config,
+        conn_config: *Conn.Config,
     ) !Server {
         var server = net.StreamServer.init(options);
         try server.listen(address);
@@ -50,7 +50,7 @@ const Server = struct {
 const Client = struct {
     conn: Conn,
 
-    pub fn init(allocator: mem.Allocator, addr: net.Address, conn_config: Conn.Config) !Client {
+    pub fn init(allocator: mem.Allocator, addr: net.Address, conn_config: *Conn.Config) !Client {
         var stream = try net.tcpConnectToAddress(addr);
         return Client{
             .conn = Conn.init(allocator, .client, addr, stream, .{}, .{}, conn_config),
@@ -517,7 +517,7 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var cache = try LruSessionCache.init(allocator, 1);
+            var cache = try LruSessionCache.init(allocator, null);
             var client_config = Conn.Config{
                 .max_version = .v1_3,
                 .insecure_skip_verify = true,
@@ -525,11 +525,15 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
                 .client_session_cache = cache,
             };
             defer client_config.deinit(allocator);
+            std.log.info("testClient client_config=0x{x}, session=0x{x}", .{
+                @ptrToInt(&client_config),
+                @ptrToInt(&client_config.client_session_cache.?),
+            });
 
             var i: usize = 0;
             while (i < 2) : (i += 1) {
                 std.log.info("testClient loop start, i={}", .{i});
-                var client = try Client.init(allocator, addr, client_config);
+                var client = try Client.init(allocator, addr, &client_config);
                 defer client.deinit(allocator);
                 defer client.close() catch {};
 
@@ -569,7 +573,7 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
                 allocator,
                 listen_addr,
                 .{},
-                server_config,
+                &server_config,
             );
             defer server.deinit();
 

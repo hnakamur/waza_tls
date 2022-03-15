@@ -200,7 +200,15 @@ pub const Conn = struct {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
             if (self.client_cas) |*cas| cas.deinit();
             if (self.client_session_cache) |*cache| cache.deinit();
+            std.log.info(
+                "Config.deinit self.session_ticket_keys, len={}, ptr=0x{x}",
+                .{ self.session_ticket_keys.len, @ptrToInt(self.session_ticket_keys.ptr) },
+            );
             allocator.free(self.session_ticket_keys);
+            std.log.info(
+                "Config.deinit self.auto_session_ticket_keys, len={}, ptr=0x{x}",
+                .{ self.auto_session_ticket_keys.len, @ptrToInt(self.auto_session_ticket_keys.ptr) },
+            );
             allocator.free(self.auto_session_ticket_keys);
         }
 
@@ -297,7 +305,7 @@ pub const Conn = struct {
                     allocator,
                     self.auto_session_ticket_keys.len + 1,
                 );
-                std.log.info("Config.ticketKeys initialized valid_keys", .{});
+                std.log.info("Config.ticketKeys initialized valid_keys, ptr=0x{x}", .{@ptrToInt(valid_keys.items.ptr)});
                 errdefer valid_keys.deinit();
                 try valid_keys.append(self.ticketKeyFromBytes(new_key));
                 for (self.auto_session_ticket_keys) |key| {
@@ -309,11 +317,15 @@ pub const Conn = struct {
                         try valid_keys.append(key);
                     }
                 }
+                std.log.info(
+                    "Config.ticketKeys old self.auto_session_ticket_keys, len={}, ptr=0x{x}",
+                    .{ self.auto_session_ticket_keys.len, @ptrToInt(self.auto_session_ticket_keys.ptr) },
+                );
                 allocator.free(self.auto_session_ticket_keys);
                 self.auto_session_ticket_keys = valid_keys.toOwnedSlice();
                 std.log.info(
-                    "Config.ticketKeys updated self.auto_session_ticket_keys, len={}",
-                    .{self.auto_session_ticket_keys.len},
+                    "Config.ticketKeys updated self.auto_session_ticket_keys, len={}, ptr=0x{x}",
+                    .{ self.auto_session_ticket_keys.len, @ptrToInt(self.auto_session_ticket_keys.ptr) },
                 );
             }
 
@@ -350,7 +362,7 @@ pub const Conn = struct {
     out: HalfConn,
 
     version: ?ProtocolVersion = null,
-    config: Config,
+    config: *Config,
 
     // handshakes counts the number of handshakes performed on the
     // connection so far. If renegotiation is disabled then this is either
@@ -396,7 +408,7 @@ pub const Conn = struct {
         stream: net.Stream,
         in: HalfConn,
         out: HalfConn,
-        config: Config,
+        config: *Config,
     ) Conn {
         return .{
             .allocator = allocator,
@@ -421,6 +433,11 @@ pub const Conn = struct {
         memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
         x509.Certificate.deinitChains(self.verified_chains, allocator);
         if (self.resumption_secret.len > 0) allocator.free(self.resumption_secret);
+
+        std.log.info(
+            "Conn.deinit self.ticket_keys, len={}, ptr=0x{x}",
+            .{ self.ticket_keys.len, @ptrToInt(self.ticket_keys.ptr) },
+        );
         allocator.free(self.ticket_keys);
         self.in.deinit(allocator);
         self.out.deinit(allocator);
@@ -559,6 +576,8 @@ pub const Conn = struct {
         const session = blk: {
             const session_ticket = msg.label;
             msg.label = "";
+            // const session_ticket = try allocator.dupe(u8, msg.label);
+            // errdefer allocator.free(session_ticket);
 
             const master_secret = try allocator.dupe(u8, self.resumption_secret);
             errdefer allocator.free(master_secret);
@@ -596,9 +615,9 @@ pub const Conn = struct {
             };
         };
 
-        const cache_key = try clientSessionCacheKey(allocator, self.remote_address, &self.config);
+        const cache_key = try clientSessionCacheKey(allocator, self.remote_address, self.config);
         defer allocator.free(cache_key);
-        try self.config.client_session_cache.?.put(cache_key, session);
+        try self.config.client_session_cache.?.put(cache_key, &session);
         std.log.info("Conn.handleNewSessionTicket put client_session_cache, cache_key={s}", .{cache_key});
     }
 
@@ -630,7 +649,6 @@ pub const Conn = struct {
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
         var load_result: ?LoadSessionResult = null;
-        defer if (load_result) |*res| res.deinit(allocator);
         self.handshake_state = blk: {
             var ecdhe_params: ?EcdheParameters = null;
             errdefer if (ecdhe_params) |*params| params.deinit(allocator);
@@ -708,6 +726,10 @@ pub const Conn = struct {
             };
         };
 
+        std.log.info("clientHandshake, state=0x{x}, session=0x{x}", .{
+            @ptrToInt(&self.handshake_state.?),
+            @ptrToInt(self.handshake_state.?.client.getSession()),
+        });
         try self.handshake_state.?.client.handshake(allocator);
 
         // If we had a successful handshake and hs.session is different from
@@ -720,7 +742,7 @@ pub const Conn = struct {
             if (res.cache_key.len > 0 and hs_session != null and
                 (res.session == null or res.session.? != hs_session.?))
             {
-                try self.config.client_session_cache.?.put(res.cache_key, hs_session.?.*);
+                try self.config.client_session_cache.?.put(res.cache_key, hs_session.?);
                 std.log.info("Conn.clientHandshake put session, cache_key={s}", .{res.cache_key});
             }
         }
@@ -1446,7 +1468,7 @@ pub const Conn = struct {
         }
 
         // Try to resume a previously negotiated TLS session, if available.
-        const cache_key = try clientSessionCacheKey(allocator, self.remote_address, &self.config);
+        const cache_key = try clientSessionCacheKey(allocator, self.remote_address, self.config);
         std.log.info("Conn.loadSession cache_key={s}", .{cache_key});
         var ret = LoadSessionResult{ .cache_key = cache_key };
         errdefer ret.deinit(allocator);
