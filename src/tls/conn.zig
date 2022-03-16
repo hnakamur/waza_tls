@@ -700,6 +700,12 @@ pub const Conn = struct {
             }
 
             if (self.version.? == .v1_3) {
+                const early_secret = try allocator.dupe(u8, load_result.?.early_secret);
+                errdefer allocator.free(early_secret);
+
+                const binder_key = try allocator.dupe(u8, load_result.?.binder_key);
+                errdefer allocator.free(binder_key);
+
                 break :blk HandshakeState{
                     .client = ClientHandshakeState{
                         .v1_3 = ClientHandshakeStateTls13{
@@ -708,8 +714,8 @@ pub const Conn = struct {
                             .conn = self,
                             .ecdhe_params = ecdhe_params.?,
                             .session = load_result.?.session,
-                            .early_secret = load_result.?.early_secret,
-                            .binder_key = load_result.?.binder_key,
+                            .early_secret = early_secret,
+                            .binder_key = binder_key,
                         },
                     },
                 };
