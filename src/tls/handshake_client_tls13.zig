@@ -33,6 +33,7 @@ const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
 const ClientSessionState = @import("session.zig").ClientSessionState;
 const hmac = @import("hmac.zig");
 const crypto = @import("crypto.zig");
+const x509 = @import("x509.zig");
 const memx = @import("../memx.zig");
 
 pub const ClientHandshakeStateTls13 = struct {
@@ -232,8 +233,25 @@ pub const ClientHandshakeStateTls13 = struct {
         }
 
         self.using_psk = true;
-        _ = allocator;
-        @panic("not implemented yet");
+        self.conn.did_resume = true;
+
+        memx.deinitSliceAndElems(x509.Certificate, self.conn.peer_certificates, allocator);
+        self.conn.peer_certificates = try x509.Certificate.cloneSlice(
+            self.session.?.server_certificates,
+            allocator,
+        );
+
+        x509.Certificate.deinitChains(self.conn.verified_chains, allocator);
+        self.conn.verified_chains = try x509.Certificate.cloneChains(
+            self.session.?.verified_chains,
+            allocator,
+        );
+
+        allocator.free(self.conn.ocsp_response);
+        self.conn.ocsp_response = try allocator.dupe(u8, self.session.?.ocsp_response);
+
+        memx.freeElemsAndFreeSlice([]const u8, self.conn.scts, allocator);
+        self.conn.scts = try memx.dupeStringList(allocator, self.session.?.scts);
     }
 
     fn establishHandshakeKeys(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -350,7 +368,8 @@ pub const ClientHandshakeStateTls13 = struct {
         // Either a PSK or a certificate is always used, but not both.
         // See RFC 8446, Section 4.1.1.
         if (self.using_psk) {
-            @panic("not implemented yet");
+            // TODO: implement using self.conn.config.verifyConnection
+            return;
         }
 
         var hs_msg = try self.conn.readHandshake(allocator);

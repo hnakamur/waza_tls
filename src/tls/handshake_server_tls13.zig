@@ -30,6 +30,7 @@ const client_handshake_traffic_label = @import("key_schedule.zig").client_handsh
 const server_handshake_traffic_label = @import("key_schedule.zig").server_handshake_traffic_label;
 const client_application_traffic_label = @import("key_schedule.zig").client_application_traffic_label;
 const server_application_traffic_label = @import("key_schedule.zig").server_application_traffic_label;
+const resumption_label = @import("key_schedule.zig").resumption_label;
 const resumption_binder_label = @import("key_schedule.zig").resumption_binder_label;
 const resumption_master_label = @import("key_schedule.zig").resumption_master_label;
 const negotiateAlpn = @import("handshake_server.zig").negotiateAlpn;
@@ -335,18 +336,21 @@ pub const ServerHandshakeStateTls13 = struct {
                 continue;
             }
 
+            std.log.info("ServerHandshakeStateTls13.checkForResumption resumption_secret={}", .{std.fmt.fmtSliceHexLower(session_state.resumption_secret)});
             const psk = try self.suite.?.expandLabel(
                 allocator,
                 session_state.resumption_secret,
-                resumption_binder_label,
+                resumption_label,
                 "",
                 @intCast(u16, self.suite.?.hash_type.digestLength()),
             );
             defer allocator.free(psk);
+            std.log.info("ServerHandshakeStateTls13.checkForResumption psk={}", .{std.fmt.fmtSliceHexLower(psk)});
 
             const early_secret = try self.suite.?.extract(allocator, psk, null);
             if (self.early_secret) |secret| allocator.free(secret);
             self.early_secret = early_secret;
+            std.log.info("ServerHandshakeStateTls13.checkForResumption early_secret={}", .{std.fmt.fmtSliceHexLower(early_secret)});
 
             const binder_key = try self.suite.?.deriveSecret(
                 allocator,
@@ -355,10 +359,15 @@ pub const ServerHandshakeStateTls13 = struct {
                 null,
             );
             defer allocator.free(binder_key);
+            std.log.info("ServerHandshakeStateTls13.checkForResumption binder_key={}", .{std.fmt.fmtSliceHexLower(binder_key)});
 
             var transcript = self.transcript.clone();
-            transcript.update(try self.client_hello.marshalWithoutBinders(allocator));
+            const client_hello_bytes_without_binders = try self.client_hello.marshalWithoutBinders(allocator);
+            std.log.info("ServerHandshakeStateTls13.checkForResumption client_hello_bytes_without_binders={}", .{std.fmt.fmtSliceHexLower(client_hello_bytes_without_binders)});
+            transcript.update(client_hello_bytes_without_binders);
             const psk_binder = try self.suite.?.finishedHash(allocator, binder_key, transcript);
+            std.log.info("ServerHandshakeStateTls13.checkForResumption client_hello.psk_binders[{}]={}", .{ i, std.fmt.fmtSliceHexLower(self.client_hello.psk_binders[i]) });
+            std.log.info("ServerHandshakeStateTls13.checkForResumption psk_binder={}", .{std.fmt.fmtSliceHexLower(psk_binder)});
             defer allocator.free(psk_binder);
             if (!hmac.equal(self.client_hello.psk_binders[i], psk_binder)) {
                 self.conn.sendAlert(.decrypt_error) catch {};

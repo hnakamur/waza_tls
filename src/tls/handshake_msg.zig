@@ -310,6 +310,14 @@ pub const ClientHelloMsg = struct {
         allocator: mem.Allocator,
         psk_binders: [][]const u8,
     ) !void {
+        if (psk_binders.len != self.psk_binders.len) {
+            @panic("tls: internal error: pskBinders length mismatch");
+        }
+        for (self.psk_binders) |self_binder, i| {
+            if (psk_binders[i].len != self_binder.len) {
+                @panic("tls: internal error: pskBinders length mismatch");
+            }
+        }
         memx.freeElemsAndFreeSlice([]const u8, self.psk_binders, allocator);
         self.psk_binders = psk_binders;
         if (self.raw != null) {

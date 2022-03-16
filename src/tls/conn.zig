@@ -1555,11 +1555,11 @@ pub const Conn = struct {
         }
 
         // Set the pre_shared_key extension. See RFC 8446, Section 4.2.11.1.
-        const ticket_age = @intCast(u32, now.toTimestamp() - session.?.received_at.toTimestamp());
-        if (hello.psk_identities.len > 0) {
-            allocator.free(hello.psk_identities);
-            hello.psk_identities = &.{};
-        }
+        const ticket_age = @intCast(
+            u32,
+            @divTrunc(now.toTimestamp() - session.?.received_at.toTimestamp(), std.time.ms_per_s),
+        );
+        memx.deinitSliceAndElems(PskIdentity, hello.psk_identities, allocator);
         hello.psk_identities = blk: {
             const label = try allocator.dupe(u8, session.?.session_ticket);
             errdefer allocator.free(label);
@@ -1569,6 +1569,12 @@ pub const Conn = struct {
                     .obfuscated_ticket_age = ticket_age + session.?.age_add,
                 },
             });
+        };
+        memx.freeElemsAndFreeSlice([]const u8, hello.psk_binders, allocator);
+        hello.psk_binders = blk_binders: {
+            const binder = try allocator.alloc(u8, cipher_suite.?.hash_type.digestLength());
+            errdefer allocator.free(binder);
+            break :blk_binders try allocator.dupe([]const u8, &[_][]const u8{binder});
         };
 
         ret.session = session;
@@ -1581,9 +1587,11 @@ pub const Conn = struct {
             @intCast(u16, cipher_suite.?.hash_type.digestLength()),
         );
         defer allocator.free(psk);
+        std.log.info("Conn.loadSession psk={}", .{std.fmt.fmtSliceHexLower(psk)});
 
         const early_secret = try cipher_suite.?.extract(allocator, psk, null);
         ret.early_secret = early_secret;
+        std.log.info("Conn.loadSession early_secret={}", .{std.fmt.fmtSliceHexLower(early_secret)});
 
         const binder_key = try cipher_suite.?.deriveSecret(
             allocator,
@@ -1592,14 +1600,18 @@ pub const Conn = struct {
             null,
         );
         ret.binder_key = binder_key;
+        std.log.info("Conn.loadSession binder_key={}", .{std.fmt.fmtSliceHexLower(binder_key)});
 
         var transcript = crypto.Hash.init(cipher_suite.?.hash_type);
-        transcript.update(try hello.marshalWithoutBinders(allocator));
+        const hello_bytes_without_binders = try hello.marshalWithoutBinders(allocator);
+        std.log.info("Conn.loadSession hello_bytes_without_binders={}", .{std.fmt.fmtSliceHexLower(hello_bytes_without_binders)});
+        transcript.update(hello_bytes_without_binders);
 
         // Compute the PSK binders. See RFC 8446, Section 4.2.11.2.
         var psk_binders = blk: {
             var binder = try cipher_suite.?.finishedHash(allocator, binder_key, transcript);
             errdefer allocator.free(binder);
+            std.log.info("Conn.loadSession binder={}", .{std.fmt.fmtSliceHexLower(binder)});
             break :blk try allocator.dupe([]const u8, &[_][]const u8{binder});
         };
         errdefer memx.freeElemsAndFreeSlice(psk_binders);

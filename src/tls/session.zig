@@ -99,7 +99,7 @@ pub const LruSessionCache = struct {
     // LruSessionCache take ownership of cs.
     // cs must be created with the allocator which was passed to init.
     pub fn put(self: *Self, session_key: []const u8, cs: *const ClientSessionState) !void {
-        std.log.debug("LruSessionCache.put start, self=0x{x}, session_key={s}, cs=0x{x}", .{
+        std.log.info("LruSessionCache.put start, self=0x{x}, session_key={s}, cs=0x{x}", .{
             @ptrToInt(self),
             session_key,
             @ptrToInt(cs),
@@ -107,7 +107,7 @@ pub const LruSessionCache = struct {
         var result = try self.map.getOrPut(session_key);
         if (result.found_existing) {
             if (&result.value_ptr.data == cs) {
-                std.log.debug("LruSessionCache.put just touch value, self=0x{x}, session_key={s}, cs=0x{x}", .{
+                std.log.info("LruSessionCache.put just touch value, self=0x{x}, session_key={s}, cs=0x{x}", .{
                     @ptrToInt(self),
                     session_key,
                     @ptrToInt(cs),
@@ -187,14 +187,14 @@ pub const LruSessionCache = struct {
         if (self.map.getPtr(session_key)) |node_ptr| {
             self.queue.remove(node_ptr);
             self.queue.append(node_ptr);
-            std.log.debug("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=0x{x}", .{
+            std.log.info("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=0x{x}", .{
                 @ptrToInt(self),
                 session_key,
                 @ptrToInt(&node_ptr.data),
             });
             return &node_ptr.data;
         } else {
-            std.log.debug("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=null", .{
+            std.log.info("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=null", .{
                 @ptrToInt(self),
                 session_key,
             });
