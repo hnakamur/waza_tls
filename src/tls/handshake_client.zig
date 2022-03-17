@@ -88,7 +88,13 @@ pub const ClientHandshakeStateTls12 = struct {
 
         self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
 
-        // TODO: implement
+        // No signatures of the handshake are needed in a resumption.
+        // Otherwise, in a full handshake, if we don't have any certificates
+        // configured then we will never send a CertificateVerify message and
+        // thus no signatures are needed in that case either.
+        if (is_resume or self.conn.config.certificates.len == 0) {
+            self.finished_hash.?.discardHandshakeBuffer();
+        }
 
         try self.finished_hash.?.write(try self.hello.marshal(allocator));
         std.log.debug("client: clientHello {}", .{std.fmt.fmtSliceHexLower(self.hello.raw.?)});
@@ -98,8 +104,20 @@ pub const ClientHandshakeStateTls12 = struct {
         try self.finished_hash.?.debugLogClientHash(allocator, "client: serverHello");
 
         self.conn.buffering = true;
+        self.conn.did_resume = is_resume;
         if (is_resume) {
-            // TODO: implement
+            try self.establishKeys(allocator);
+            // try self.readSessionTicket(allocator);
+            try self.readFinished(allocator, &self.conn.server_finished);
+            self.conn.client_finished_is_first = false;
+
+            // Make sure the connection is still being verified whether or not this
+            // is a resumption. Resumptions currently don't reverify certificates so
+            // they don't call verifyServerCertificate. See Issue 31641.
+            // TODO: implement using self.conn.config.verifyConnection
+
+            try self.sendFinished(allocator, &self.conn.client_finished);
+            try self.conn.flush();
         } else {
             try self.doFullHandshake(allocator);
             try self.establishKeys(allocator);
@@ -109,6 +127,7 @@ pub const ClientHandshakeStateTls12 = struct {
                 .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
             );
             try self.conn.flush();
+            self.conn.client_finished_is_first = true;
             try self.readFinished(allocator, &self.conn.server_finished);
             std.log.debug(
                 "ClientHandshakeStateTls12 server_finished={}",

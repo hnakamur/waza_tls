@@ -401,6 +401,8 @@ pub const Conn = struct {
     ticket_keys: []TicketKey = &.{},
     did_resume: bool = false,
 
+    client_finished_is_first: bool = false,
+
     pub fn init(
         allocator: mem.Allocator,
         role: Role,

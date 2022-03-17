@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const datetime = @import("datetime");
+const AlertDescription = @import("alert.zig").AlertDescription;
 const Conn = @import("conn.zig").Conn;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
@@ -623,11 +624,15 @@ pub const ServerHandshakeStateTls13 = struct {
                     signed,
                     sign_opts,
                 ) catch {
-                    // TODO: implement
-                    const alert_desc = if (false)
-                        .handshake_failure
-                    else
-                        .internal_error;
+                    const alert_desc: AlertDescription = blk_alert_desc: {
+                        if (sig_type == .rsa_pss) {
+                            switch (self.cert_chain.?.private_key.?) {
+                                .rsa => break :blk_alert_desc .handshake_failure,
+                                else => {},
+                            }
+                        }
+                        break :blk_alert_desc .internal_error;
+                    };
                     self.conn.sendAlert(alert_desc) catch {};
                     return error.SignHandshakeFailed;
                 };
@@ -826,7 +831,7 @@ pub const ServerHandshakeStateTls13 = struct {
             // Make sure the connection is still being verified whether or not
             // the server requested a client certificate.
 
-            // TODO: implement
+            // TODO: implement using self.conn.verifyConnection
             return;
         }
 
@@ -853,7 +858,7 @@ pub const ServerHandshakeStateTls13 = struct {
 
         try self.conn.processCertsFromClient(allocator, &cert_msg.cert_chain);
 
-        // TODO: implement
+        // TODO: implement using self.conn.verifyConnection
 
         if (cert_msg.cert_chain.certificate_chain.len != 0) {
             var cert_verify_msg = blk: {

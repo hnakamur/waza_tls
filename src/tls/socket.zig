@@ -94,10 +94,12 @@ test "ClientServer_tls12_rsa2048" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .insecure_skip_verify = true,
-            });
+            };
+            defer client_config.deinit(allocator);
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -120,17 +122,19 @@ test "ClientServer_tls12_rsa2048" {
             const key_pem = @embedFile("../../tests/rsa2048.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{
+            var server_config = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
+                break :blk Conn.Config{
                     .certificates = certificates,
                     .max_version = .v1_2,
-                },
-            );
+                    .session_tickets_disabled = false,
+                };
+            };
+            defer server_config.deinit(allocator);
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -171,10 +175,12 @@ test "ClientServer_tls12_p256_no_client_certificate" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .insecure_skip_verify = true,
-            });
+            };
+            defer client_config.deinit(allocator);
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -197,17 +203,19 @@ test "ClientServer_tls12_p256_no_client_certificate" {
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{
+            var server_config = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
+                break :blk Conn.Config{
                     .certificates = certificates,
                     .max_version = .v1_2,
-                },
-            );
+                    .session_tickets_disabled = false,
+                };
+            };
+            defer server_config.deinit(allocator);
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -248,7 +256,7 @@ test "ClientServer_tls12_p256_client_certificate" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = blk: {
+            var client_config = blk: {
                 const cert_pem = @embedFile("../../tests/client_cert/my-client.crt");
                 const key_pem = @embedFile("../../tests/client_cert/my-client.key");
                 var certificates = try allocator.alloc(CertificateChain, 1);
@@ -256,12 +264,15 @@ test "ClientServer_tls12_p256_client_certificate" {
                 certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
                 errdefer certificates[0].deinit(allocator);
 
-                break :blk try Client.init(allocator, addr, .{
+                break :blk Conn.Config{
                     .max_version = .v1_2,
                     .insecure_skip_verify = true,
                     .certificates = certificates,
-                });
+                };
             };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -286,28 +297,27 @@ test "ClientServer_tls12_p256_client_certificate" {
             const ca_pem = @embedFile("../../tests/client_cert/my-root-ca.crt");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var server = blk: {
+            var server_config = blk: {
                 var certificates = try allocator.alloc(CertificateChain, 1);
                 errdefer allocator.free(certificates);
                 certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
                 errdefer certificates[0].deinit(allocator);
 
                 var client_cas = try CertPool.init(allocator, false);
                 errdefer client_cas.deinit();
                 try client_cas.appendCertsFromPem(ca_pem);
 
-                break :blk try Server.init(
-                    allocator,
-                    listen_addr,
-                    .{},
-                    .{
-                        .certificates = certificates,
-                        .max_version = .v1_2,
-                        .client_auth = .request_client_cert,
-                        .client_cas = client_cas,
-                    },
-                );
+                break :blk Conn.Config{
+                    .certificates = certificates,
+                    .max_version = .v1_2,
+                    .client_auth = .request_client_cert,
+                    .client_cas = client_cas,
+                };
             };
+            defer server_config.deinit(allocator);
+
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -350,10 +360,13 @@ test "ClientServer_tls13_rsa2048" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
                 .max_version = .v1_3,
                 .insecure_skip_verify = true,
-            });
+            };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -376,18 +389,20 @@ test "ClientServer_tls13_rsa2048" {
             const key_pem = @embedFile("../../tests/rsa2048.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{
+            var server_config = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
+                break :blk Conn.Config{
                     .certificates = certificates,
                     .max_version = .v1_3,
-                    .session_tickets_disabled = true,
-                },
-            );
+                    .session_tickets_disabled = false,
+                };
+            };
+            defer server_config.deinit(allocator);
+
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -430,11 +445,13 @@ test "ClientServer_tls13_p256_no_client_certificate_one_request" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
                 .max_version = .v1_3,
                 .insecure_skip_verify = true,
                 .cipher_suites = &default_cipher_suites_tls13,
-            });
+            };
+            defer client_config.deinit(allocator);
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -457,18 +474,19 @@ test "ClientServer_tls13_p256_no_client_certificate_one_request" {
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{
+            var server_config = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
+                break :blk Conn.Config{
                     .certificates = certificates,
                     .max_version = .v1_3,
                     .session_tickets_disabled = true,
-                },
-            );
+                };
+            };
+            defer server_config.deinit(allocator);
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -569,12 +587,7 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
                 };
             };
             defer server_config.deinit(allocator);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                &server_config,
-            );
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -617,7 +630,7 @@ test "ClientServer_tls13_p256_client_certificate" {
         }
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = blk: {
+            var client_config = blk: {
                 const cert_pem = @embedFile("../../tests/client_cert/my-client.crt");
                 const key_pem = @embedFile("../../tests/client_cert/my-client.key");
                 var certificates = try allocator.alloc(CertificateChain, 1);
@@ -625,14 +638,16 @@ test "ClientServer_tls13_p256_client_certificate" {
                 certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
                 errdefer certificates[0].deinit(allocator);
 
-                var c = try Client.init(allocator, addr, .{
+                break :blk Conn.Config{
                     .max_version = .v1_3,
                     .insecure_skip_verify = true,
                     .cipher_suites = &default_cipher_suites_tls13,
                     .certificates = certificates,
-                });
-                break :blk c;
+                };
             };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -657,30 +672,26 @@ test "ClientServer_tls13_p256_client_certificate" {
             const ca_pem = @embedFile("../../tests/client_cert/my-root-ca.crt");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
-            var server = blk: {
+            var server_config = blk: {
                 var certificates = try allocator.alloc(CertificateChain, 1);
                 errdefer allocator.free(certificates);
                 certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-                errdefer certificates[0].deinit(allocator);
 
                 var client_cas = try CertPool.init(allocator, false);
                 errdefer client_cas.deinit();
                 try client_cas.appendCertsFromPem(ca_pem);
 
-                var s = try Server.init(
-                    allocator,
-                    listen_addr,
-                    .{},
-                    .{
-                        .certificates = certificates,
-                        .max_version = .v1_3,
-                        .session_tickets_disabled = true,
-                        .client_auth = .request_client_cert,
-                        .client_cas = client_cas,
-                    },
-                );
-                break :blk s;
+                break :blk Conn.Config{
+                    .certificates = certificates,
+                    .max_version = .v1_3,
+                    .session_tickets_disabled = true,
+                    .client_auth = .request_client_cert,
+                    .client_cas = client_cas,
+                };
             };
+            defer server_config.deinit(allocator);
+
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             const t = try std.Thread.spawn(
@@ -738,18 +749,20 @@ test "ServerOnly_tls13_p256" {
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 8443);
-            var certificates = try allocator.alloc(CertificateChain, 1);
-            certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
-            var server = try Server.init(
-                allocator,
-                listen_addr,
-                .{},
-                .{
+            var server_config = blk: {
+                var certificates = try allocator.alloc(CertificateChain, 1);
+                errdefer allocator.free(certificates);
+                certificates[0] = try x509KeyPair(allocator, cert_pem, key_pem);
+
+                break :blk Conn.Config{
                     .certificates = certificates,
                     .max_version = .v1_3,
                     .session_tickets_disabled = true,
-                },
-            );
+                };
+            };
+            defer server_config.deinit(allocator);
+
+            var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
             try testServer(&server);
@@ -768,11 +781,54 @@ test "Connect to localhost TLS 1.3" {
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
                 .max_version = .v1_3,
                 .server_name = "naruh.dev",
                 .insecure_skip_verify = false,
-            });
+            };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("GET / HTTP/1.1\r\nHost: naruh.dev\r\n\r\n");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            std.log.debug("response:\n{s}", .{buffer[0..n]});
+            try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+            const addr = try std.net.Address.parseIp("127.0.0.1", 8443);
+            try testClient(addr, allocator);
+        }
+    }.runTest();
+}
+
+test "Connect to localhost TLS 1.3" {
+    if (skip_communicate_to_outside) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+
+    testing.log_level = .err;
+
+    try struct {
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client_config = Conn.Config{
+                .max_version = .v1_3,
+                .server_name = "naruh.dev",
+                .insecure_skip_verify = false,
+            };
+            defer client_config.deinit(allocator);
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -806,11 +862,13 @@ test "Connect to localhost TLS 1.2" {
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .server_name = "naruh.dev",
                 .insecure_skip_verify = false,
-            });
+            };
+            defer client_config.deinit(allocator);
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
@@ -835,7 +893,8 @@ test "Connect to localhost TLS 1.2" {
     }.runTest();
 }
 
-test "Connect to Internet" {
+// TODO: implement processHelloRetryRequest
+test "Connect to Internet with TLS 1.3" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
@@ -844,11 +903,55 @@ test "Connect to Internet" {
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
-            var client = try Client.init(allocator, addr, .{
+            var client_config = Conn.Config{
+                .max_version = .v1_3,
+                .server_name = "naruh.dev",
+                .insecure_skip_verify = false,
+            };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("GET / HTTP/1.1\r\nHost: naruh.dev\r\n\r\n");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            std.log.debug("response:\n{s}", .{buffer[0..n]});
+            try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+            const addr = try std.net.Address.parseIp("160.16.94.194", 443);
+            try testClient(addr, allocator);
+        }
+    }.runTest();
+}
+
+test "Connect to Internet with TLS 1.2" {
+    if (skip_communicate_to_outside) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+
+    testing.log_level = .err;
+
+    try struct {
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .server_name = "naruh.dev",
                 .insecure_skip_verify = false,
-            });
+            };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
             defer client.deinit(allocator);
             defer client.close() catch {};
 
