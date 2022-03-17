@@ -6,10 +6,13 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"errors"
 	"io"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/cryptobyte"
 )
 
 func TestEncryptTicket(t *testing.T) {
@@ -72,4 +75,62 @@ func encryptTicket(ticketKeys []ticketKey, state []byte, rand io.Reader) ([]byte
 	mac.Sum(macBytes[:0])
 
 	return encrypted, nil
+}
+
+func TestSessionStateMarshal(t *testing.T) {
+	msg := sessionState{
+		vers:         tls.VersionTLS12,
+		cipherSuite:  tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		createdAt:    uint64(time.Date(2022, 3, 17, 21, 26, 12, 0, time.UTC).Unix()),
+		masterSecret: []byte("secret1"),
+		certificates: [][]byte{
+			[]byte("cert1"),
+			[]byte("cert2"),
+		},
+		usedOldKey: true,
+	}
+	got := msg.marshal()
+	want := []byte("\x03\x03\xc0\x2b\x00\x00\x00\x00\x62\x33\xa7\x74\x00\x07\x73\x65\x63\x72\x65\x74\x31\x00\x00\x10\x00\x00\x05\x63\x65\x72\x74\x31\x00\x00\x05\x63\x65\x72\x74\x32")
+	if !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
+}
+
+// sessionState contains the information that is serialized into a session
+// ticket in order to later resume a connection.
+type sessionState struct {
+	vers         uint16
+	cipherSuite  uint16
+	createdAt    uint64
+	masterSecret []byte // opaque master_secret<1..2^16-1>;
+	// struct { opaque certificate<1..2^24-1> } Certificate;
+	certificates [][]byte // Certificate certificate_list<0..2^24-1>;
+
+	// usedOldKey is true if the ticket from which this session came from
+	// was encrypted with an older key and thus should be refreshed.
+	usedOldKey bool
+}
+
+func (m *sessionState) marshal() []byte {
+	var b cryptobyte.Builder
+	b.AddUint16(m.vers)
+	b.AddUint16(m.cipherSuite)
+	addUint64(&b, m.createdAt)
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(m.masterSecret)
+	})
+	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+		for _, cert := range m.certificates {
+			b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+				b.AddBytes(cert)
+			})
+		}
+	})
+	return b.BytesOrPanic()
+}
+
+// addUint64 appends a big-endian, 64-bit value to the cryptobyte.Builder.
+func addUint64(b *cryptobyte.Builder, v uint64) {
+	b.AddUint32(uint32(v >> 32))
+	b.AddUint32(uint32(v))
 }

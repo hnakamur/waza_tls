@@ -2027,7 +2027,7 @@ pub const ExtensionType = enum(u16) {
     _,
 };
 
-fn readStringList(
+pub fn readStringList(
     comptime LenType1: type,
     comptime LenType2: type,
     allocator: mem.Allocator,

@@ -5,9 +5,11 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const BytesView = @import("../BytesView.zig");
+const memx = @import("../memx.zig");
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const AesBlock = @import("aes.zig").AesBlock;
 const Ctr = @import("ctr.zig").Ctr;
+const readStringList = @import("handshake_msg.zig").readStringList;
 const u24_size = @import("handshake_msg.zig").u24_size;
 const u16_size = @import("handshake_msg.zig").u16_size;
 const u8_size = @import("handshake_msg.zig").u8_size;
@@ -20,17 +22,62 @@ const u64_size = @divExact(@typeInfo(u64).Int.bits, @bitSizeOf(u8));
 // SessionStateTls12 contains the information that is serialized into a session
 // ticket in order to later resume a connection.
 pub const SessionStateTls12 = struct {
-    vers: ?ProtocolVersion = null,
-    cipher_suite: ?CipherSuiteId = null,
-    created_at: ?u16 = null,
-    master_secret: ?[]const u8 = null, // opaque master_secret<1..2^16-1>;
+    vers: ProtocolVersion,
+    cipher_suite: CipherSuiteId,
+    created_at: u64,
+    master_secret: []const u8 = "", // opaque master_secret<1..2^16-1>;
 
     // struct { opaque certificate<1..2^24-1> } Certificate;
-    certificates: ?[]const []const u8 = null, // Certificate certificate_list<0..2^24-1>;
+    certificates: []const []const u8 = &.{}, // Certificate certificate_list<0..2^24-1>;
 
     // usedOldKey is true if the ticket from which this session came from
     // was encrypted with an older key and thus should be refreshed.
     used_old_key: bool = false,
+
+    pub fn deinit(self: *SessionStateTls12, allocator: mem.Allocator) void {
+        allocator.free(self.master_secret);
+        memx.freeElemsAndFreeSlice([]const u8, self.certificates, allocator);
+    }
+
+    pub fn unmarshal(allocator: mem.Allocator, data: []const u8) !SessionStateTls12 {
+        var bv = BytesView.init(data);
+        const version = try bv.readEnum(ProtocolVersion, .Big);
+        const cipher_suite = try bv.readEnum(CipherSuiteId, .Big);
+        const created_at = try bv.readIntBig(u64);
+        const master_secret = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u16, .Big));
+        errdefer allocator.free(master_secret);
+        const certificates = try readStringList(u24, u24, allocator, &bv);
+        return SessionStateTls12{
+            .vers = version,
+            .cipher_suite = cipher_suite,
+            .created_at = created_at,
+            .master_secret = master_secret,
+            .certificates = certificates,
+        };
+    }
+
+    pub fn marshal(self: *const SessionStateTls12, allocator: mem.Allocator) ![]const u8 {
+        var marshaled_certs_len: usize = 0;
+        for (self.certificates) |cert| marshaled_certs_len += u24_size + cert.len;
+        const msg_len = u16_size * 2 + u64_size +
+            u16_size + self.master_secret.len + u24_size + marshaled_certs_len;
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+        var fbs = std.io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+
+        try writeInt(u16, self.vers, writer);
+        try writeInt(u16, self.cipher_suite, writer);
+        try writeInt(u64, self.created_at, writer);
+        try writeLenAndBytes(u16, self.master_secret, writer);
+        try writeInt(u24, marshaled_certs_len, writer);
+        for (self.certificates) |cert| {
+            try writeLenAndBytes(u24, cert, writer);
+        }
+
+        return raw;
+    }
 };
 
 // SessionStateTls13 is the content of a TLS 1.3 session ticket. Its first
@@ -194,6 +241,40 @@ pub fn decryptTicket(
 }
 
 const testing = std.testing;
+
+test "SessionStateTls12.marshal" {
+    testing.log_level = .debug;
+    const allocator = testing.allocator;
+
+    const state = SessionStateTls12{
+        .vers = .v1_2,
+        .cipher_suite = .tls_ecdhe_ecdsa_with_aes_128_gcm_sha256,
+        .created_at = @intCast(u64, @divExact((datetime.datetime.Datetime{
+            .date = .{ .year = 2022, .month = 3, .day = 17 },
+            .time = .{ .hour = 21, .minute = 26, .second = 12, .nanosecond = 0 },
+            .zone = &datetime.timezones.UTC,
+        }).toTimestamp(), std.time.ms_per_s)),
+        .master_secret = "secret1",
+        .certificates = &[_][]const u8{ "cert1", "cert2" },
+    };
+    const marshaled = try state.marshal(allocator);
+    defer allocator.free(marshaled);
+
+    const want = "\x03\x03\xc0\x2b\x00\x00\x00\x00\x62\x33\xa7\x74\x00\x07\x73\x65\x63\x72\x65\x74\x31\x00\x00\x10\x00\x00\x05\x63\x65\x72\x74\x31\x00\x00\x05\x63\x65\x72\x74\x32";
+    try testing.expectEqualSlices(u8, want, marshaled);
+
+    var state2 = try SessionStateTls12.unmarshal(allocator, marshaled);
+    defer state2.deinit(allocator);
+
+    try testing.expectEqual(state.vers, state2.vers);
+    try testing.expectEqual(state.cipher_suite, state2.cipher_suite);
+    try testing.expectEqual(state.created_at, state2.created_at);
+    try testing.expectEqualSlices(u8, state.master_secret, state2.master_secret);
+    try testing.expectEqual(state.certificates.len, state2.certificates.len);
+    for (state2.certificates) |state2_cert, i| {
+        try testing.expectEqualSlices(u8, state.certificates[i], state2_cert);
+    }
+}
 
 test "SessionStateTls13.unmarshal" {
     testing.log_level = .debug;

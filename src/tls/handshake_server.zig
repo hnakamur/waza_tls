@@ -41,6 +41,7 @@ const Conn = @import("conn.zig").Conn;
 const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const ServerHandshakeStateTls13 = @import("handshake_server_tls13.zig").ServerHandshakeStateTls13;
+const decryptTicket = @import("ticket.zig").decryptTicket;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 
@@ -107,7 +108,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         // For an overview of TLS handshaking, see RFC 5246, Section 7.3.
         self.conn.buffering = true;
-        if (self.checkForResumption()) {
+        if (self.checkForResumption(allocator)) {
             // TODO: implement
             @panic("not implemented yet");
         } else {
@@ -220,10 +221,25 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     // checkForResumption reports whether we should perform resumption on this connection.
-    fn checkForResumption(self: *const ServerHandshakeStateTls12) bool {
-        _ = self;
+    fn checkForResumption(self: *const ServerHandshakeStateTls12, allocator: mem.Allocator) bool {
+        if (self.conn.config.session_tickets_disabled) {
+            return false;
+        }
+
+        var used_old_key: bool = undefined;
+        const plaintext = try decryptTicket(
+            allocator,
+            self.conn.ticket_keys,
+            self.client_hello.session_ticket,
+            &used_old_key,
+        );
+        if (plaintext.len == 0) {
+            return false;
+        }
+
         // TODO: implemnt
-        return false;
+
+        return true;
     }
 
     pub fn pickCipherSuite(self: *ServerHandshakeStateTls12) !void {
