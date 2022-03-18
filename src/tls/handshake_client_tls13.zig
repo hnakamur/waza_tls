@@ -134,9 +134,9 @@ pub const ClientHandshakeStateTls13 = struct {
         if (self.server_hello.ocsp_stapling or
             self.server_hello.ticket_supported or
             self.server_hello.secure_renegotiation_supported or
-            self.server_hello.secure_renegotiation.len > 0 or
-            self.server_hello.alpn_protocol.len > 0 or
-            self.server_hello.scts.len > 0)
+            self.server_hello.secure_renegotiation.len != 0 or
+            self.server_hello.alpn_protocol.len != 0 or
+            self.server_hello.scts.len != 0)
         {
             self.conn.sendAlert(.unsupported_extension) catch {};
             return error.ServerSentServerHelloExtensionForbiddenInTls13;

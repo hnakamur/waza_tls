@@ -62,14 +62,24 @@ func runClient(args []string) error {
 	var fs = flag.NewFlagSet("client", flag.ExitOnError)
 	host := fs.String("host", defaultHost, "host")
 	port := fs.Int("port", defaultPort, "port")
+	maxMinorVersion := fs.Int("max-minor-version", 3, "TLS max version 3=1.3, 2=1.2")
 	skipVerifyCert := fs.Bool("skip-verify-cert", defaultSkipVerifyCert, "skip verify certificate")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	var maxVersion uint16
+	switch *maxMinorVersion {
+	case 2:
+		maxVersion = tls.VersionTLS12
+	case 3:
+		maxVersion = tls.VersionTLS13
+	default:
+		return fmt.Errorf("invalid max minor version: %d", *maxMinorVersion)
+	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{
-		MaxVersion:         tls.VersionTLS13,
+		MaxVersion:         maxVersion,
 		InsecureSkipVerify: *skipVerifyCert,
 	}
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {

@@ -20,6 +20,7 @@ const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const generateRandom = @import("handshake_msg.zig").generateRandom;
+const NewSessionTicketMsgTls12 = @import("handshake_msg.zig").NewSessionTicketMsgTls12;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const random_length = @import("handshake_msg.zig").random_length;
 const FinishedHash = @import("finished_hash.zig").FinishedHash;
@@ -43,6 +44,7 @@ const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const ServerHandshakeStateTls13 = @import("handshake_server_tls13.zig").ServerHandshakeStateTls13;
 const decryptTicket = @import("ticket.zig").decryptTicket;
+const encryptTicket = @import("ticket.zig").encryptTicket;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 
@@ -102,6 +104,7 @@ pub const ServerHandshakeStateTls12 = struct {
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.master_secret) |s| allocator.free(s);
+        if (self.session_state) |*state| state.deinit(allocator);
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
@@ -110,9 +113,22 @@ pub const ServerHandshakeStateTls12 = struct {
         // For an overview of TLS handshaking, see RFC 5246, Section 7.3.
         self.conn.buffering = true;
         if (self.checkForResumption(allocator)) {
+            // The client has included a session ticket and so we do an abbreviated handshake.
+            self.conn.did_resume = true;
+            std.log.info("ServerHandshakeStateTls12.handshake before doResumeHandshake", .{});
+            try self.doResumeHandshake(allocator);
+            std.log.info("ServerHandshakeStateTls12.handshake before establishKeys", .{});
+            try self.establishKeys(allocator);
+            std.log.info("ServerHandshakeStateTls12.handshake before sendFinished", .{});
+            try self.sendFinished(allocator, null);
+            try self.conn.flush();
+            std.log.debug("ServerHandshakeStateTls12 after flush", .{});
             self.conn.client_finished_is_first = false;
-            // TODO: implement
-            @panic("not implemented yet");
+            try self.readFinished(allocator, &self.conn.client_finished);
+            std.log.info(
+                "ServerHandshakeStateTls12 client_finished={}",
+                .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
+            );
         } else {
             // The client didn't include a session ticket, or it wasn't
             // valid so we do a full handshake.
@@ -134,8 +150,9 @@ pub const ServerHandshakeStateTls12 = struct {
             try self.sendSessionTicket(allocator);
             std.log.info("ServerHandshakeStateTls12.handshake before sendFinished", .{});
             try self.sendFinished(allocator, null);
+            std.log.debug("ServerHandshakeStateTls12 after sendFinished", .{});
             try self.conn.flush();
-            std.log.debug("ServerHandshakeStateTls12 after sendFinished, flush", .{});
+            std.log.debug("ServerHandshakeStateTls12 after flush", .{});
         }
 
         self.conn.handshake_complete = true;
@@ -237,21 +254,28 @@ pub const ServerHandshakeStateTls12 = struct {
             return false;
         }
 
-        var used_old_key: bool = undefined;
-        const plaintext = decryptTicket(
-            allocator,
-            self.conn.ticket_keys,
-            self.client_hello.session_ticket,
-            &used_old_key,
-        ) catch {
-            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#2", .{});
-            return false;
-        };
-        if (plaintext.len == 0) {
-            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#3", .{});
-            return false;
-        }
         self.session_state = blk: {
+            var used_old_key: bool = undefined;
+            std.log.info("ServerHandshakeStateTls12.checkForResumption before decryptTicket", .{});
+            const plaintext = decryptTicket(
+                allocator,
+                self.conn.ticket_keys,
+                self.client_hello.session_ticket,
+                &used_old_key,
+            ) catch {
+                std.log.info("ServerHandshakeStateTls12.checkForResumption exit#2", .{});
+                return false;
+            };
+            std.log.info(
+                "ServerHandshakeStateTls12.checkForResumption plaintext={}",
+                .{std.fmt.fmtSliceHexLower(plaintext)},
+            );
+            defer allocator.free(plaintext);
+            if (plaintext.len == 0) {
+                std.log.info("ServerHandshakeStateTls12.checkForResumption exit#3", .{});
+                return false;
+            }
+
             var state = SessionStateTls12.unmarshal(allocator, plaintext) catch {
                 std.log.info("ServerHandshakeStateTls12.checkForResumption exit#4", .{});
                 return false;
@@ -402,11 +426,13 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     pub fn doFullHandshake(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
-        self.hello.?.cipher_suite = self.suite.?.id;
-
         if (self.client_hello.ocsp_stapling and self.cert_chain.?.ocsp_staple.len > 0) {
             self.hello.?.ocsp_stapling = true;
         }
+
+        self.hello.?.ticket_supported = self.client_hello.ticket_supported and
+            !self.conn.config.session_tickets_disabled;
+        self.hello.?.cipher_suite = self.suite.?.id;
 
         self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
         if (self.conn.config.client_auth == .no_client_cert) {
@@ -652,6 +678,28 @@ pub const ServerHandshakeStateTls12 = struct {
         self.finished_hash.?.discardHandshakeBuffer();
     }
 
+    pub fn doResumeHandshake(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
+        self.hello.?.cipher_suite = self.suite.?.id;
+        self.conn.cipher_suite_id = self.suite.?.id;
+        // We echo the client's session ID in the ServerHello to let it know
+        // that we're doing a resumption.
+        self.hello.?.session_id = try allocator.dupe(u8, self.client_hello.session_id);
+        self.hello.?.ticket_supported = self.session_state.?.used_old_key;
+        self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
+        self.finished_hash.?.discardHandshakeBuffer();
+        try self.finished_hash.?.write(try self.client_hello.marshal(allocator));
+        try self.finished_hash.?.write(try self.hello.?.marshal(allocator));
+        try self.conn.writeRecord(allocator, .handshake, try self.hello.?.marshal(allocator));
+
+        try self.conn.processCertsFromClient(allocator, &CertificateChain{
+            .certificate_chain = self.session_state.?.certificates,
+        });
+
+        // TODO: implement use self.conn.config.verifyConnection
+
+        self.master_secret = try allocator.dupe(u8, self.session_state.?.master_secret);
+    }
+
     pub fn establishKeys(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
         const ver = self.conn.version.?;
         const suite = self.suite.?;
@@ -711,10 +759,12 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     fn sendSessionTicket(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
+        std.log.info("ServerHandshakeStateTls12.sendSessionTicket start", .{});
         // ticketSupported is set in a resumption handshake if the
         // ticket from the client was encrypted with an old session
         // ticket key and thus a refreshed ticket should be sent.
-        if (self.hello.?.ticket_supported) {
+        if (!self.hello.?.ticket_supported) {
+            std.log.info("ServerHandshakeStateTls12.sendSessionTicket early exit#1", .{});
             return;
         }
 
@@ -747,7 +797,22 @@ pub const ServerHandshakeStateTls12 = struct {
         };
         defer state.deinit(allocator);
 
-        // var msg = NewSe
+        const encrypted_ticket = blk_ticket: {
+            const state_bytes = try state.marshal(allocator);
+            defer allocator.free(state_bytes);
+            break :blk_ticket try encryptTicket(
+                allocator,
+                self.conn.ticket_keys,
+                state_bytes,
+                self.conn.config.random,
+            );
+        };
+        var msg = NewSessionTicketMsgTls12{ .ticket = encrypted_ticket };
+        defer msg.deinit(allocator);
+
+        try self.finished_hash.?.write(try msg.marshal(allocator));
+        try self.conn.writeRecord(allocator, .handshake, try msg.marshal(allocator));
+        std.log.info("ServerHandshakeStateTls12.sendSessionTicket sent NewSessionTicketMsgTls12", .{});
     }
 
     fn sendFinished(self: *ServerHandshakeStateTls12, allocator: mem.Allocator, out: ?[]u8) !void {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const datetime = @import("datetime");
 const HashType = @import("auth.zig").HashType;
 const SignatureType = @import("auth.zig").SignatureType;
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
@@ -27,6 +28,7 @@ const master_secret_length = @import("prf.zig").master_secret_length;
 const master_secret_label = @import("prf.zig").master_secret_label;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const ConnectionKeys = @import("prf.zig").ConnectionKeys;
+const finished_verify_length = @import("prf.zig").finished_verify_length;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const ClientHandshakeStateTls13 = @import("handshake_client_tls13.zig").ClientHandshakeStateTls13;
@@ -73,7 +75,7 @@ pub const ClientHandshakeStateTls12 = struct {
     suite: ?*const CipherSuiteTls12 = null,
     finished_hash: ?FinishedHash = null,
     master_secret: ?[]const u8 = null,
-    // ClientHandshakeStateTls12 does not own session.
+    owns_session: bool = false,
     session: ?*ClientSessionState = null,
 
     pub fn deinit(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) void {
@@ -81,6 +83,10 @@ pub const ClientHandshakeStateTls12 = struct {
         self.server_hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         if (self.master_secret) |s| allocator.free(s);
+        if (self.owns_session) {
+            self.session.?.deinit(allocator);
+            allocator.destroy(self.session.?);
+        }
     }
 
     pub fn handshake(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
@@ -108,8 +114,11 @@ pub const ClientHandshakeStateTls12 = struct {
         self.conn.buffering = true;
         self.conn.did_resume = is_resume;
         if (is_resume) {
+            std.log.info("ClientHandshakeStateTls12 is_resume=true, before establishKeys", .{});
             try self.establishKeys(allocator);
-            // try self.readSessionTicket(allocator);
+            std.log.info("ClientHandshakeStateTls12 before readSessionTicket", .{});
+            try self.readSessionTicket(allocator);
+            std.log.info("ClientHandshakeStateTls12 before readFinished", .{});
             try self.readFinished(allocator, &self.conn.server_finished);
             self.conn.client_finished_is_first = false;
 
@@ -118,7 +127,12 @@ pub const ClientHandshakeStateTls12 = struct {
             // they don't call verifyServerCertificate. See Issue 31641.
             // TODO: implement using self.conn.config.verifyConnection
 
+            std.log.info("ClientHandshakeStateTls12 before sendFinished", .{});
             try self.sendFinished(allocator, &self.conn.client_finished);
+            std.log.info(
+                "ClientHandshakeStateTls12 client_finished={}",
+                .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
+            );
             try self.conn.flush();
         } else {
             std.log.info("ClientHandshakeStateTls12 before doFullHandshake", .{});
@@ -133,6 +147,9 @@ pub const ClientHandshakeStateTls12 = struct {
             );
             try self.conn.flush();
             self.conn.client_finished_is_first = true;
+            std.log.info("ClientHandshakeStateTls12 before readSessionTicket", .{});
+            try self.readSessionTicket(allocator);
+            std.log.info("ClientHandshakeStateTls12 before readFinished", .{});
             try self.readFinished(allocator, &self.conn.server_finished);
             std.log.info(
                 "ClientHandshakeStateTls12 server_finished={}",
@@ -144,36 +161,32 @@ pub const ClientHandshakeStateTls12 = struct {
     }
 
     pub fn doFullHandshake(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
-        var hs_msg = try self.conn.readHandshake(allocator);
-        var cert_msg: CertificateMsgTls12 = undefined;
-        switch (hs_msg) {
-            .Certificate => |*c| {
-                switch (c.*) {
-                    .v1_2 => |c12| cert_msg = c12,
-                    else => {
-                        hs_msg.deinit(allocator);
-                        self.conn.sendAlert(.unexpected_message) catch {};
-                        return error.UnexpectedMessage;
-                    },
-                }
-            },
-            else => {
-                hs_msg.deinit(allocator);
-                self.conn.sendAlert(.unexpected_message) catch {};
-                return error.UnexpectedMessage;
-            },
-        }
-        defer cert_msg.deinit(allocator);
-        if (cert_msg.certificates.len == 0) {
+        var cert_msg = blk_cert_msg: {
+            var hs_msg = try self.conn.readHandshake(allocator);
+            errdefer hs_msg.deinit(allocator);
+            switch (hs_msg) {
+                .Certificate => |*c| {
+                    switch (c.*) {
+                        .v1_2 => |cert_msg_tls12| {
+                            if (cert_msg_tls12.certificates.len != 0) {
+                                break :blk_cert_msg cert_msg_tls12;
+                            }
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
             self.conn.sendAlert(.unexpected_message) catch {};
             return error.UnexpectedMessage;
-        }
+        };
+        defer cert_msg.deinit(allocator);
 
         try self.finished_hash.?.write(try cert_msg.marshal(allocator));
         std.log.info("client: cert {}", .{std.fmt.fmtSliceHexLower(cert_msg.raw.?)});
         try self.finished_hash.?.debugLogClientHash(allocator, "client: cert");
 
-        hs_msg = try self.conn.readHandshake(allocator);
+        var hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
             .CertificateStatus => |cs| {
                 // RFC4366 on Certificate Status Request:
@@ -186,13 +199,15 @@ pub const ClientHandshakeStateTls12 = struct {
                     return error.UnexpectedCertificateStatusMessage;
                 }
 
+                _ = cs;
+
+                @panic("not implemented yet");
                 // try self.finished_hash.?.write(try hs_msg.marshal(allocator));
 
                 // TODO: implement
-                _ = cs;
-                std.log.err("not implemented yet", .{});
+                // std.log.err("not implemented yet", .{});
 
-                hs_msg = try self.conn.readHandshake(allocator);
+                // hs_msg = try self.conn.readHandshake(allocator);
             },
             else => {},
         }
@@ -208,6 +223,7 @@ pub const ClientHandshakeStateTls12 = struct {
             try self.conn.verifyServerCertificate(cert_msg.certificates);
         } else {
             // TODO: implement
+            @panic("not implemented yet");
         }
         var key_agreement = self.suite.?.ka(self.conn.version.?);
         defer key_agreement.deinit(allocator);
@@ -475,6 +491,90 @@ pub const ClientHandshakeStateTls12 = struct {
         self.conn.out.prepareCipherSpec(ver, client_cipher);
     }
 
+    pub fn readSessionTicket(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
+        std.log.info("ClientHandshakeStateTls12.readSessionTicket start", .{});
+        if (!self.server_hello.ticket_supported) {
+            std.log.info("ClientHandshakeStateTls12.readSessionTicket early exit#1", .{});
+            return;
+        }
+
+        var session_ticket_msg = blk: {
+            var hs_msg = try self.conn.readHandshake(allocator);
+            switch (hs_msg) {
+                .NewSessionTicket => |*msg| {
+                    switch (msg.*) {
+                        .v1_2 => |msg_tls12| break :blk msg_tls12,
+                        else => {
+                            self.conn.sendAlert(.unexpected_message) catch {};
+                            return error.UnexpectedMessage;
+                        },
+                    }
+                },
+                else => {
+                    self.conn.sendAlert(.unexpected_message) catch {};
+                    return error.UnexpectedMessage;
+                },
+            }
+        };
+        defer session_ticket_msg.deinit(allocator);
+
+        try self.finished_hash.?.write(try session_ticket_msg.marshal(allocator));
+        std.log.info(
+            "client: sessionTicket={}",
+            .{std.fmt.fmtSliceHexLower(session_ticket_msg.raw.?)},
+        );
+
+        {
+            const session_ticket = session_ticket_msg.ticket;
+            session_ticket_msg.ticket = "";
+
+            const master_secret = try allocator.dupe(u8, self.master_secret.?);
+            errdefer allocator.free(master_secret);
+
+            var server_certificates = try x509.Certificate.cloneSlice(
+                self.conn.peer_certificates,
+                allocator,
+            );
+            errdefer memx.deinitSliceAndElems(x509.Certificate, server_certificates, allocator);
+
+            var verified_chains = try x509.Certificate.cloneChains(
+                self.conn.verified_chains,
+                allocator,
+            );
+            errdefer x509.Certificate.deinitChains(verified_chains, allocator);
+
+            const ocsp_response = try allocator.dupe(u8, self.conn.ocsp_response);
+            errdefer allocator.free(ocsp_response);
+
+            const scts = try memx.dupeStringList(allocator, self.conn.scts);
+            errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
+
+            const now = datetime.datetime.Datetime.now();
+
+            var session = ClientSessionState{
+                .session_ticket = session_ticket,
+                .ver = self.conn.version.?,
+                .cipher_suite = self.suite.?.id,
+                .master_secret = master_secret,
+                .server_certificates = server_certificates,
+                .verified_chains = verified_chains,
+                .received_at = now,
+                .ocsp_response = ocsp_response,
+                .scts = scts,
+            };
+            errdefer session.deinit(allocator);
+
+            if (self.owns_session) {
+                self.session.?.deinit(allocator);
+            } else {
+                self.session = try allocator.create(ClientSessionState);
+                self.owns_session = true;
+            }
+            self.session.?.* = session;
+        }
+        std.log.info("ClientHandshakeStateTls12.readSessionTicket set session", .{});
+    }
+
     fn sendFinished(self: *ClientHandshakeStateTls12, allocator: mem.Allocator, out: []u8) !void {
         try self.conn.writeRecord(allocator, .change_cipher_spec, &[_]u8{1});
         std.log.debug("ClientHandshakeStateTls12.sendFinished after writeRecord change_cipher_spec", .{});
@@ -537,17 +637,100 @@ pub const ClientHandshakeStateTls12 = struct {
     }
 
     fn processServerHello(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !bool {
+        std.log.info("ClientHandshakeStateTls12.processServerHello start", .{});
         try self.pickCipherSuite();
-        _ = allocator;
 
         if (self.server_hello.compression_method != .none) {
-            self.conn.sendAlert(.handshake_failure) catch {};
+            self.conn.sendAlert(.unexpected_message) catch {};
             return error.ServerSelectedUnsupportedCompressionFormat;
         }
 
-        // TODO: implement
+        if (self.conn.handshakes == 0 and self.server_hello.secure_renegotiation_supported) {
+            self.conn.secure_renegotiation = true;
+            if (self.server_hello.secure_renegotiation.len != 0) {
+                self.conn.sendAlert(.handshake_failure) catch {};
+                return error.TlsInitialHandshakeHadNonEmptyRenegotiationExtension;
+            }
+        }
 
-        return false;
+        if (self.conn.handshakes > 0 and self.conn.secure_renegotiation) {
+            if (!mem.eql(
+                u8,
+                self.server_hello.secure_renegotiation[0..finished_verify_length],
+                &self.conn.client_finished,
+            ) or
+                !mem.eql(
+                u8,
+                self.server_hello.secure_renegotiation[finished_verify_length..],
+                &self.conn.server_finished,
+            )) {
+                self.conn.sendAlert(.handshake_failure) catch {};
+                return error.TlsIncorrectRenegotiationExtensionContents;
+            }
+        }
+
+        checkAlpn(self.hello.alpn_protocols, self.server_hello.alpn_protocol) catch |err| {
+            self.conn.sendAlert(.unsupported_extension) catch {};
+            return err;
+        };
+        allocator.free(self.conn.client_protocol);
+        self.conn.client_protocol = try allocator.dupe(u8, self.server_hello.alpn_protocol);
+
+        memx.freeElemsAndFreeSlice([]const u8, self.conn.scts, allocator);
+        self.conn.scts = try memx.dupeStringList(allocator, self.server_hello.scts);
+
+        if (!self.serverResumedSession()) {
+            std.log.info("ClientHandshakeStateTls12.processServerHello returns false since serverResumedSession was false", .{});
+            return false;
+        }
+
+        if (self.session.?.ver != self.conn.version.?) {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.TlsServerResumedSessionWithDifferentVersion;
+        }
+
+        if (self.session.?.cipher_suite != self.suite.?.id) {
+            self.conn.sendAlert(.handshake_failure) catch {};
+            return error.TlsServerResumedSessionWithDifferentCipherSuite;
+        }
+
+        // Restore masterSecret, peerCerts, and ocspResponse from previous state
+        if (self.master_secret) |secret| allocator.free(secret);
+        self.master_secret = try allocator.dupe(u8, self.session.?.master_secret);
+
+        memx.deinitSliceAndElems(x509.Certificate, self.conn.peer_certificates, allocator);
+        self.conn.peer_certificates = try x509.Certificate.cloneSlice(
+            self.session.?.server_certificates,
+            allocator,
+        );
+
+        x509.Certificate.deinitChains(self.conn.verified_chains, allocator);
+        self.conn.verified_chains = try x509.Certificate.cloneChains(
+            self.session.?.verified_chains,
+            allocator,
+        );
+
+        allocator.free(self.conn.ocsp_response);
+        self.conn.ocsp_response = try allocator.dupe(u8, self.session.?.ocsp_response);
+
+        // Let the ServerHello SCTs override the session SCTs from the original
+        // connection, if any are provided
+        if (self.conn.scts.len == 0 and self.session.?.scts.len != 0) {
+            self.conn.scts = try memx.dupeStringList(allocator, self.session.?.scts);
+        }
+
+        return true;
+    }
+
+    fn serverResumedSession(self: *const ClientHandshakeStateTls12) bool {
+        // If the server responded with the same sessionId then it means the
+        // sessionTicket is being used to resume a TLS session.
+        std.log.info("ClientHandshakeStateTls12.serverResumedSession, self.session={}, self.hello.session_id={}", .{
+            self.session,
+            std.fmt.fmtSliceHexLower(self.hello.session_id),
+        });
+        return self.session != null and self.hello.session_id.len != 0 and
+            mem.eql(u8, self.server_hello.session_id, self.hello.session_id);
     }
 
     fn pickCipherSuite(self: *ClientHandshakeStateTls12) !void {

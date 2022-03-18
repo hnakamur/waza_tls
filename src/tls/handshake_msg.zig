@@ -1721,7 +1721,7 @@ pub const NewSessionTicketMsg = union(ProtocolVersion) {
         return switch (self.*) {
             .v1_3 => |*m| try m.marshal(allocator),
             .v1_2 => |*m| try m.marshal(allocator),
-            else => {},
+            else => @panic("unsupported TLS version"),
         };
     }
 };

@@ -379,6 +379,10 @@ pub const Conn = struct {
     ocsp_response: []const u8 = "", // stapled OCSP response
     scts: []const []const u8 = &.{}, // signed certificate timestamps from server
     server_name: []const u8 = "",
+    // secure_renegotiation is true if the server echoed the secure
+    // renegotiation extension. (This is meaningless as a server because
+    // renegotiation is not supported in that case.)
+    secure_renegotiation: bool = false,
 
     buffering: bool = false,
     send_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -759,6 +763,13 @@ pub const Conn = struct {
                 (res.session == null or res.session.? != hs_session.?))
             {
                 try self.config.client_session_cache.?.put(res.cache_key, hs_session.?);
+                switch (self.handshake_state.?.client) {
+                    .v1_2 => |*state| if (state.owns_session) {
+                        allocator.destroy(state.session.?);
+                        state.owns_session = false;
+                    },
+                    else => {},
+                }
                 std.log.info("Conn.clientHandshake put session, cache_key={s}", .{res.cache_key});
             }
         }
@@ -1118,7 +1129,7 @@ pub const Conn = struct {
         //     "Conn.readRecordOrChangeCipherSpec self=0x{x}, before get data",
         //     .{@ptrToInt(self)},
         // );
-        const data = blk: {
+        var data = blk: {
             try record.resize(allocator, record_header_len + payload_len);
             const payload_bytes_read = try self.raw_input.reader().readAll(
                 record.items[record_header_len..],
@@ -1149,7 +1160,7 @@ pub const Conn = struct {
 
             break :blk try self.in.decrypt(allocator, record.items, &rec_type);
         };
-        errdefer allocator.free(data);
+        defer allocator.free(data);
         // std.log.debug(
         //     "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}",
         //     .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data) },
@@ -1201,7 +1212,6 @@ pub const Conn = struct {
                 }
             },
             .change_cipher_spec => {
-                defer allocator.free(data);
                 if (data.len != 1 or data[0] != 1) {
                     self.sendAlert(.decode_error) catch |err| {
                         return self.in.setError(err);
@@ -1249,7 +1259,6 @@ pub const Conn = struct {
                     return try self.retryReadRecord(expect_change_cipher_spec);
                 }
                 try self.input.write(data);
-                allocator.free(data);
             },
             .handshake => {
                 if (data.len == 0 or expect_change_cipher_spec) {
@@ -1258,6 +1267,7 @@ pub const Conn = struct {
                     }
                 }
                 self.handshake_bytes = data;
+                data = "";
             },
         }
     }
@@ -1494,6 +1504,7 @@ pub const Conn = struct {
             std.log.info("Conn.loadSession early exit#3", .{});
             return ret;
         }
+        ret.session = session;
 
         // Check that version used for the previous session is still valid.
         if (!memx.containsScalar(ProtocolVersion, hello.supported_versions, session.?.ver)) {
@@ -1533,11 +1544,9 @@ pub const Conn = struct {
                 return ret;
             }
 
-            if (hello.session_ticket.len > 0) {
-                allocator.free(hello.session_ticket);
-            }
+            allocator.free(hello.session_ticket);
             hello.session_ticket = try allocator.dupe(u8, session.?.session_ticket);
-            std.log.info("Conn.loadSession early exit#9", .{});
+            std.log.info("Conn.loadSession TLS 1.2, updated hello.session_ticket", .{});
             return ret;
         }
 
@@ -1592,7 +1601,6 @@ pub const Conn = struct {
             break :blk_binders try allocator.dupe([]const u8, &[_][]const u8{binder});
         };
 
-        ret.session = session;
 
         const psk = try cipher_suite.?.expandLabel(
             allocator,
