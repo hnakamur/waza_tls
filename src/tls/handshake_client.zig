@@ -84,7 +84,9 @@ pub const ClientHandshakeStateTls12 = struct {
     }
 
     pub fn handshake(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
+        std.log.info("ClientHandshakeStateTls12.handshake start", .{});
         const is_resume = try self.processServerHello(allocator);
+        std.log.info("ClientHandshakeStateTls12.handshake is_resume={}", .{is_resume});
 
         self.finished_hash = FinishedHash.new(allocator, self.conn.version.?, self.suite.?);
 
@@ -119,17 +121,20 @@ pub const ClientHandshakeStateTls12 = struct {
             try self.sendFinished(allocator, &self.conn.client_finished);
             try self.conn.flush();
         } else {
+            std.log.info("ClientHandshakeStateTls12 before doFullHandshake", .{});
             try self.doFullHandshake(allocator);
+            std.log.info("ClientHandshakeStateTls12 before establishKeys", .{});
             try self.establishKeys(allocator);
+            std.log.info("ClientHandshakeStateTls12 before sendFinished", .{});
             try self.sendFinished(allocator, &self.conn.client_finished);
-            std.log.debug(
+            std.log.info(
                 "ClientHandshakeStateTls12 client_finished={}",
                 .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
             );
             try self.conn.flush();
             self.conn.client_finished_is_first = true;
             try self.readFinished(allocator, &self.conn.server_finished);
-            std.log.debug(
+            std.log.info(
                 "ClientHandshakeStateTls12 server_finished={}",
                 .{fmtx.fmtSliceHexEscapeLower(&self.conn.server_finished)},
             );

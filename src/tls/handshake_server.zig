@@ -37,6 +37,7 @@ const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const masterFromPreMasterSecret = @import("prf.zig").masterFromPreMasterSecret;
 const ConnectionKeys = @import("prf.zig").ConnectionKeys;
 const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
+const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
 const Conn = @import("conn.zig").Conn;
 const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
@@ -109,21 +110,29 @@ pub const ServerHandshakeStateTls12 = struct {
         // For an overview of TLS handshaking, see RFC 5246, Section 7.3.
         self.conn.buffering = true;
         if (self.checkForResumption(allocator)) {
+            self.conn.client_finished_is_first = false;
             // TODO: implement
             @panic("not implemented yet");
         } else {
             // The client didn't include a session ticket, or it wasn't
             // valid so we do a full handshake.
+            std.log.info("ServerHandshakeStateTls12.handshake before pickCipherSuite", .{});
             try self.pickCipherSuite();
+            std.log.info("ServerHandshakeStateTls12.handshake before doFullHandshake", .{});
             try self.doFullHandshake(allocator);
+            std.log.info("ServerHandshakeStateTls12.handshake before establishKeys", .{});
             try self.establishKeys(allocator);
-            std.log.debug("ServerHandshakeStateTls12.handshake before readFinished", .{});
+            std.log.info("ServerHandshakeStateTls12.handshake before readFinished", .{});
             try self.readFinished(allocator, &self.conn.client_finished);
-            std.log.debug(
+            std.log.info(
                 "ServerHandshakeStateTls12 client_finished={}",
                 .{fmtx.fmtSliceHexEscapeLower(&self.conn.client_finished)},
             );
+            self.conn.client_finished_is_first = true;
             self.conn.buffering = true;
+            std.log.info("ServerHandshakeStateTls12.handshake before sendSessionTicket", .{});
+            try self.sendSessionTicket(allocator);
+            std.log.info("ServerHandshakeStateTls12.handshake before sendFinished", .{});
             try self.sendFinished(allocator, null);
             try self.conn.flush();
             std.log.debug("ServerHandshakeStateTls12 after sendFinished, flush", .{});
@@ -221,28 +230,90 @@ pub const ServerHandshakeStateTls12 = struct {
     }
 
     // checkForResumption reports whether we should perform resumption on this connection.
-    fn checkForResumption(self: *const ServerHandshakeStateTls12, allocator: mem.Allocator) bool {
+    fn checkForResumption(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) bool {
+        std.log.info("ServerHandshakeStateTls12.checkForResumption start", .{});
         if (self.conn.config.session_tickets_disabled) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#1", .{});
             return false;
         }
 
         var used_old_key: bool = undefined;
-        const plaintext = try decryptTicket(
+        const plaintext = decryptTicket(
             allocator,
             self.conn.ticket_keys,
             self.client_hello.session_ticket,
             &used_old_key,
-        );
+        ) catch {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#2", .{});
+            return false;
+        };
         if (plaintext.len == 0) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#3", .{});
+            return false;
+        }
+        self.session_state = blk: {
+            var state = SessionStateTls12.unmarshal(allocator, plaintext) catch {
+                std.log.info("ServerHandshakeStateTls12.checkForResumption exit#4", .{});
+                return false;
+            };
+            state.used_old_key = used_old_key;
+            break :blk state;
+        };
+        std.log.info("ServerHandshakeStateTls12.checkForResumption updated session_state", .{});
+
+        const created_at = self.session_state.?.created_at;
+        const now = self.conn.config.currentTimestamp();
+        if (now - created_at > max_session_ticket_lifetime_seconds) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#5", .{});
             return false;
         }
 
-        // TODO: implemnt
+        // Never resume a session for a different TLS version.
+        if (self.conn.version.? != self.session_state.?.vers) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#6", .{});
+            return false;
+        }
 
+        // Check that the client is still offering the ciphersuite in the session.
+        if (!memx.containsScalar(
+            CipherSuiteId,
+            self.client_hello.cipher_suites,
+            self.session_state.?.cipher_suite,
+        )) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#7", .{});
+            return false;
+        }
+
+        // Check that we also support the ciphersuite from the session.
+        const preference_list = &[_]CipherSuiteId{self.session_state.?.cipher_suite};
+        self.suite = selectCipherSuiteTls12(
+            preference_list,
+            self.conn.config.cipher_suites,
+            self,
+            cipherSuiteOk,
+        );
+        if (self.suite == null) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#8", .{});
+            return false;
+        }
+
+        const session_has_client_certs = self.session_state.?.certificates.len != 0;
+        const needs_client_certs = self.conn.config.client_auth.requiresClientCert();
+        if (needs_client_certs and !session_has_client_certs) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#9", .{});
+            return false;
+        }
+        if (session_has_client_certs and self.conn.config.client_auth == .no_client_cert) {
+            std.log.info("ServerHandshakeStateTls12.checkForResumption exit#10", .{});
+            return false;
+        }
+
+        std.log.info("ServerHandshakeStateTls12.checkForResumption returns true", .{});
         return true;
     }
 
     pub fn pickCipherSuite(self: *ServerHandshakeStateTls12) !void {
+        std.log.info("ServerHandshakeStateTls12.pickCipherSuite start", .{});
         const allocator = self.conn.allocator;
 
         var preference_list = blk: {
@@ -266,18 +337,30 @@ pub const ServerHandshakeStateTls12 = struct {
             break :blk cipher_suites.toOwnedSlice(allocator);
         };
         defer allocator.free(preference_list);
+        std.log.info(
+            "ServerHandshakeStateTls12.pickCipherSuite preference_list={any}",
+            .{preference_list},
+        );
 
+        std.log.info(
+            "ServerHandshakeStateTls12.pickCipherSuite client_hello.cipher_suites={any}",
+            .{self.client_hello.cipher_suites},
+        );
         self.suite = selectCipherSuiteTls12(
             preference_list,
             self.client_hello.cipher_suites,
             self,
             cipherSuiteOk,
         );
-        if (self.suite) |_| {} else {
+        if (self.suite == null) {
             self.conn.sendAlert(.handshake_failure) catch {};
             return error.CipherNegotiationFailed;
         }
         self.conn.cipher_suite_id = self.suite.?.id;
+        std.log.info(
+            "ServerHandshakeStateTls12.pickCipherSuite self.conn.cipher_suite_id={}",
+            .{self.conn.cipher_suite_id},
+        );
 
         if (memx.containsScalar(
             CipherSuiteId,
@@ -293,6 +376,8 @@ pub const ServerHandshakeStateTls12 = struct {
                 return error.InnapropriateProtocolFallback;
             }
         }
+
+        std.log.info("ServerHandshakeStateTls12.pickCipherSuite exit success", .{});
     }
 
     fn cipherSuiteOk(self: *const ServerHandshakeStateTls12, c: *const CipherSuiteTls12) bool {
@@ -623,6 +708,46 @@ pub const ServerHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(try client_finished_msg.marshal(allocator));
         try self.finished_hash.?.debugLogClientHash(allocator, "server: clientFinished");
         mem.copy(u8, out, &verify_data);
+    }
+
+    fn sendSessionTicket(self: *ServerHandshakeStateTls12, allocator: mem.Allocator) !void {
+        // ticketSupported is set in a resumption handshake if the
+        // ticket from the client was encrypted with an old session
+        // ticket key and thus a refreshed ticket should be sent.
+        if (self.hello.?.ticket_supported) {
+            return;
+        }
+
+        const created_at = if (self.session_state) |state|
+            // If this is re-wrapping an old key, then keep
+            // the original time it was created.
+            state.created_at
+        else
+            self.conn.config.currentTimestamp();
+
+        var state = blk_state: {
+            var certs_from_client = blk_certs: {
+                var certs = try allocator.alloc([]const u8, self.conn.peer_certificates.len);
+                var i: usize = 0;
+                errdefer memx.freeElemsAndFreeSliceInError([]const u8, certs, allocator, i);
+                while (i < self.conn.peer_certificates.len) : (i += 1) {
+                    certs[i] = try allocator.dupe(u8, self.conn.peer_certificates[i].raw);
+                }
+                break :blk_certs certs;
+            };
+            errdefer memx.freeElemsAndFreeSlice([]const u8, certs_from_client, allocator);
+
+            break :blk_state SessionStateTls12{
+                .vers = self.conn.version.?,
+                .cipher_suite = self.suite.?.id,
+                .created_at = created_at,
+                .master_secret = try allocator.dupe(u8, self.master_secret.?),
+                .certificates = certs_from_client,
+            };
+        };
+        defer state.deinit(allocator);
+
+        // var msg = NewSe
     }
 
     fn sendFinished(self: *ServerHandshakeStateTls12, allocator: mem.Allocator, out: ?[]u8) !void {

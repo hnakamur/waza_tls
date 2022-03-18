@@ -60,6 +60,7 @@ const TicketKey = @import("ticket.zig").TicketKey;
 const tiket_key_lifetime_seconds = @import("ticket.zig").tiket_key_lifetime_seconds;
 const ticket_key_rotation_seconds = @import("ticket.zig").ticket_key_rotation_seconds;
 const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
+const common = @import("common.zig");
 
 const max_plain_text = 16384; // maximum plaintext payload length
 const max_ciphertext = 18432;
@@ -101,6 +102,8 @@ pub const Conn = struct {
         // crypto/rand.
         // The Reader must be safe for use by multiple goroutines.
         random: std.rand.Random = std.crypto.random,
+
+        timestamp_fn: fn () u64 = common.currentTimestamp,
 
         // certificates contains one or more certificate chains to present to the
         // other side of the connection. The first certificate compatible with the
@@ -349,6 +352,10 @@ pub const Conn = struct {
                 .hmac_key = hashed[TicketKey.name_len + 16 .. TicketKey.name_len + 32].*,
                 .created = datetime.datetime.Datetime.now(),
             };
+        }
+
+        pub fn currentTimestamp(self: *Config) u64 {
+            return self.timestamp_fn();
         }
     };
 

@@ -34,3 +34,7 @@ pub const hello_retry_request_random = [_]u8{ // See RFC 8446, Section 4.1.3.
 // max_session_ticket_lifetime_seconds is the maximum allowed lifetime of a TLS 1.3 session
 // ticket, and the lifetime we set for tickets we send.
 pub const max_session_ticket_lifetime_seconds = std.time.s_per_week;
+
+pub fn currentTimestamp() u64 {
+    return @intCast(u64, std.time.timestamp());
+}

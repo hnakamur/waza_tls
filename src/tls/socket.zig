@@ -149,7 +149,7 @@ test "ClientServer_tls12_rsa2048" {
     }.runTest();
 }
 
-test "ClientServer_tls12_p256_no_client_certificate" {
+test "ClientServer_tls12_p256_no_client_certificate_one_request" {
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
@@ -211,7 +211,7 @@ test "ClientServer_tls12_p256_no_client_certificate" {
                 break :blk Conn.Config{
                     .certificates = certificates,
                     .max_version = .v1_2,
-                    .session_tickets_disabled = false,
+                    .session_tickets_disabled = true,
                 };
             };
             defer server_config.deinit(allocator);
@@ -256,7 +256,7 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
                 );
                 var buffer = [_]u8{0} ** 1024;
                 const n = try conn.read(&buffer);
-                try testing.expectEqual(@as(?ProtocolVersion, .v1_3), conn.version);
+                try testing.expectEqual(@as(?ProtocolVersion, .v1_2), conn.version);
                 try testing.expectEqualStrings("hello", buffer[0..n]);
 
                 _ = try conn.write("How do you do?");
@@ -268,7 +268,6 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
             var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .insecure_skip_verify = true,
-                .cipher_suites = &default_cipher_suites_tls13,
                 .client_session_cache = cache,
             };
             defer client_config.deinit(allocator);

@@ -1727,31 +1727,73 @@ pub const NewSessionTicketMsg = union(ProtocolVersion) {
 };
 
 pub const NewSessionTicketMsgTls12 = struct {
+    raw: ?[]const u8 = null,
+    ticket: []const u8 = "",
+
     pub fn deinit(self: *NewSessionTicketMsgTls12, allocator: mem.Allocator) void {
-        _ = self;
-        _ = allocator;
+        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.ticket);
     }
 
     fn unmarshal(
         allocator: mem.Allocator,
         msg_data: []const u8,
     ) !NewSessionTicketMsgTls12 {
-        _ = allocator;
-        _ = msg_data;
-        // TODO: implement
-        // @panic("not implemented yet");
-        // return NewSessionTicketMsgTls12{};
-        return error.NotImplementedYet;
+        const raw = try allocator.dupe(u8, msg_data);
+        var bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len + u32_size);
+
+        const ticket = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u16, .Big));
+        errdefer allocator.free(ticket);
+
+        return NewSessionTicketMsgTls12{
+            .raw = raw,
+            .ticket = ticket,
+        };
     }
 
     pub fn marshal(self: *NewSessionTicketMsgTls12, allocator: mem.Allocator) ![]const u8 {
-        _ = self;
-        _ = allocator;
-        // TODO: implement
-        // @panic("not implemented yet");
-        return "";
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        const msg_len = u8_size + u24_size + u32_size + u16_size + self.ticket.len;
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+
+        try writeInt(u8, MsgType.NewSessionTicket, writer);
+        var rest_len = msg_len - u8_size - u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u32, 0, writer); // ticket_lifetime_hint
+        try writeLenAndBytes(u16, self.ticket, writer);
+
+        self.raw = raw;
+        return raw;
     }
 };
+
+test "NewSessionTicketMsgTls12.marshal" {
+    const allocator = testing.allocator;
+
+    var msg = NewSessionTicketMsgTls12{
+        .ticket = "ticket",
+    };
+
+    const marshaled = try msg.marshal(allocator);
+    defer allocator.free(marshaled);
+
+    const want = "\x04\x00\x00\x0c\x00\x00\x00\x00\x00\x06\x74\x69\x63\x6b\x65\x74";
+    try testing.expectEqualSlices(u8, want, marshaled);
+
+    var msg2 = try NewSessionTicketMsgTls12.unmarshal(allocator, marshaled);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqualSlices(u8, msg.ticket, msg2.ticket);
+}
 
 pub const NewSessionTicketMsgTls13 = struct {
     raw: ?[]const u8 = null,

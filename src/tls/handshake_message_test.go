@@ -705,3 +705,41 @@ func (m *newSessionTicketMsgTLS13) marshal() []byte {
 	m.raw = b.BytesOrPanic()
 	return m.raw
 }
+
+func TestNewSessionTicketMsgMarshal(t *testing.T) {
+	msg := newSessionTicketMsg{
+		ticket: []byte("ticket"),
+	}
+	marshaled := msg.marshal()
+	want := []byte("\x04\x00\x00\x0c\x00\x00\x00\x00\x00\x06\x74\x69\x63\x6b\x65\x74")
+	if got := marshaled; !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
+}
+
+type newSessionTicketMsg struct {
+	raw    []byte
+	ticket []byte
+}
+
+func (m *newSessionTicketMsg) marshal() (x []byte) {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	// See RFC 5077, Section 3.3.
+	ticketLen := len(m.ticket)
+	length := 2 + 4 + ticketLen
+	x = make([]byte, 4+length)
+	x[0] = typeNewSessionTicket
+	x[1] = uint8(length >> 16)
+	x[2] = uint8(length >> 8)
+	x[3] = uint8(length)
+	x[8] = uint8(ticketLen >> 8)
+	x[9] = uint8(ticketLen)
+	copy(x[10:], m.ticket)
+
+	m.raw = x
+
+	return
+}
