@@ -870,7 +870,7 @@ test "ServerOnly_tls13_p256" {
     }.runTest();
 }
 
-const skip_communicate_to_outside = true;
+const skip_communicate_to_outside = false;
 
 test "Connect to localhost TLS 1.3" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
@@ -953,7 +953,6 @@ test "Connect to localhost TLS 1.2" {
     }.runTest();
 }
 
-// TODO: implement processHelloRetryRequest
 test "Connect to Internet with TLS 1.3" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
 

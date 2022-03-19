@@ -1,12 +1,15 @@
 const std = @import("std");
 const mem = std.mem;
 const Conn = @import("conn.zig").Conn;
+const MsgType = @import("handshake_msg.zig").MsgType;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CertificateRequestMsgTls13 = @import("handshake_msg.zig").CertificateRequestMsgTls13;
 const CertificateMsgTls13 = @import("handshake_msg.zig").CertificateMsgTls13;
 const CertificateVerifyMsg = @import("handshake_msg.zig").CertificateVerifyMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
+const CurveId = @import("handshake_msg.zig").CurveId;
+const KeyShare = @import("handshake_msg.zig").KeyShare;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const EcdheParameters = @import("key_schedule.zig").EcdheParameters;
@@ -60,6 +63,7 @@ pub const ClientHandshakeStateTls13 = struct {
     pub fn deinit(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);
         self.server_hello.deinit(allocator);
+        self.ecdhe_params.deinit(allocator);
         if (self.cert_req) |*cert_req| cert_req.deinit(allocator);
         if (self.early_secret.len > 0) allocator.free(self.early_secret);
         if (self.binder_key.len > 0) allocator.free(self.binder_key);
@@ -181,9 +185,145 @@ pub const ClientHandshakeStateTls13 = struct {
     }
 
     fn processHelloRetryRequest(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
-        _ = self;
-        _ = allocator;
-        @panic("not implemented yet");
+        std.log.info("ClientHandshakeStateTls13.processHelloRetryRequest start", .{});
+        // The first ClientHello gets double-hashed into the transcript upon a
+        // HelloRetryRequest. (The idea is that the server might offload transcript
+        // storage to the client in the cookie.) See RFC 8446, Section 4.4.1.
+        var ch_hash_array = try crypto.Hash.DigestArray.init(self.transcript.digestLength());
+        self.transcript.finalToSlice(ch_hash_array.slice());
+        self.transcript.reset();
+        self.transcript.update(&[_]u8{
+            @enumToInt(MsgType.message_hash),
+            0,
+            0,
+            @intCast(u8, ch_hash_array.slice().len),
+        });
+        self.transcript.update(ch_hash_array.slice());
+        self.transcript.update(try self.server_hello.marshal(allocator));
+
+        // The only HelloRetryRequest extensions we support are key_share and
+        // cookie, and clients must abort the handshake if the HRR would not result
+        // in any change in the ClientHello.
+        if (self.server_hello.selected_group == null and
+            self.server_hello.cookie.len == 0)
+        {
+            self.conn.sendAlert(.illegal_parameter) catch {};
+            return error.TlsServerSentUnecessaryHelloRetryRequestMessage;
+        }
+
+        if (self.server_hello.cookie.len != 0) {
+            allocator.free(self.hello.cookie);
+            self.hello.cookie = try allocator.dupe(u8, self.server_hello.cookie);
+        }
+
+        if (self.server_hello.server_share != null and
+            @enumToInt(self.server_hello.server_share.?.group) != 0)
+        {
+            self.conn.sendAlert(.decode_error) catch {};
+            return error.TlsReceivedMalformedKeyShareExtension;
+        }
+
+        // If the server sent a key_share extension selecting a group, ensure it's
+        // a group we advertised but did not send a key share for, and send a key
+        // share for it this time.
+        if (self.server_hello.selected_group) |curve_id| {
+            if (!memx.containsScalar(CurveId, self.hello.supported_curves, curve_id)) {
+                self.conn.sendAlert(.illegal_parameter) catch {};
+                return error.TlsServerSelectedUnsupportedGroup;
+            }
+            if (self.ecdhe_params.curveId() == curve_id) {
+                self.conn.sendAlert(.illegal_parameter) catch {};
+                return error.TlsServerSentUnnecessaryHelloRetryRequestKeyShare;
+            }
+            if (!curve_id.isSupported()) {
+                self.conn.sendAlert(.internal_error) catch {};
+                return error.TlsCurvePreferencesIncludeUnsupportedCurve;
+            }
+            var ecdhe_params = EcdheParameters.generate(
+                allocator,
+                curve_id,
+                self.conn.config.random,
+            ) catch |err| {
+                self.conn.sendAlert(.internal_error) catch {};
+                return err;
+            };
+            self.ecdhe_params.deinit(allocator);
+            self.ecdhe_params = ecdhe_params;
+
+            var key_share_data = try allocator.dupe(u8, ecdhe_params.publicKey());
+            errdefer allocator.free(key_share_data);
+            memx.deinitSliceAndElems(KeyShare, self.hello.key_shares, allocator);
+            self.hello.key_shares = try allocator.dupe(KeyShare, &[_]KeyShare{.{
+                .group = curve_id,
+                .data = key_share_data,
+            }});
+        }
+
+        if (self.hello.raw) |raw| {
+            allocator.free(raw);
+            self.hello.raw = null;
+        }
+        if (self.hello.psk_identities.len > 0) {
+            const psk_suite = cipherSuiteTls13ById(self.session.?.cipher_suite);
+            if (psk_suite == null) {
+                try self.conn.sendAlert(.internal_error);
+            }
+            if (psk_suite.?.hash_type == self.suite.?.hash_type) {
+                // Update binders and obfuscated_ticket_age.
+                const now = @intCast(u32, self.conn.config.currentTimestampSeconds());
+                const ticket_age = now -
+                    @intCast(
+                    u32,
+                    @divTrunc(self.session.?.received_at.toTimestamp(), std.time.ms_per_s),
+                );
+                self.hello.psk_identities[0].obfuscated_ticket_age =
+                    ticket_age + self.session.?.age_add;
+
+                var transcript = crypto.Hash.init(self.suite.?.hash_type);
+                transcript.update(&[_]u8{
+                    @enumToInt(MsgType.message_hash),
+                    0,
+                    0,
+                    @intCast(u8, ch_hash_array.slice().len),
+                });
+                transcript.update(ch_hash_array.slice());
+                transcript.update(try self.server_hello.marshal(allocator));
+                transcript.update(try self.hello.marshalWithoutBinders(allocator));
+                const binder = try self.suite.?.finishedHash(
+                    allocator,
+                    self.binder_key,
+                    transcript,
+                );
+                errdefer allocator.free(binder);
+                const psk_binders = try allocator.dupe([]const u8, &[_][]const u8{binder});
+                errdefer allocator.free(psk_binders);
+                try self.hello.updateBinders(allocator, psk_binders);
+            } else {
+                // Server selected a cipher suite incompatible with the PSK.
+                allocator.free(self.hello.psk_identities);
+                self.hello.psk_identities = &.{};
+                memx.freeElemsAndFreeSlice([]const u8, self.hello.psk_binders, allocator);
+                self.hello.psk_binders = &.{};
+            }
+        }
+
+        self.transcript.update(try self.hello.marshal(allocator));
+        try self.conn.writeRecord(allocator, .handshake, try self.hello.marshal(allocator));
+
+        var server_hello = blk: {
+            var hs_msg = try self.conn.readHandshake(allocator);
+            switch (hs_msg) {
+                .server_hello => |m| break :blk m,
+                else => {},
+            }
+            self.conn.sendAlert(.unexpected_message) catch {};
+            return error.UnexpectedMessage;
+        };
+        self.server_hello.deinit(allocator);
+        self.server_hello = server_hello;
+
+        try self.checkServerHelloOrHrr();
+        std.log.info("ClientHandshakeStateTls13.processHelloRetryRequest exit", .{});
     }
 
     fn processServerHello(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {

@@ -3,6 +3,9 @@ const mem = std.mem;
 const datetime = @import("datetime");
 const AlertDescription = @import("alert.zig").AlertDescription;
 const Conn = @import("conn.zig").Conn;
+const MsgType = @import("handshake_msg.zig").MsgType;
+const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
+const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const EncryptedExtensionsMsg = @import("handshake_msg.zig").EncryptedExtensionsMsg;
@@ -15,6 +18,7 @@ const PskMode = @import("handshake_msg.zig").PskMode;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
+const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
 const random_length = @import("handshake_msg.zig").random_length;
@@ -48,6 +52,7 @@ const verifyHandshakeSignature = @import("auth.zig").verifyHandshakeSignature;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const decryptTicket = @import("ticket.zig").decryptTicket;
 const encryptTicket = @import("ticket.zig").encryptTicket;
+const hello_retry_request_random = @import("common.zig").hello_retry_request_random;
 const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
 const SessionStateTls13 = @import("ticket.zig").SessionStateTls13;
 const hmac = @import("hmac.zig");
@@ -277,12 +282,65 @@ pub const ServerHandshakeStateTls13 = struct {
         // The first ClientHello gets double-hashed into the transcript upon a
         // HelloRetryRequest. See RFC 8446, Section 4.4.1.
         self.transcript.update(try self.client_hello.marshal(allocator));
-        var ch_hash_array = crypto.Hash.DigestArray.init(self.transcript.digestLength());
+        var ch_hash_array = try crypto.Hash.DigestArray.init(self.transcript.digestLength());
         self.transcript.finalToSlice(ch_hash_array.slice());
-        _ = self;
-        _ = allocator;
-        _ = selected_group;
-        @panic("not implemented yet");
+        self.transcript.reset();
+        self.transcript.update(&[_]u8{
+            @enumToInt(MsgType.message_hash),
+            0,
+            0,
+            @intCast(u8, ch_hash_array.slice().len),
+        });
+        self.transcript.update(ch_hash_array.slice());
+
+        var hello_retry_request = ServerHelloMsg{
+            .vers = self.hello.?.vers,
+            .random = &hello_retry_request_random,
+            .session_id = self.hello.?.session_id,
+            .cipher_suite = self.hello.?.cipher_suite,
+            .compression_method = self.hello.?.compression_method,
+            .supported_version = self.hello.?.supported_version,
+            .selected_group = selected_group,
+        };
+        self.transcript.update(try hello_retry_request.marshal(allocator));
+        try self.conn.writeRecord(
+            allocator,
+            .handshake,
+            try hello_retry_request.marshal(allocator),
+        );
+
+        try self.sendDummyChangeCipherSpec(allocator);
+
+        var client_hello = blk: {
+            var hs_msg = try self.conn.readHandshake(allocator);
+            switch (hs_msg) {
+                .client_hello => |m| break :blk m,
+                else => {},
+            }
+            self.conn.sendAlert(.unexpected_message) catch {};
+            return error.UnexpectedMessage;
+        };
+        defer client_hello.deinit(allocator);
+
+        if (client_hello.key_shares.len != 1 or
+            client_hello.key_shares[0].group != selected_group)
+        {
+            self.conn.sendAlert(.illegal_parameter) catch {};
+            return error.TlsClientSentInvalidKeyShareInSecondClientHello;
+        }
+
+        if (client_hello.early_data) {
+            self.conn.sendAlert(.illegal_parameter) catch {};
+            return error.TlsClientIndicatedEarlyDataInSecondClientHello;
+        }
+
+        if (illegalClientHelloChange(&client_hello, &self.client_hello)) {
+            self.conn.sendAlert(.illegal_parameter) catch {};
+            return error.TlsClientIllegallyModifiedSecondClientHello;
+        }
+
+        self.client_hello.deinit(allocator);
+        self.client_hello = client_hello;
     }
 
     fn checkForResumption(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -965,3 +1023,26 @@ pub const ServerHandshakeStateTls13 = struct {
         std.log.info("ServerHandshakeStateTls13.readClientFinished exit", .{});
     }
 };
+
+fn illegalClientHelloChange(ch: *const ClientHelloMsg, ch1: *const ClientHelloMsg) bool {
+    return !mem.eql(ProtocolVersion, ch.supported_versions, ch1.supported_versions) or
+        !mem.eql(CipherSuiteId, ch.cipher_suites, ch1.cipher_suites) or
+        !mem.eql(CurveId, ch.supported_curves, ch1.supported_curves) or
+        !mem.eql(SignatureScheme, ch.supported_signature_algorithms, ch1.supported_signature_algorithms) or
+        !mem.eql(SignatureScheme, ch.supported_signature_algorithms_cert, ch1.supported_signature_algorithms_cert) or
+        !memx.eqlStringList(ch.alpn_protocols, ch1.alpn_protocols) or
+        ch.vers != ch1.vers or
+        !mem.eql(u8, ch.random, ch1.random) or
+        !mem.eql(u8, ch.session_id, ch1.session_id) or
+        !mem.eql(CompressionMethod, ch.compression_methods, ch1.compression_methods) or
+        !mem.eql(u8, ch.server_name, ch1.server_name) or
+        ch.ocsp_stapling != ch1.ocsp_stapling or
+        !mem.eql(EcPointFormat, ch.supported_points, ch1.supported_points) or
+        ch.ticket_supported != ch1.ticket_supported or
+        !mem.eql(u8, ch.session_ticket, ch1.session_ticket) or
+        ch.secure_renegotiation_supported != ch1.secure_renegotiation_supported or
+        !mem.eql(u8, ch.secure_renegotiation, ch1.secure_renegotiation) or
+        ch.scts != ch1.scts or
+        !mem.eql(u8, ch.cookie, ch1.cookie) or
+        !mem.eql(PskMode, ch.psk_modes, ch1.psk_modes);
+}

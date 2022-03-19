@@ -286,7 +286,7 @@ pub const ServerHandshakeStateTls12 = struct {
         std.log.info("ServerHandshakeStateTls12.checkForResumption updated session_state", .{});
 
         const created_at = self.session_state.?.created_at;
-        const now = self.conn.config.currentTimestamp();
+        const now = @intCast(u64, self.conn.config.currentTimestampSeconds());
         if (now - created_at > max_session_ticket_lifetime_seconds) {
             std.log.info("ServerHandshakeStateTls12.checkForResumption exit#5", .{});
             return false;
@@ -773,7 +773,7 @@ pub const ServerHandshakeStateTls12 = struct {
             // the original time it was created.
             state.created_at
         else
-            self.conn.config.currentTimestamp();
+            @intCast(u64, self.conn.config.currentTimestampSeconds());
 
         var state = blk_state: {
             var certs_from_client = blk_certs: {

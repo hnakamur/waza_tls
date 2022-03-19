@@ -103,7 +103,7 @@ pub const Conn = struct {
         // The Reader must be safe for use by multiple goroutines.
         random: std.rand.Random = std.crypto.random,
 
-        timestamp_fn: fn () u64 = common.currentTimestamp,
+        timestamp_seconds_fn: fn () i64 = std.time.timestamp,
 
         // certificates contains one or more certificate chains to present to the
         // other side of the connection. The first certificate compatible with the
@@ -342,8 +342,8 @@ pub const Conn = struct {
             };
         }
 
-        pub fn currentTimestamp(self: *Config) u64 {
-            return self.timestamp_fn();
+        pub fn currentTimestampSeconds(self: *Config) i64 {
+            return self.timestamp_seconds_fn();
         }
     };
 

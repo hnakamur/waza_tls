@@ -20,6 +20,14 @@ pub fn containsScalarFn(
     return false;
 }
 
+pub fn eqlStringList(list1: []const []const u8, list2: []const []const u8) bool {
+    if (list1.len != list2.len) return false;
+    for (list1) |elem1, i| {
+        if (!mem.eql(u8, elem1, list2[i])) return false;
+    }
+    return true;
+}
+
 pub fn dupeStringList(
     allocator: mem.Allocator,
     string_list: []const []const u8,
