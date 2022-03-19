@@ -65,7 +65,7 @@ pub const FinishedHash = struct {
                     };
                 }
             },
-            else => @panic("not implemented"),
+            else => @panic("unsupported version"),
         }
     }
 

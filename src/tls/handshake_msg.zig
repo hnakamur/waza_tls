@@ -2651,7 +2651,7 @@ test "ClientHelloMsg.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
-            var got = msg.ClientHello;
+            var got = msg.client_hello;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -2951,7 +2951,7 @@ test "ServerHelloMsg.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
-            var got = msg.ServerHello;
+            var got = msg.server_hello;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -3211,7 +3211,7 @@ test "CertificateMsgTls12.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, .v1_2);
             defer msg.deinit(allocator);
 
-            var got = msg.Certificate.v1_2;
+            var got = msg.certificate.v1_2;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 

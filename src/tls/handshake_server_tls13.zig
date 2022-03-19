@@ -221,7 +221,8 @@ pub const ServerHandshakeStateTls13 = struct {
             return error.NoCurveSupported;
         }
         if (client_key_share == null) {
-            @panic("not implemented yet");
+            try self.doHelloRetryRequest(allocator, selected_group.?);
+            client_key_share = &self.client_hello.key_shares[0];
         }
 
         if (!selected_group.?.isSupported()) {
@@ -266,6 +267,17 @@ pub const ServerHandshakeStateTls13 = struct {
         if (self.client_hello.server_name.len > 0) {
             self.conn.server_name = try allocator.dupe(u8, self.client_hello.server_name);
         }
+    }
+
+    fn doHelloRetryRequest(
+        self: *ServerHandshakeStateTls13,
+        allocator: mem.Allocator,
+        selected_group: CurveId,
+    ) !void {
+        _ = self;
+        _ = allocator;
+        _ = selected_group;
+        @panic("not implemented yet");
     }
 
     fn checkForResumption(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
