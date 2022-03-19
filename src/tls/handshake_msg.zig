@@ -163,7 +163,6 @@ pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
 const HelloRequestMsg = void;
 const EndOfEarlyDataMsg = void;
-const CertificateStatusMsg = void;
 const KeyUpdateMsg = void;
 const NextProtocolMsg = void;
 const MessageHashMsg = void;
@@ -1568,6 +1567,84 @@ pub const ServerKeyExchangeMsg = struct {
         return raw;
     }
 };
+
+pub const CertificateStatusMsg = struct {
+    raw: ?[]const u8 = null,
+    response: []const u8 = "",
+
+    pub fn deinit(self: *CertificateStatusMsg, allocator: mem.Allocator) void {
+        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.response);
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+    ) !CertificateStatusMsg {
+        const raw = try allocator.dupe(u8, msg_data);
+        var bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const status_type = try bv.readByte();
+        if (status_type != status_type_ocsp) {
+            return error.InvalidCertificateStatusMsg;
+        }
+
+        const response = try allocator.dupe(u8, try bv.readLenPrefixedBytes(u24, .Big));
+        errdefer allocator.free(response);
+
+        if (response.len == 0 or !bv.empty()) {
+            return error.InvalidCertificateStatusMsg;
+        }
+
+        return CertificateStatusMsg{
+            .raw = raw,
+            .response = response,
+        };
+    }
+
+    pub fn marshal(self: *CertificateStatusMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw) |raw| {
+            return raw;
+        }
+
+        const msg_len = u8_size + u24_size + u8_size + u24_size + self.response.len;
+
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+
+        try writeInt(u8, MsgType.certificate_status, writer);
+        var rest_len = msg_len - u8_size - u24_size;
+        try writeInt(u24, rest_len, writer);
+        try writeInt(u8, status_type_ocsp, writer);
+        try writeLenAndBytes(u24, self.response, writer);
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
+test "CertificateStatusMsg.marshal" {
+    const allocator = testing.allocator;
+
+    var msg = CertificateStatusMsg{
+        .response = "response",
+    };
+
+    const marshaled = try msg.marshal(allocator);
+    defer allocator.free(marshaled);
+
+    const want = "\x16\x00\x00\x0c\x01\x00\x00\x08\x72\x65\x73\x70\x6f\x6e\x73\x65";
+    try testing.expectEqualSlices(u8, want, marshaled);
+
+    var msg2 = try CertificateStatusMsg.unmarshal(allocator, marshaled);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqualSlices(u8, msg.response, msg2.response);
+}
 
 pub const ServerHelloDoneMsg = struct {
     raw: ?[]const u8 = null,

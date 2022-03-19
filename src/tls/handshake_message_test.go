@@ -743,3 +743,51 @@ func (m *newSessionTicketMsg) marshal() (x []byte) {
 
 	return
 }
+
+func TestCertificateStatusMsgMarshal(t *testing.T) {
+	msg := certificateStatusMsg{
+		response: []byte("response"),
+	}
+	marshaled := msg.marshal()
+	want := []byte("\x16\x00\x00\x0c\x01\x00\x00\x08\x72\x65\x73\x70\x6f\x6e\x73\x65")
+	if got := marshaled; !bytes.Equal(got, want) {
+		t.Errorf("result mismatch, got=%x, want=%x", got, want)
+	}
+}
+
+type certificateStatusMsg struct {
+	raw      []byte
+	response []byte
+}
+
+func (m *certificateStatusMsg) marshal() []byte {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	var b cryptobyte.Builder
+	b.AddUint8(typeCertificateStatus)
+	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddUint8(statusTypeOCSP)
+		b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes(m.response)
+		})
+	})
+
+	m.raw = b.BytesOrPanic()
+	return m.raw
+}
+
+func (m *certificateStatusMsg) unmarshal(data []byte) bool {
+	m.raw = data
+	s := cryptobyte.String(data)
+
+	var statusType uint8
+	if !s.Skip(4) || // message type and uint24 length field
+		!s.ReadUint8(&statusType) || statusType != statusTypeOCSP ||
+		!readUint24LengthPrefixed(&s, &m.response) ||
+		len(m.response) == 0 || !s.Empty() {
+		return false
+	}
+	return true
+}

@@ -188,7 +188,7 @@ pub const ClientHandshakeStateTls12 = struct {
 
         var hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
-            .certificate_status => |cs| {
+            .certificate_status => |*cs| {
                 // RFC4366 on Certificate Status Request:
                 // The server MAY return a "certificate_status" message.
                 if (!self.server_hello.ocsp_stapling) {
@@ -199,15 +199,13 @@ pub const ClientHandshakeStateTls12 = struct {
                     return error.UnexpectedCertificateStatusMessage;
                 }
 
-                _ = cs;
+                try self.finished_hash.?.write(try cs.marshal(allocator));
 
-                @panic("not implemented yet");
-                // try self.finished_hash.?.write(try hs_msg.marshal(allocator));
+                allocator.free(self.conn.ocsp_response);
+                self.conn.ocsp_response = cs.response;
+                cs.response = "";
 
-                // TODO: implement
-                // std.log.err("not implemented yet", .{});
-
-                // hs_msg = try self.conn.readHandshake(allocator);
+                hs_msg = try self.conn.readHandshake(allocator);
             },
             else => {},
         }
@@ -222,8 +220,16 @@ pub const ClientHandshakeStateTls12 = struct {
             }
             try self.conn.verifyServerCertificate(cert_msg.certificates);
         } else {
-            // TODO: implement
-            @panic("not implemented yet");
+            // This is a renegotiation handshake. We require that the
+            // server's identity (i.e. leaf certificate) is unchanged and
+            // thus any previous trust decision is still valid.
+            //
+            // See https://mitls.org/pages/attacks/3SHAKE for the
+            // motivation behind this requirement.
+            if (!mem.eql(u8, self.conn.peer_certificates[0].raw, cert_msg.certificates[0])) {
+                self.conn.sendAlert(.unexpected_message) catch {};
+                return error.TlsServerIdentityChangedDuringRenegotiaion;
+            }
         }
         var key_agreement = self.suite.?.ka(self.conn.version.?);
         defer key_agreement.deinit(allocator);
