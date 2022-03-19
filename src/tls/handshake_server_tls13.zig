@@ -274,6 +274,11 @@ pub const ServerHandshakeStateTls13 = struct {
         allocator: mem.Allocator,
         selected_group: CurveId,
     ) !void {
+        // The first ClientHello gets double-hashed into the transcript upon a
+        // HelloRetryRequest. See RFC 8446, Section 4.4.1.
+        self.transcript.update(try self.client_hello.marshal(allocator));
+        var ch_hash_array = crypto.Hash.DigestArray.init(self.transcript.digestLength());
+        self.transcript.finalToSlice(ch_hash_array.slice());
         _ = self;
         _ = allocator;
         _ = selected_group;

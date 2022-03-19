@@ -27,6 +27,20 @@ pub const Hash = union(HashType) {
         };
     }
 
+    pub fn hashType(self: *const Hash) HashType {
+        return switch (self.*) {
+            .sha256 => .sha256,
+            .sha384 => .sha384,
+            .sha512 => .sha512,
+            .sha1 => .sha1,
+            .direct_signing => .direct_signing,
+        };
+    }
+
+    pub fn reset(self: *Hash) void {
+        self.* = Hash.init(self.hashType());
+    }
+
     pub fn update(self: *Hash, b: []const u8) void {
         switch (self.*) {
             .sha256 => |*s| s.update(b),
@@ -301,7 +315,14 @@ test "Hash.Sha256" {
     var fbs = std.io.fixedBufferStream(&out);
     const bytes_written = try h.writeFinal(fbs.writer());
     try testing.expectEqual(digest_len, bytes_written);
+    const want = "\x2c\xf2\x4d\xba\x5f\xb0\xa3\x0e\x26\xe8\x3b\x2a\xc5\xb9\xe2\x9e\x1b\x16\x1e\x5c\x1f\xa7\x42\x5e\x73\x04\x33\x62\x93\x8b\x98\x24";
+    try testing.expectEqualSlices(u8, want, &out);
     std.log.debug("Sha256Hash hash={}\n", .{std.fmt.fmtSliceHexLower(&out)});
+
+    h.reset();
+    h.update("hello");
+    h.finalToSlice(&out);
+    try testing.expectEqualSlices(u8, want, &out);
 
     var h2 = Hash{ .sha256 = Sha256Hash.init(.{}) };
     h2.update("hello");
