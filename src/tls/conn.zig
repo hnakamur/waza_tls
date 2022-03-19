@@ -203,15 +203,7 @@ pub const Conn = struct {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
             if (self.client_cas) |*cas| cas.deinit();
             if (self.client_session_cache) |*cache| cache.deinit();
-            std.log.info(
-                "Config.deinit self.session_ticket_keys, len={}, ptr=0x{x}",
-                .{ self.session_ticket_keys.len, @ptrToInt(self.session_ticket_keys.ptr) },
-            );
             allocator.free(self.session_ticket_keys);
-            std.log.info(
-                "Config.deinit self.auto_session_ticket_keys, len={}, ptr=0x{x}",
-                .{ self.auto_session_ticket_keys.len, @ptrToInt(self.auto_session_ticket_keys.ptr) },
-            );
             allocator.free(self.auto_session_ticket_keys);
         }
 
@@ -320,10 +312,6 @@ pub const Conn = struct {
                         try valid_keys.append(key);
                     }
                 }
-                std.log.info(
-                    "Config.ticketKeys old self.auto_session_ticket_keys, len={}, ptr=0x{x}",
-                    .{ self.auto_session_ticket_keys.len, @ptrToInt(self.auto_session_ticket_keys.ptr) },
-                );
                 allocator.free(self.auto_session_ticket_keys);
                 self.auto_session_ticket_keys = valid_keys.toOwnedSlice();
                 std.log.info(
@@ -447,10 +435,6 @@ pub const Conn = struct {
         x509.Certificate.deinitChains(self.verified_chains, allocator);
         if (self.resumption_secret.len > 0) allocator.free(self.resumption_secret);
 
-        std.log.info(
-            "Conn.deinit self.ticket_keys, len={}, ptr=0x{x}",
-            .{ self.ticket_keys.len, @ptrToInt(self.ticket_keys.ptr) },
-        );
         allocator.free(self.ticket_keys);
         self.in.deinit(allocator);
         self.out.deinit(allocator);
