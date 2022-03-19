@@ -1731,13 +1731,14 @@ pub const FinishedMsg = struct {
 
     pub fn deinit(self: *FinishedMsg, allocator: mem.Allocator) void {
         freeOptionalField(self, allocator, "raw");
+        allocator.free(self.verify_data);
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !FinishedMsg {
         const raw = try allocator.dupe(u8, msg_data);
         var bv = BytesView.init(raw);
         bv.skip(enumTypeLen(MsgType));
-        const verify_data = try readString(u24, &bv);
+        const verify_data = try allocator.dupe(u8, try readString(u24, &bv));
 
         return FinishedMsg{
             .raw = raw,
@@ -3441,7 +3442,7 @@ test "FinishedMsg.marshal" {
     };
 
     {
-        var msg = testCreateFinishedMsg();
+        var msg = try testCreateFinishedMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(&msg, test_marshaled_finished_msg);
     }
@@ -3456,7 +3457,7 @@ test "FinishedMsg.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
-            var got = msg.Finished;
+            var got = msg.finished;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -3465,15 +3466,15 @@ test "FinishedMsg.unmarshal" {
     };
 
     {
-        var msg = testCreateFinishedMsg();
+        var msg = try testCreateFinishedMsg(allocator);
         defer msg.deinit(allocator);
         try TestCase.run(test_marshaled_finished_msg, &msg);
     }
 }
 
-fn testCreateFinishedMsg() FinishedMsg {
+fn testCreateFinishedMsg(allocator: mem.Allocator) !FinishedMsg {
     return FinishedMsg{
-        .verify_data = "verify data",
+        .verify_data = try allocator.dupe(u8, "verify data"),
     };
 }
 

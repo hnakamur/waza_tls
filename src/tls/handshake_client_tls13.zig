@@ -653,7 +653,6 @@ pub const ClientHandshakeStateTls13 = struct {
             ),
         };
         defer finished_msg.deinit(allocator);
-        defer allocator.free(finished_msg.verify_data);
 
         const finished_msg_bytes = try finished_msg.marshal(allocator);
         self.transcript.update(finished_msg_bytes);

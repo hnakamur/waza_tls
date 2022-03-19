@@ -664,7 +664,6 @@ pub const ServerHandshakeStateTls13 = struct {
                 ),
             };
             defer finished_msg.deinit(allocator);
-            defer allocator.free(finished_msg.verify_data);
 
             const finished_msg_bytes = try finished_msg.marshal(allocator);
             self.transcript.update(finished_msg_bytes);
@@ -751,7 +750,10 @@ pub const ServerHandshakeStateTls13 = struct {
             var finished_msg = FinishedMsg{
                 .verify_data = self.client_finished,
             };
-            defer finished_msg.deinit(allocator);
+            defer {
+                finished_msg.verify_data = "";
+                finished_msg.deinit(allocator);
+            }
 
             const finished_msg_bytes = try finished_msg.marshal(allocator);
             self.transcript.update(finished_msg_bytes);

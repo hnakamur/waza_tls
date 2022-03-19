@@ -592,7 +592,10 @@ pub const ClientHandshakeStateTls12 = struct {
         var finished = FinishedMsg{
             .verify_data = &verify_data,
         };
-        defer finished.deinit(allocator);
+        defer {
+            finished.verify_data = "";
+            finished.deinit(allocator);
+        }
 
         const finished_bytes = try finished.marshal(allocator);
         try self.finished_hash.?.write(finished_bytes);
