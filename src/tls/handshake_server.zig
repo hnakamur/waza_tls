@@ -544,7 +544,7 @@ pub const ServerHandshakeStateTls12 = struct {
             {
                 var cert_msg: CertificateMsgTls12 = undefined;
                 switch (hs_msg) {
-                    .Certificate => |*c| {
+                    .certificate => |*c| {
                         switch (c.*) {
                             .v1_2 => |c12| cert_msg = c12,
                             else => {
@@ -578,7 +578,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         // Get client key exchange
         var ckx_msg = switch (hs_msg) {
-            .ClientKeyExchange => |c| c,
+            .client_key_exchange => |c| c,
             else => {
                 hs_msg.deinit(allocator);
                 self.conn.sendAlert(.unexpected_message) catch {};
@@ -624,7 +624,7 @@ pub const ServerHandshakeStateTls12 = struct {
                 hs_msg = try self.conn.readHandshake(allocator);
                 errdefer hs_msg.deinit(allocator);
                 switch (hs_msg) {
-                    .CertificateVerify => |m| break :blk m,
+                    .certificate_verify => |m| break :blk m,
                     else => {
                         self.conn.sendAlert(.unexpected_message) catch {};
                         return error.UnexpectedMessage;
@@ -734,7 +734,7 @@ pub const ServerHandshakeStateTls12 = struct {
         var hs_msg = try self.conn.readHandshake(allocator);
         std.log.debug("ServerHandshakeStateTls12 after rreadHandshake", .{});
         var client_finished_msg = switch (hs_msg) {
-            .Finished => |m| m,
+            .finished => |m| m,
             else => {
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;

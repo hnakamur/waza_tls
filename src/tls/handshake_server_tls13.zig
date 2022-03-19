@@ -841,7 +841,7 @@ pub const ServerHandshakeStateTls13 = struct {
         var cert_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             switch (hs_msg) {
-                .Certificate => |m| {
+                .certificate => |m| {
                     switch (m) {
                         .v1_3 => break :blk m.v1_3,
                         else => {},
@@ -865,7 +865,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 var hs_msg = try self.conn.readHandshake(allocator);
                 errdefer hs_msg.deinit(allocator);
                 switch (hs_msg) {
-                    .CertificateVerify => |m| break :blk m,
+                    .certificate_verify => |m| break :blk m,
                     else => {
                         self.conn.sendAlert(.unexpected_message) catch {};
                         return error.UnexpectedMessage;
@@ -927,7 +927,7 @@ pub const ServerHandshakeStateTls13 = struct {
         var finished_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
-                .Finished => |m| m,
+                .finished => |m| m,
                 else => {
                     self.conn.sendAlert(.unexpected_message) catch {};
                     return error.UnexpectedMessage;

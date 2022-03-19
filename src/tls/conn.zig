@@ -536,13 +536,13 @@ pub const Conn = struct {
         }
 
         switch (hs_msg) {
-            .NewSessionTicket => |*m| {
+            .new_session_ticket => |*m| {
                 switch (m.*) {
                     .v1_3 => |*msg| try self.handleNewSessionTicket(allocator, msg),
                     else => @panic("unsupported tls version"),
                 }
             },
-            .KeyUpdate => @panic("not implemented yet"),
+            .key_update => @panic("not implemented yet"),
             else => {
                 self.sendAlert(.unexpected_message) catch {};
                 return error.TlsUnexpectedHandshakeMessageType;
@@ -685,7 +685,7 @@ pub const Conn = struct {
 
             var hs_msg = try self.readHandshake(allocator);
             var server_hello = switch (hs_msg) {
-                .ServerHello => |sh| sh,
+                .server_hello => |sh| sh,
                 else => {
                     self.sendAlert(.unexpected_message) catch {};
                     return error.UnexpectedMessage;
@@ -1015,7 +1015,7 @@ pub const Conn = struct {
         var hs_msg = try self.readHandshake(allocator);
         errdefer hs_msg.deinit(allocator);
         const client_hello = switch (hs_msg) {
-            .ClientHello => |msg| msg,
+            .client_hello => |msg| msg,
             else => {
                 self.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;

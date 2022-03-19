@@ -48,58 +48,58 @@ pub const CipherSuiteId = enum(u16) {
 };
 
 pub const MsgType = enum(u8) {
-    HelloRequest = 0,
-    ClientHello = 1,
-    ServerHello = 2,
-    NewSessionTicket = 4,
-    EndOfEarlyData = 5,
-    EncryptedExtensions = 8,
-    Certificate = 11,
-    ServerKeyExchange = 12,
-    CertificateRequest = 13,
-    ServerHelloDone = 14,
-    CertificateVerify = 15,
-    ClientKeyExchange = 16,
-    Finished = 20,
-    CertificateStatus = 22,
-    KeyUpdate = 24,
-    NextProtocol = 67, // Not IANA assigned
-    MessageHash = 254, // synthetic message
+    hello_request = 0,
+    client_hello = 1,
+    server_hello = 2,
+    new_session_ticket = 4,
+    end_of_early_data = 5,
+    encrypted_extensions = 8,
+    certificate = 11,
+    server_key_exchange = 12,
+    certificate_request = 13,
+    server_hello_done = 14,
+    certificate_verify = 15,
+    client_key_exchange = 16,
+    finished = 20,
+    certificate_status = 22,
+    key_update = 24,
+    next_protocol = 67, // Not IANA assigned
+    message_hash = 254, // synthetic message
     _,
 };
 
 pub const random_length = 32;
 
 pub const HandshakeMsg = union(MsgType) {
-    HelloRequest: HelloRequestMsg,
-    ClientHello: ClientHelloMsg,
-    ServerHello: ServerHelloMsg,
-    NewSessionTicket: NewSessionTicketMsg,
-    EndOfEarlyData: EndOfEarlyDataMsg,
-    EncryptedExtensions: EncryptedExtensionsMsg,
-    Certificate: CertificateMsg,
-    ServerKeyExchange: ServerKeyExchangeMsg,
-    CertificateRequest: CertificateRequestMsg,
-    ServerHelloDone: ServerHelloDoneMsg,
-    CertificateVerify: CertificateVerifyMsg,
-    ClientKeyExchange: ClientKeyExchangeMsg,
-    Finished: FinishedMsg,
-    CertificateStatus: CertificateStatusMsg,
-    KeyUpdate: KeyUpdateMsg,
-    NextProtocol: NextProtocolMsg,
-    MessageHash: MessageHashMsg,
+    hello_request: HelloRequestMsg,
+    client_hello: ClientHelloMsg,
+    server_hello: ServerHelloMsg,
+    new_session_ticket: NewSessionTicketMsg,
+    end_of_early_data: EndOfEarlyDataMsg,
+    encrypted_extensions: EncryptedExtensionsMsg,
+    certificate: CertificateMsg,
+    server_key_exchange: ServerKeyExchangeMsg,
+    certificate_request: CertificateRequestMsg,
+    server_hello_done: ServerHelloDoneMsg,
+    certificate_verify: CertificateVerifyMsg,
+    client_key_exchange: ClientKeyExchangeMsg,
+    finished: FinishedMsg,
+    certificate_status: CertificateStatusMsg,
+    key_update: KeyUpdateMsg,
+    next_protocol: NextProtocolMsg,
+    message_hash: MessageHashMsg,
 
     pub fn deinit(self: *HandshakeMsg, allocator: mem.Allocator) void {
         switch (self.*) {
-            .ClientHello => |*msg| msg.deinit(allocator),
-            .ServerHello => |*msg| msg.deinit(allocator),
-            .NewSessionTicket => |*msg| msg.deinit(allocator),
-            .Certificate => |*msg| msg.deinit(allocator),
-            .ServerKeyExchange => |*msg| msg.deinit(allocator),
-            .ServerHelloDone => |*msg| msg.deinit(allocator),
-            .CertificateVerify => |*msg| msg.deinit(allocator),
-            .ClientKeyExchange => |*msg| msg.deinit(allocator),
-            .Finished => |*msg| msg.deinit(allocator),
+            .client_hello => |*msg| msg.deinit(allocator),
+            .server_hello => |*msg| msg.deinit(allocator),
+            .new_session_ticket => |*msg| msg.deinit(allocator),
+            .certificate => |*msg| msg.deinit(allocator),
+            .server_key_exchange => |*msg| msg.deinit(allocator),
+            .server_hello_done => |*msg| msg.deinit(allocator),
+            .certificate_verify => |*msg| msg.deinit(allocator),
+            .client_key_exchange => |*msg| msg.deinit(allocator),
+            .finished => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
     }
@@ -121,38 +121,38 @@ pub const HandshakeMsg = union(MsgType) {
         const msg_type = @intToEnum(MsgType, data[0]);
         std.log.debug("HandshakeMsg.unmarshal msg_type={}", .{msg_type});
         switch (msg_type) {
-            .ClientHello => return HandshakeMsg{
-                .ClientHello = try ClientHelloMsg.unmarshal(allocator, msg_data),
+            .client_hello => return HandshakeMsg{
+                .client_hello = try ClientHelloMsg.unmarshal(allocator, msg_data),
             },
-            .ServerHello => return HandshakeMsg{
-                .ServerHello = try ServerHelloMsg.unmarshal(allocator, msg_data),
+            .server_hello => return HandshakeMsg{
+                .server_hello = try ServerHelloMsg.unmarshal(allocator, msg_data),
             },
-            .NewSessionTicket => return HandshakeMsg{
-                .NewSessionTicket = try NewSessionTicketMsg.unmarshal(allocator, msg_data, ver.?),
+            .new_session_ticket => return HandshakeMsg{
+                .new_session_ticket = try NewSessionTicketMsg.unmarshal(allocator, msg_data, ver.?),
             },
-            .EncryptedExtensions => return HandshakeMsg{
-                .EncryptedExtensions = try EncryptedExtensionsMsg.unmarshal(allocator, msg_data),
+            .encrypted_extensions => return HandshakeMsg{
+                .encrypted_extensions = try EncryptedExtensionsMsg.unmarshal(allocator, msg_data),
             },
-            .Certificate => return HandshakeMsg{
-                .Certificate = try CertificateMsg.unmarshal(allocator, msg_data, ver.?),
+            .certificate => return HandshakeMsg{
+                .certificate = try CertificateMsg.unmarshal(allocator, msg_data, ver.?),
             },
-            .CertificateRequest => return HandshakeMsg{
-                .CertificateRequest = try CertificateRequestMsg.unmarshal(allocator, msg_data, ver.?),
+            .certificate_request => return HandshakeMsg{
+                .certificate_request = try CertificateRequestMsg.unmarshal(allocator, msg_data, ver.?),
             },
-            .ServerKeyExchange => return HandshakeMsg{
-                .ServerKeyExchange = try ServerKeyExchangeMsg.unmarshal(allocator, msg_data),
+            .server_key_exchange => return HandshakeMsg{
+                .server_key_exchange = try ServerKeyExchangeMsg.unmarshal(allocator, msg_data),
             },
-            .ServerHelloDone => return HandshakeMsg{
-                .ServerHelloDone = try ServerHelloDoneMsg.unmarshal(allocator, msg_data),
+            .server_hello_done => return HandshakeMsg{
+                .server_hello_done = try ServerHelloDoneMsg.unmarshal(allocator, msg_data),
             },
-            .CertificateVerify => return HandshakeMsg{
-                .CertificateVerify = try CertificateVerifyMsg.unmarshal(allocator, msg_data),
+            .certificate_verify => return HandshakeMsg{
+                .certificate_verify = try CertificateVerifyMsg.unmarshal(allocator, msg_data),
             },
-            .ClientKeyExchange => return HandshakeMsg{
-                .ClientKeyExchange = try ClientKeyExchangeMsg.unmarshal(allocator, msg_data),
+            .client_key_exchange => return HandshakeMsg{
+                .client_key_exchange = try ClientKeyExchangeMsg.unmarshal(allocator, msg_data),
             },
-            .Finished => return HandshakeMsg{
-                .Finished = try FinishedMsg.unmarshal(allocator, msg_data),
+            .finished => return HandshakeMsg{
+                .finished = try FinishedMsg.unmarshal(allocator, msg_data),
             },
             else => @panic("not implemented yet"),
         }
@@ -451,7 +451,7 @@ pub const ClientHelloMsg = struct {
     }
 
     fn writeTo(self: *const ClientHelloMsg, writer: anytype) !void {
-        try writeInt(u8, MsgType.ClientHello, writer);
+        try writeInt(u8, MsgType.client_hello, writer);
         try writeLengthPrefixed(u24, *const ClientHelloMsg, writeBody, self, writer);
     }
 
@@ -780,7 +780,7 @@ pub const ServerHelloMsg = struct {
     }
 
     fn writeTo(self: *const ServerHelloMsg, writer: anytype) !void {
-        try writeInt(u8, MsgType.ServerHello, writer);
+        try writeInt(u8, MsgType.server_hello, writer);
         try writeLengthPrefixed(u24, *const ServerHelloMsg, writeBody, self, writer);
     }
 
@@ -955,7 +955,7 @@ pub const CertificateMsgTls12 = struct {
 
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.Certificate, writer);
+        try writeInt(u8, MsgType.certificate, writer);
         try writeInt(u24, msg_len, writer);
         try writeInt(u24, certs_len, writer);
         for (self.certificates) |cert| {
@@ -1025,7 +1025,7 @@ pub const CertificateMsgTls13 = struct {
         var rest_len = msg_len;
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.Certificate, writer);
+        try writeInt(u8, MsgType.certificate, writer);
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
         try writeInt(u8, 0, writer); // certificate_request_context
@@ -1156,7 +1156,7 @@ pub const CertificateRequestMsgTls12 = struct {
         var rest_len = msg_len;
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.CertificateRequest, writer);
+        try writeInt(u8, MsgType.certificate_request, writer);
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
         // try writeLenAndBytes(u8, self.certificate_types, writer);
@@ -1403,7 +1403,7 @@ pub const CertificateRequestMsgTls13 = struct {
         var rest_len = msg_len;
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.CertificateRequest, writer);
+        try writeInt(u8, MsgType.certificate_request, writer);
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
         try writeInt(u8, 0, writer); // context_len
@@ -1562,7 +1562,7 @@ pub const ServerKeyExchangeMsg = struct {
 
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.ServerKeyExchange, writer);
+        try writeInt(u8, MsgType.server_key_exchange, writer);
         try writeLenAndBytes(u24, self.key, writer);
         self.raw = raw;
         return raw;
@@ -1601,7 +1601,7 @@ pub const ServerHelloDoneMsg = struct {
 
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.ServerHelloDone, writer);
+        try writeInt(u8, MsgType.server_hello_done, writer);
         try writeInt(u24, 0, writer);
         self.raw = raw;
         return raw;
@@ -1641,7 +1641,7 @@ pub const ClientKeyExchangeMsg = struct {
 
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.ClientKeyExchange, writer);
+        try writeInt(u8, MsgType.client_key_exchange, writer);
         try writeLenAndBytes(u24, self.ciphertext, writer);
         self.raw = raw;
         return raw;
@@ -1680,7 +1680,7 @@ pub const FinishedMsg = struct {
 
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.Finished, writer);
+        try writeInt(u8, MsgType.finished, writer);
         try writeLenAndBytes(u24, self.verify_data, writer);
         self.raw = raw;
         return raw;
@@ -1765,7 +1765,7 @@ pub const NewSessionTicketMsgTls12 = struct {
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
 
-        try writeInt(u8, MsgType.NewSessionTicket, writer);
+        try writeInt(u8, MsgType.new_session_ticket, writer);
         var rest_len = msg_len - u8_size - u24_size;
         try writeInt(u24, rest_len, writer);
         try writeInt(u32, 0, writer); // ticket_lifetime_hint
@@ -1871,7 +1871,7 @@ pub const NewSessionTicketMsgTls13 = struct {
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
 
-        try writeInt(u8, MsgType.NewSessionTicket, writer);
+        try writeInt(u8, MsgType.new_session_ticket, writer);
         var rest_len = msg_len - u8_size - u24_size;
         try writeInt(u24, rest_len, writer);
         try writeInt(u32, self.lifetime, writer);
@@ -2446,7 +2446,7 @@ pub const EncryptedExtensionsMsg = struct {
         var rest_len = msg_len;
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.EncryptedExtensions, writer);
+        try writeInt(u8, MsgType.encrypted_extensions, writer);
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
         rest_len -= u16_size;
@@ -2511,7 +2511,7 @@ pub const CertificateVerifyMsg = struct {
         var rest_len = msg_len;
         var fbs = io.fixedBufferStream(raw);
         var writer = fbs.writer();
-        try writeInt(u8, MsgType.CertificateVerify, writer);
+        try writeInt(u8, MsgType.certificate_verify, writer);
         rest_len -= u8_size + u24_size;
         try writeInt(u24, rest_len, writer);
         try writeInt(u16, self.signature_algorithm, writer);
@@ -3204,7 +3204,7 @@ test "ServerKeyExchangeMsg.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
-            var got = msg.ServerKeyExchange;
+            var got = msg.server_key_exchange;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -3226,7 +3226,7 @@ fn testCreateServerKeyExchangeMsg(allocator: mem.Allocator) !ServerKeyExchangeMs
     };
 }
 
-const test_marshaled_server_key_exchange_msg = "\x0c" ++ // MsgType.ServerKeyExchange
+const test_marshaled_server_key_exchange_msg = "\x0c" ++ // MsgType.server_key_exchange
     "\x00\x00\x0a" ++ // u24 msg_len
     "\x73\x65\x72\x76\x65\x72\x20\x6b\x65\x79"; // "server key"
 
@@ -3264,7 +3264,7 @@ test "ServerHelloDoneMsg.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
-            var got = msg.ServerHelloDone;
+            var got = msg.server_hello_done;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -3283,7 +3283,7 @@ fn testCreateServerHelloDoneMsg() ServerHelloDoneMsg {
     return ServerHelloDoneMsg{};
 }
 
-const test_marshaled_server_hello_done_msg = "\x0e" ++ // MsgType.ServerHelloDone
+const test_marshaled_server_hello_done_msg = "\x0e" ++ // MsgType.server_hello_done
     "\x00\x00\x00"; // u24 msg_len = 0
 
 test "ClientKeyExchangeMsg.marshal" {
@@ -3320,7 +3320,7 @@ test "ClientKeyExchangeMsg.unmarshal" {
             var msg = try HandshakeMsg.unmarshal(allocator, data, null);
             defer msg.deinit(allocator);
 
-            var got = msg.ClientKeyExchange;
+            var got = msg.client_key_exchange;
             try testing.expectEqualSlices(u8, data, got.raw.?);
             got.raw = null;
 
@@ -3341,7 +3341,7 @@ fn testCreateClientKeyExchangeMsg(allocator: mem.Allocator) !ClientKeyExchangeMs
     };
 }
 
-const test_marshaled_client_key_exchange_msg = "\x10" ++ // MsgType.ClientKeyExchange
+const test_marshaled_client_key_exchange_msg = "\x10" ++ // MsgType.client_key_exchange
     "\x00\x00\x0b" ++ // u24 msg_len
     "\x63\x69\x70\x68\x65\x72\x20\x74\x65\x78\x74"; // "cipher text"
 

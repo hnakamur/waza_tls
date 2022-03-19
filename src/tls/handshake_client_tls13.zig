@@ -346,7 +346,7 @@ pub const ClientHandshakeStateTls13 = struct {
         var ext_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
-                .EncryptedExtensions => |m| m,
+                .encrypted_extensions => |m| m,
                 else => {
                     self.conn.sendAlert(.unexpected_message) catch {};
                     return error.UnexpectedMessage;
@@ -374,7 +374,7 @@ pub const ClientHandshakeStateTls13 = struct {
 
         var hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
-            .CertificateRequest => |*m| {
+            .certificate_request => |*m| {
                 switch (m.*) {
                     .v1_3 => |*cert_req_msg| {
                         self.transcript.update(try cert_req_msg.marshal(allocator));
@@ -389,7 +389,7 @@ pub const ClientHandshakeStateTls13 = struct {
         }
 
         var cert_msg = switch (hs_msg) {
-            .Certificate => |m| m.v1_3,
+            .certificate => |m| m.v1_3,
             else => {
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
@@ -413,7 +413,7 @@ pub const ClientHandshakeStateTls13 = struct {
         var cert_verify_msg = blk: {
             hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
-                .CertificateVerify => |m| m,
+                .certificate_verify => |m| m,
                 else => {
                     self.conn.sendAlert(.unexpected_message) catch {};
                     return error.UnexpectedMessage;
@@ -473,7 +473,7 @@ pub const ClientHandshakeStateTls13 = struct {
         var finished_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             break :blk switch (hs_msg) {
-                .Finished => |m| m,
+                .finished => |m| m,
                 else => {
                     self.conn.sendAlert(.unexpected_message) catch {};
                     return error.UnexpectedMessage;

@@ -165,7 +165,7 @@ pub const ClientHandshakeStateTls12 = struct {
             var hs_msg = try self.conn.readHandshake(allocator);
             errdefer hs_msg.deinit(allocator);
             switch (hs_msg) {
-                .Certificate => |*c| {
+                .certificate => |*c| {
                     switch (c.*) {
                         .v1_2 => |cert_msg_tls12| {
                             if (cert_msg_tls12.certificates.len != 0) {
@@ -188,7 +188,7 @@ pub const ClientHandshakeStateTls12 = struct {
 
         var hs_msg = try self.conn.readHandshake(allocator);
         switch (hs_msg) {
-            .CertificateStatus => |cs| {
+            .certificate_status => |cs| {
                 // RFC4366 on Certificate Status Request:
                 // The server MAY return a "certificate_status" message.
                 if (!self.server_hello.ocsp_stapling) {
@@ -229,7 +229,7 @@ pub const ClientHandshakeStateTls12 = struct {
         defer key_agreement.deinit(allocator);
 
         switch (hs_msg) {
-            .ServerKeyExchange => |*skx_msg| {
+            .server_key_exchange => |*skx_msg| {
                 {
                     defer skx_msg.deinit(allocator);
                     try self.finished_hash.?.write(try skx_msg.marshal(allocator));
@@ -255,7 +255,7 @@ pub const ClientHandshakeStateTls12 = struct {
         var cert_req_msg: CertificateRequestMsgTls12 = undefined;
         var chain_to_send: *const CertificateChain = undefined;
         switch (hs_msg) {
-            .CertificateRequest => |*m| {
+            .certificate_request => |*m| {
                 std.log.info("client: CertificateRequest={}", .{m.*});
                 switch (m.*) {
                     .v1_2 => |m2| {
@@ -327,7 +327,7 @@ pub const ClientHandshakeStateTls12 = struct {
         defer if (cert_requested) cert_req_msg.deinit(allocator);
 
         switch (hs_msg) {
-            .ServerHelloDone => |*hello_done_msg| {
+            .server_hello_done => |*hello_done_msg| {
                 defer hello_done_msg.deinit(allocator);
                 try self.finished_hash.?.write(try hello_done_msg.marshal(allocator));
                 std.log.info("client: helloDone {}", .{std.fmt.fmtSliceHexLower(hello_done_msg.raw.?)});
@@ -501,7 +501,7 @@ pub const ClientHandshakeStateTls12 = struct {
         var session_ticket_msg = blk: {
             var hs_msg = try self.conn.readHandshake(allocator);
             switch (hs_msg) {
-                .NewSessionTicket => |*msg| {
+                .new_session_ticket => |*msg| {
                     switch (msg.*) {
                         .v1_2 => |msg_tls12| break :blk msg_tls12,
                         else => {
@@ -605,7 +605,7 @@ pub const ClientHandshakeStateTls12 = struct {
         var hs_msg = try self.conn.readHandshake(allocator);
         std.log.debug("ClientHandshakeStateTls12.readFinished after readHandshake", .{});
         var server_finished_msg = switch (hs_msg) {
-            .Finished => |m| m,
+            .finished => |m| m,
             else => {
                 self.conn.sendAlert(.unexpected_message) catch {};
                 return error.UnexpectedMessage;
