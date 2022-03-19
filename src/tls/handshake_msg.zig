@@ -335,7 +335,7 @@ pub const ClientHelloMsg = struct {
             const ext_len = try bv.readIntBig(u16);
             try bv.ensureRestLen(ext_len);
             switch (ext_type) {
-                .ServerName => {
+                .server_name => {
                     // RFC 6066, Section 3
                     const server_names_len = try bv.readIntBig(u16);
                     try bv.ensureRestLen(server_names_len);
@@ -357,18 +357,18 @@ pub const ClientHelloMsg = struct {
                         self.server_name = try allocator.dupe(u8, server_name);
                     }
                 },
-                .StatusRequest => {
+                .status_request => {
                     // RFC 4366, Section 3.6
                     const status_type = try readEnum(CertificateStatusType, bv);
                     // ignore responder_id_list and request_extensions
                     bv.skip(intTypeLen(u16) * 2);
                     self.ocsp_stapling = status_type == .ocsp;
                 },
-                .SupportedCurves => {
+                .supported_curves => {
                     // RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
                     self.supported_curves = try readEnumList(u16, CurveId, allocator, bv);
                 },
-                .SupportedPoints => {
+                .supported_points => {
                     // RFC 4492, Section 5.1.2
                     self.supported_points = try readEnumList(
                         u8,
@@ -380,12 +380,12 @@ pub const ClientHelloMsg = struct {
                         return error.EmptySupportedPoints;
                     }
                 },
-                .SessionTicket => {
+                .session_ticket => {
                     // RFC 5077, Section 3.2
                     self.ticket_supported = true;
                     self.session_ticket = try allocator.dupe(u8, try bv.sliceBytesNoEof(ext_len));
                 },
-                .SignatureAlgorithms => {
+                .signature_algorithms => {
                     // RFC 5246, Section 7.4.1.4.1
                     self.supported_signature_algorithms = try readEnumList(
                         u16,
@@ -394,7 +394,7 @@ pub const ClientHelloMsg = struct {
                         bv,
                     );
                 },
-                .SignatureAlgorithmsCert => {
+                .signature_algorithms_cert => {
                     // RFC 8446, Section 4.2.3
                     self.supported_signature_algorithms_cert = try readEnumList(
                         u16,
@@ -403,24 +403,24 @@ pub const ClientHelloMsg = struct {
                         bv,
                     );
                 },
-                .RenegotiationInfo => {
+                .renegotiation_info => {
                     // RFC 5746, Section 3.2
                     self.secure_renegotiation = try allocator.dupe(u8, try readString(u8, bv));
                     self.secure_renegotiation_supported = true;
                 },
-                .Alpn => {
+                .alpn => {
                     // RFC 7301, Section 3.1
                     self.alpn_protocols = try readStringList(u16, u8, allocator, bv);
                 },
-                .Sct => {
+                .sct => {
                     // RFC 6962, Section 3.3.1
                     self.scts = true;
                 },
-                .SupportedVersions => {
+                .supported_versions => {
                     // RFC 8446, Section 4.2.1
                     self.supported_versions = try readEnumList(u8, ProtocolVersion, allocator, bv);
                 },
-                .Cookie => {
+                .cookie => {
                     // RFC 8446, Section 4.2.2
                     const cookie = try readString(u16, bv);
                     if (cookie.len == 0) {
@@ -428,19 +428,19 @@ pub const ClientHelloMsg = struct {
                     }
                     self.cookie = try allocator.dupe(u8, cookie);
                 },
-                .KeyShare => {
+                .key_share => {
                     // RFC 8446, Section 4.2.
                     self.key_shares = try readKeyShareList(allocator, bv);
                 },
-                .EarlyData => {
+                .early_data => {
                     // RFC 8446, Section 4.2.10
                     self.early_data = true;
                 },
-                .PskModes => {
+                .psk_modes => {
                     // RFC 8446, Section 4.2.9
                     self.psk_modes = try readEnumList(u8, PskMode, allocator, bv);
                 },
-                .PreSharedKey => {
+                .pre_shared_key => {
                     // RFC 8446, Section 4.2.11
                     self.psk_identities = try readPskIdentityList(allocator, bv);
                     self.psk_binders = try readNonEmptyStringList(u16, u8, allocator, bv);
@@ -473,7 +473,7 @@ pub const ClientHelloMsg = struct {
     fn writeExtensions(self: *const ClientHelloMsg, writer: anytype) !void {
         if (self.server_name.len > 0) {
             // RFC 6066, Section 3
-            try writeInt(u16, ExtensionType.ServerName, writer);
+            try writeInt(u16, ExtensionType.server_name, writer);
             const len2 = intTypeLen(u8) + intTypeLen(u16) + self.server_name.len;
             const len1 = intTypeLen(u16) + len2;
             try writeInt(u16, len1, writer);
@@ -483,7 +483,7 @@ pub const ClientHelloMsg = struct {
         }
         if (self.ocsp_stapling) {
             // RFC 4366, Section 3.6
-            try writeInt(u16, ExtensionType.StatusRequest, writer);
+            try writeInt(u16, ExtensionType.status_request, writer);
             try writeBytes("\x00\x05" ++ // u16 length
                 "\x01" ++ // status_type = ocsp
                 "\x00\x00" ++ // empty responder_id_list
@@ -492,22 +492,22 @@ pub const ClientHelloMsg = struct {
         }
         if (self.supported_curves.len > 0) {
             // RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
-            try writeInt(u16, ExtensionType.SupportedCurves, writer);
+            try writeInt(u16, ExtensionType.supported_curves, writer);
             try writeLenLenAndIntSlice(u16, u16, u16, CurveId, self.supported_curves, writer);
         }
         if (self.supported_points.len > 0) {
             // RFC 4492, Section 5.1.2
-            try writeInt(u16, ExtensionType.SupportedPoints, writer);
+            try writeInt(u16, ExtensionType.supported_points, writer);
             try writeLenLenAndIntSlice(u16, u8, u8, EcPointFormat, self.supported_points, writer);
         }
         if (self.ticket_supported) {
             // RFC 5077, Section 3.2
-            try writeInt(u16, ExtensionType.SessionTicket, writer);
+            try writeInt(u16, ExtensionType.session_ticket, writer);
             try writeLenAndBytes(u16, self.session_ticket, writer);
         }
         if (self.supported_signature_algorithms.len > 0) {
             // RFC 5246, Section 7.4.1.4.1
-            try writeInt(u16, ExtensionType.SignatureAlgorithms, writer);
+            try writeInt(u16, ExtensionType.signature_algorithms, writer);
             try writeLenLenAndIntSlice(
                 u16,
                 u16,
@@ -519,7 +519,7 @@ pub const ClientHelloMsg = struct {
         }
         if (self.supported_signature_algorithms_cert.len > 0) {
             // RFC 8446, Section 4.2.3
-            try writeInt(u16, ExtensionType.SignatureAlgorithmsCert, writer);
+            try writeInt(u16, ExtensionType.signature_algorithms_cert, writer);
             try writeLenLenAndIntSlice(
                 u16,
                 u16,
@@ -531,12 +531,12 @@ pub const ClientHelloMsg = struct {
         }
         if (self.secure_renegotiation_supported) {
             // RFC 5746, Section 3.2
-            try writeInt(u16, ExtensionType.RenegotiationInfo, writer);
+            try writeInt(u16, ExtensionType.renegotiation_info, writer);
             try writeLenLenAndBytes(u16, u8, self.secure_renegotiation, writer);
         }
         if (self.alpn_protocols.len > 0) {
             // RFC 7301, Section 3.1
-            try writeInt(u16, ExtensionType.Alpn, writer);
+            try writeInt(u16, ExtensionType.alpn, writer);
             var len2: usize = 0;
             for (self.alpn_protocols) |proto| {
                 len2 += intTypeLen(u8) + proto.len;
@@ -550,12 +550,12 @@ pub const ClientHelloMsg = struct {
         }
         if (self.scts) {
             // RFC 6962, Section 3.3.1
-            try writeInt(u16, ExtensionType.Sct, writer);
+            try writeInt(u16, ExtensionType.sct, writer);
             try writeInt(u16, 0, writer); // empty extension_data
         }
         if (self.supported_versions.len > 0) {
             // RFC 8446, Section 4.2.1
-            try writeInt(u16, ExtensionType.SupportedVersions, writer);
+            try writeInt(u16, ExtensionType.supported_versions, writer);
             try writeLenLenAndIntSlice(
                 u16,
                 u8,
@@ -567,12 +567,12 @@ pub const ClientHelloMsg = struct {
         }
         if (self.cookie.len > 0) {
             // RFC 8446, Section 4.2.2
-            try writeInt(u16, ExtensionType.Cookie, writer);
+            try writeInt(u16, ExtensionType.cookie, writer);
             try writeLenLenAndBytes(u16, u16, self.cookie, writer);
         }
         if (self.key_shares.len > 0) {
             // RFC 8446, Section 4.2.8
-            try writeInt(u16, ExtensionType.KeyShare, writer);
+            try writeInt(u16, ExtensionType.key_share, writer);
             var len2: usize = 0;
             for (self.key_shares) |*ks| {
                 len2 += intTypeLen(u16) * 2 + ks.data.len;
@@ -587,17 +587,17 @@ pub const ClientHelloMsg = struct {
         }
         if (self.early_data) {
             // RFC 8446, Section 4.2.10
-            try writeInt(u16, ExtensionType.EarlyData, writer);
+            try writeInt(u16, ExtensionType.early_data, writer);
             try writeInt(u16, 0, writer); // empty extension_data
         }
         if (self.psk_modes.len > 0) {
             // RFC 8446, Section 4.2.9
-            try writeInt(u16, ExtensionType.PskModes, writer);
+            try writeInt(u16, ExtensionType.psk_modes, writer);
             try writeLenLenAndIntSlice(u16, u8, u8, PskMode, self.psk_modes, writer);
         }
         if (self.psk_identities.len > 0) { // pre_shared_key must be the last extension
             // RFC 8446, Section 4.2.11
-            try writeInt(u16, ExtensionType.PreSharedKey, writer);
+            try writeInt(u16, ExtensionType.pre_shared_key, writer);
             var len2i: usize = 0;
             for (self.psk_identities) |*psk| {
                 len2i += intTypeLen(u16) + psk.label.len + intTypeLen(u32);
@@ -723,13 +723,13 @@ pub const ServerHelloMsg = struct {
             try bv.ensureRestLen(ext_len);
             std.log.debug("unmarshalExtensions ext_type={}, ext_len={}, bytes={}", .{ ext_type, ext_len, fmtx.fmtSliceHexColonLower(bv.rest()) });
             switch (ext_type) {
-                .StatusRequest => self.ocsp_stapling = true,
-                .SessionTicket => self.ticket_supported = true,
-                .RenegotiationInfo => {
+                .status_request => self.ocsp_stapling = true,
+                .session_ticket => self.ticket_supported = true,
+                .renegotiation_info => {
                     self.secure_renegotiation = try allocator.dupe(u8, try readString(u8, bv));
                     self.secure_renegotiation_supported = true;
                 },
-                .Alpn => {
+                .alpn => {
                     const protos_len = try bv.readIntBig(u16);
                     const protos_end_pos = bv.pos + protos_len;
                     self.alpn_protocol = try allocator.dupe(u8, try readString(u8, bv));
@@ -737,16 +737,16 @@ pub const ServerHelloMsg = struct {
                         return error.TooManyProtocols;
                     }
                 },
-                .Sct => self.scts = try readNonEmptyStringList(u16, u16, allocator, bv),
-                .SupportedVersions => self.supported_version = try readEnum(ProtocolVersion, bv),
-                .Cookie => {
+                .sct => self.scts = try readNonEmptyStringList(u16, u16, allocator, bv),
+                .supported_versions => self.supported_version = try readEnum(ProtocolVersion, bv),
+                .cookie => {
                     const cookie = try readString(u16, bv);
                     if (cookie.len == 0) {
                         return error.EmptyCookie;
                     }
                     self.cookie = try allocator.dupe(u8, cookie);
                 },
-                .KeyShare => {
+                .key_share => {
                     // This extension has different formats in SH and HRR, accept either
                     // and let the handshake logic decide. See RFC 8446, Section 4.2.8.
                     if (ext_len == 2) {
@@ -757,8 +757,8 @@ pub const ServerHelloMsg = struct {
                         self.server_share = .{ .group = group, .data = data };
                     }
                 },
-                .PreSharedKey => self.selected_identity = try bv.readIntBig(u16),
-                .SupportedPoints => {
+                .pre_shared_key => self.selected_identity = try bv.readIntBig(u16),
+                .supported_points => {
                     std.log.debug("SupportedPoints bytes={}", .{fmtx.fmtSliceHexColonLower(bv.rest())});
                     // RFC 4492, Section 5.1.2
                     self.supported_points = try readEnumList(
@@ -801,27 +801,27 @@ pub const ServerHelloMsg = struct {
 
     fn writeExtensions(self: *const ServerHelloMsg, writer: anytype) !void {
         if (self.ocsp_stapling) {
-            try writeInt(u16, ExtensionType.StatusRequest, writer);
+            try writeInt(u16, ExtensionType.status_request, writer);
             const ext_len = 0;
             try writeInt(u16, ext_len, writer); // empty extension_data
         }
         if (self.ticket_supported) {
-            try writeInt(u16, ExtensionType.SessionTicket, writer);
+            try writeInt(u16, ExtensionType.session_ticket, writer);
             const ext_len = 0;
             try writeInt(u16, ext_len, writer); // empty extension_data
         }
         if (self.secure_renegotiation_supported) {
-            try writeInt(u16, ExtensionType.RenegotiationInfo, writer);
+            try writeInt(u16, ExtensionType.renegotiation_info, writer);
             try writeLenLenAndBytes(u16, u8, self.secure_renegotiation, writer);
         }
         if (self.alpn_protocol.len > 0) {
-            try writeInt(u16, ExtensionType.Alpn, writer);
+            try writeInt(u16, ExtensionType.alpn, writer);
             const ext_len = intTypeLen(u16) + intTypeLen(u8) + self.alpn_protocol.len;
             try writeInt(u16, ext_len, writer);
             try writeLenLenAndBytes(u16, u8, self.alpn_protocol, writer);
         }
         if (self.scts.len > 0) {
-            try writeInt(u16, ExtensionType.Sct, writer);
+            try writeInt(u16, ExtensionType.sct, writer);
             var scts_len: usize = 0;
             for (self.scts) |sct| {
                 scts_len += intTypeLen(u16) + sct.len;
@@ -834,38 +834,38 @@ pub const ServerHelloMsg = struct {
             }
         }
         if (self.supported_version) |version| {
-            try writeInt(u16, ExtensionType.SupportedVersions, writer);
+            try writeInt(u16, ExtensionType.supported_versions, writer);
             const ext_len = intTypeLen(u16);
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, version, writer);
         }
         if (self.server_share) |key_share| {
-            try writeInt(u16, ExtensionType.KeyShare, writer);
+            try writeInt(u16, ExtensionType.key_share, writer);
             const ext_len = intTypeLen(u16) * 2 + key_share.data.len;
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, key_share.group, writer);
             try writeLenAndBytes(u16, key_share.data, writer);
         }
         if (self.selected_identity) |selected_identity| {
-            try writeInt(u16, ExtensionType.PreSharedKey, writer);
+            try writeInt(u16, ExtensionType.pre_shared_key, writer);
             const ext_len = intTypeLen(u16);
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, selected_identity, writer);
         }
         if (self.cookie.len > 0) {
-            try writeInt(u16, ExtensionType.Cookie, writer);
+            try writeInt(u16, ExtensionType.cookie, writer);
             const ext_len = intTypeLen(u16) + self.cookie.len;
             try writeInt(u16, ext_len, writer);
             try writeLenAndBytes(u16, self.cookie, writer);
         }
         if (self.selected_group) |curve| {
-            try writeInt(u16, ExtensionType.KeyShare, writer);
+            try writeInt(u16, ExtensionType.key_share, writer);
             const ext_len = intTypeLen(u16);
             try writeInt(u16, ext_len, writer);
             try writeInt(u16, curve, writer);
         }
         if (self.supported_points.len > 0) {
-            try writeInt(u16, ExtensionType.SupportedPoints, writer);
+            try writeInt(u16, ExtensionType.supported_points, writer);
             const ext_len = intTypeLen(u8) + self.supported_points.len;
             try writeInt(u16, ext_len, writer);
             try writeLenAndIntSlice(u8, u8, EcPointFormat, self.supported_points, writer);
@@ -1292,9 +1292,9 @@ pub const CertificateRequestMsgTls13 = struct {
             const ext_type = try extensions.readEnum(ExtensionType, .Big);
             var ext_data = BytesView.init(try extensions.readLenPrefixedBytes(u16, .Big));
             switch (ext_type) {
-                .StatusRequest => msg.ocsp_stapling = true,
-                .Sct => msg.scts = true,
-                .SignatureAlgorithms => {
+                .status_request => msg.ocsp_stapling = true,
+                .sct => msg.scts = true,
+                .signature_algorithms => {
                     var sig_and_algs = BytesView.init(try ext_data.readLenPrefixedBytes(u16, .Big));
                     if (sig_and_algs.empty()) {
                         return error.InvalidCertificateRequestMsgTls13;
@@ -1310,7 +1310,7 @@ pub const CertificateRequestMsgTls13 = struct {
                             try sig_and_algs.readEnum(SignatureScheme, .Big);
                     }
                 },
-                .SignatureAlgorithmsCert => {
+                .signature_algorithms_cert => {
                     var sig_and_algs = BytesView.init(try ext_data.readLenPrefixedBytes(u16, .Big));
                     if (sig_and_algs.empty()) {
                         return error.InvalidCertificateRequestMsgTls13;
@@ -1326,7 +1326,7 @@ pub const CertificateRequestMsgTls13 = struct {
                             try sig_and_algs.readEnum(SignatureScheme, .Big);
                     }
                 },
-                .CertificateAuthorities => {
+                .certificate_authorities => {
                     var auths = BytesView.init(try ext_data.readLenPrefixedBytes(u16, .Big));
                     if (auths.empty()) {
                         return error.InvalidCertificateRequestMsgTls13;
@@ -1410,15 +1410,15 @@ pub const CertificateRequestMsgTls13 = struct {
         rest_len -= u8_size + u16_size;
         try writeInt(u16, rest_len, writer); // extensions_len
         if (self.ocsp_stapling) {
-            try writeInt(u16, ExtensionType.StatusRequest, writer);
+            try writeInt(u16, ExtensionType.status_request, writer);
             try writeInt(u16, 0, writer);
         }
         if (self.scts) {
-            try writeInt(u16, ExtensionType.Sct, writer);
+            try writeInt(u16, ExtensionType.sct, writer);
             try writeInt(u16, 0, writer);
         }
         if (self.supported_signature_algorithms.len > 0) {
-            try writeInt(u16, ExtensionType.SignatureAlgorithms, writer);
+            try writeInt(u16, ExtensionType.signature_algorithms, writer);
             try writeInt(u16, u16_size + u16_size * self.supported_signature_algorithms.len, writer);
             try writeInt(u16, u16_size * self.supported_signature_algorithms.len, writer);
             for (self.supported_signature_algorithms) |alg| {
@@ -1426,7 +1426,7 @@ pub const CertificateRequestMsgTls13 = struct {
             }
         }
         if (self.supported_signature_algorithms_cert.len > 0) {
-            try writeInt(u16, ExtensionType.SignatureAlgorithmsCert, writer);
+            try writeInt(u16, ExtensionType.signature_algorithms_cert, writer);
             try writeInt(u16, u16_size + u16_size * self.supported_signature_algorithms_cert.len, writer);
             try writeInt(u16, u16_size * self.supported_signature_algorithms_cert.len, writer);
             for (self.supported_signature_algorithms_cert) |alg| {
@@ -1434,7 +1434,7 @@ pub const CertificateRequestMsgTls13 = struct {
             }
         }
         if (self.certificate_authorities.len > 0) {
-            try writeInt(u16, ExtensionType.CertificateAuthorities, writer);
+            try writeInt(u16, ExtensionType.certificate_authorities, writer);
             authorities_len -= u16_size * 2;
             try writeInt(u16, authorities_len, writer);
             try writeInt(u16, authorities_len - u16_size, writer);
@@ -1833,7 +1833,7 @@ pub const NewSessionTicketMsgTls13 = struct {
             const ext_type = try extensions.readEnum(ExtensionType, .Big);
             var ext_data = BytesView.init(try extensions.readLenPrefixedBytes(u16, .Big));
             switch (ext_type) {
-                .EarlyData => max_early_data = try ext_data.readIntBig(u32),
+                .early_data => max_early_data = try ext_data.readIntBig(u32),
                 else => continue,
             }
 
@@ -1880,7 +1880,7 @@ pub const NewSessionTicketMsgTls13 = struct {
         try writeLenAndBytes(u16, self.label, writer);
         try writeInt(u16, early_data_len, writer);
         if (self.max_early_data > 0) {
-            try writeInt(u16, ExtensionType.EarlyData, writer);
+            try writeInt(u16, ExtensionType.early_data, writer);
             try writeInt(u16, u32_size, writer);
             try writeInt(u32, self.max_early_data, writer);
         }
@@ -2049,23 +2049,23 @@ pub const CompressionMethod = enum(u8) {
 
 // TLS extension numbers
 pub const ExtensionType = enum(u16) {
-    ServerName = 0,
-    StatusRequest = 5,
-    SupportedCurves = 10, // supported_groups in TLS 1.3, see RFC 8446, Section 4.2.7
-    SupportedPoints = 11,
-    SignatureAlgorithms = 13,
-    Alpn = 16,
-    Sct = 18,
-    SessionTicket = 35,
-    PreSharedKey = 41,
-    EarlyData = 42,
-    SupportedVersions = 43,
-    Cookie = 44,
-    PskModes = 45,
-    CertificateAuthorities = 47,
-    SignatureAlgorithmsCert = 50,
-    KeyShare = 51,
-    RenegotiationInfo = 0xff01,
+    server_name = 0,
+    status_request = 5,
+    supported_curves = 10, // supported_groups in TLS 1.3, see RFC 8446, Section 4.2.7
+    supported_points = 11,
+    signature_algorithms = 13,
+    alpn = 16,
+    sct = 18,
+    session_ticket = 35,
+    pre_shared_key = 41,
+    early_data = 42,
+    supported_versions = 43,
+    cookie = 44,
+    psk_modes = 45,
+    certificate_authorities = 47,
+    signature_algorithms_cert = 50,
+    key_share = 51,
+    renegotiation_info = 0xff01,
     _,
 };
 
@@ -2412,7 +2412,7 @@ pub const EncryptedExtensionsMsg = struct {
             const ext_len = try bv.readIntBig(u16);
             try bv.ensureRestLen(ext_len);
             switch (ext_type) {
-                .Alpn => {
+                .alpn => {
                     const proto_list_len = try bv.readIntBig(u16);
                     try bv.ensureRestLen(proto_list_len);
                     if (bv.restLen() != proto_list_len) {
@@ -2452,7 +2452,7 @@ pub const EncryptedExtensionsMsg = struct {
         rest_len -= u16_size;
         try writeInt(u16, rest_len, writer);
         if (self.alpn_protocol.len > 0) {
-            try writeInt(u16, ExtensionType.Alpn, writer);
+            try writeInt(u16, ExtensionType.alpn, writer);
             rest_len -= u16_size * 2;
             try writeInt(u16, rest_len, writer);
             rest_len -= u16_size;

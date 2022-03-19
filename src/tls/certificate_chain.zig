@@ -85,7 +85,7 @@ pub const CertificateChain = struct {
                 const ext_type = try bv.readEnum(ExtensionType, .Big);
                 const ext_len = try bv.readIntBig(u16);
                 switch (ext_type) {
-                    .StatusRequest => {
+                    .status_request => {
                         const status_type = try bv.readByte();
                         if (status_type != status_type_ocsp) {
                             return error.InvalidCertificateMsgTls12;
@@ -95,7 +95,7 @@ pub const CertificateChain = struct {
                             try bv.readLenPrefixedBytes(u24, .Big),
                         );
                     },
-                    .Sct => {
+                    .sct => {
                         const scts_len = try bv.readIntBig(u16);
                         const scts_end_pos = bv.pos + scts_len;
                         while (bv.pos < scts_end_pos) {
@@ -160,7 +160,7 @@ pub const CertificateChain = struct {
             // This library only supports OCSP and SCT for leaf certificates.
             if (i == 0) {
                 if (self.ocsp_staple.len > 0) {
-                    try writeInt(u16, ExtensionType.StatusRequest, writer);
+                    try writeInt(u16, ExtensionType.status_request, writer);
                     try writeInt(u16, oscp_stapling_len - u16_size * 2, writer);
                     try writeInt(u8, status_type_ocsp, writer);
                     try writeInt(u24, self.ocsp_staple.len, writer);
@@ -168,7 +168,7 @@ pub const CertificateChain = struct {
                 }
                 if (self.signed_certificate_timestamps != null) {
                     if (self.signed_certificate_timestamps) |scts| {
-                        try writeInt(u16, ExtensionType.Sct, writer);
+                        try writeInt(u16, ExtensionType.sct, writer);
                         var rest_len = scts_len - u16_size * 2;
                         try writeInt(u16, rest_len, writer);
                         rest_len -= u16_size;
