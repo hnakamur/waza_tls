@@ -74,9 +74,14 @@ test "ClientServer_tls12_rsa2048" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .err;
+    testing.log_level = .warn;
 
     try struct {
+        const Self = @This();
+        client_buffer: [1024]u8 = undefined,
+        client_bytes_read: ?usize = null,
+        client_version: ?ProtocolVersion = null,
+
         fn testServer(server: *Server) !void {
             var conn = try server.accept();
             const allocator = server.allocator;
@@ -94,7 +99,7 @@ test "ClientServer_tls12_rsa2048" {
             _ = try conn.write("How do you do?");
         }
 
-        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+        fn testClient(context: *Self, addr: net.Address, allocator: mem.Allocator) !void {
             var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .insecure_skip_verify = true,
@@ -110,10 +115,8 @@ test "ClientServer_tls12_rsa2048" {
             );
             _ = try client.conn.write("hello");
 
-            var buffer = [_]u8{0} ** 1024;
-            const n = try client.conn.read(&buffer);
-            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client.conn.version);
-            try testing.expectEqualStrings("How do you do?", buffer[0..n]);
+            context.client_bytes_read = try client.conn.read(&context.client_buffer);
+            context.client_version = client.conn.version;
         }
 
         fn runTest() !void {
@@ -138,14 +141,20 @@ test "ClientServer_tls12_rsa2048" {
             var server = try Server.init(allocator, listen_addr, .{}, &server_config);
             defer server.deinit();
 
+            var client_context = Self{};
             const t = try std.Thread.spawn(
                 .{},
                 testClient,
-                .{ server.server.listen_address, allocator },
+                .{ &client_context, server.server.listen_address, allocator },
             );
             defer t.join();
 
             try testServer(&server);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_2), client_context.client_version.?);
+            try testing.expectEqualStrings(
+                "How do you do?",
+                client_context.client_buffer[0..client_context.client_bytes_read.?],
+            );
         }
     }.runTest();
 }
