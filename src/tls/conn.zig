@@ -94,6 +94,66 @@ const default_curve_preferences = [_]CurveId{
 pub const downgrade_canary_tls12 = "DOWNGRD\x01";
 const downgrade_canary_tls11 = "DOWNGRD\x00";
 
+pub const KeyLog = struct {
+    pub const label_tls12 = "CLIENT_RANDOM";
+    pub const label_client_handshake = "CLIENT_HANDSHAKE_TRAFFIC_SECRET";
+    pub const label_server_handshake = "SERVER_HANDSHAKE_TRAFFIC_SECRET";
+    pub const label_client_traffic = "CLIENT_TRAFFIC_SECRET_0";
+    pub const label_server_traffic = "SERVER_TRAFFIC_SECRET_0";
+
+    // key_log_writer_mutex protects all KeyLogWriters globally. It is rarely enabled,
+    // and is only for debugging, so a global mutex saves space.
+    var writer_mutex = std.Thread.Mutex{};
+};
+
+pub const KeyLogger = struct {
+    ptr: *anyopaque,
+    writeFn: fn (ptr: *anyopaque, buf: []const u8) anyerror!usize,
+
+    pub fn init(
+        pointer: anytype,
+        comptime writeFn: fn (ptr: @TypeOf(pointer), buf: []const u8) anyerror!usize,
+    ) KeyLogger {
+        const Ptr = @TypeOf(pointer);
+        assert(@typeInfo(Ptr) == .Pointer); // Must be a pointer
+        assert(@typeInfo(Ptr).Pointer.size == .One); // Must be a single-item pointer
+        assert(@typeInfo(@typeInfo(Ptr).Pointer.child) == .Struct); // Must point to a struct
+        const gen = struct {
+            fn write(ptr: *anyopaque, buf: []const u8) !usize {
+                const alignment = @typeInfo(Ptr).Pointer.alignment;
+                const self = @ptrCast(Ptr, @alignCast(alignment, ptr));
+                return writeFn(self, buf);
+            }
+        };
+
+        return .{
+            .ptr = pointer,
+            .writeFn = gen.write,
+        };
+    }
+
+    pub fn write(l: KeyLogger, buf: []const u8) !usize {
+        return try l.writeFn(l.ptr, buf);
+    }
+};
+
+pub const FileKeyLogger = struct {
+    const Self = @This();
+    file: std.fs.File,
+
+    pub fn init(file: std.fs.File) Self {
+        return .{.file = file};
+    }
+
+    pub fn keyLogger(self: *Self) KeyLogger {
+        return KeyLogger.init(self, write);
+    }
+
+    pub fn write(self: *Self, buf: []const u8) !usize {
+        return self.file.write(buf);
+    }
+};
+
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     pub const Config = struct {
@@ -198,6 +258,8 @@ pub const Conn = struct {
         // auto_session_ticket_keys is like sessionTicketKeys but is owned by the
         // auto-rotation logic. See Config.ticketKeys.
         auto_session_ticket_keys: []TicketKey = &.{},
+
+        key_logger: ?KeyLogger = null,
 
         pub fn deinit(self: *Config, allocator: mem.Allocator) void {
             memx.deinitSliceAndElems(CertificateChain, self.certificates, allocator);
@@ -344,6 +406,29 @@ pub const Conn = struct {
 
         pub fn currentTimestampSeconds(self: *Config) i64 {
             return self.timestamp_seconds_fn();
+        }
+
+        pub fn writeKeyLog(
+            self: *const Config,
+            allocator: mem.Allocator,
+            label: []const u8,
+            client_random: []const u8,
+            secret: []const u8,
+        ) !void {
+            if (self.key_logger == null) {
+                return;
+            }
+
+            const log_line = try std.fmt.allocPrint(allocator, "{s} {} {}\n", .{
+                label,
+                std.fmt.fmtSliceHexLower(client_random),
+                std.fmt.fmtSliceHexLower(secret),
+            });
+            defer allocator.free(log_line);
+
+            KeyLog.writer_mutex.lock();
+            defer KeyLog.writer_mutex.unlock();
+            _ = try self.key_logger.?.write(log_line);
         }
     };
 
@@ -1584,7 +1669,6 @@ pub const Conn = struct {
             errdefer allocator.free(binder);
             break :blk_binders try allocator.dupe([]const u8, &[_][]const u8{binder});
         };
-
 
         const psk = try cipher_suite.?.expandLabel(
             allocator,

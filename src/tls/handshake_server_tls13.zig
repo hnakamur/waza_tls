@@ -3,6 +3,7 @@ const mem = std.mem;
 const datetime = @import("datetime");
 const AlertDescription = @import("alert.zig").AlertDescription;
 const Conn = @import("conn.zig").Conn;
+const KeyLog = @import("conn.zig").KeyLog;
 const MsgType = @import("handshake_msg.zig").MsgType;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
@@ -559,9 +560,20 @@ pub const ServerHandshakeStateTls13 = struct {
                 "ServerHandshakeStateTls13.sendServerParameters out.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
             );
-        }
 
-        // TODO: implement write key log
+            try self.conn.config.writeKeyLog(
+                allocator,
+                KeyLog.label_client_handshake,
+                self.client_hello.random,
+                client_secret,
+            );
+            try self.conn.config.writeKeyLog(
+                allocator,
+                KeyLog.label_server_handshake,
+                self.client_hello.random,
+                server_secret,
+            );
+        }
 
         const selected_proto = negotiateAlpn(
             self.conn.config.next_protos,
@@ -790,9 +802,20 @@ pub const ServerHandshakeStateTls13 = struct {
                 "ServerHandshakeStateTls13.sendServerFinished out.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
             );
-        }
 
-        // TODO: implement writing key log
+            try self.conn.config.writeKeyLog(
+                allocator,
+                KeyLog.label_client_traffic,
+                self.client_hello.random,
+                self.traffic_secret,
+            );
+            try self.conn.config.writeKeyLog(
+                allocator,
+                KeyLog.label_server_traffic,
+                self.client_hello.random,
+                server_secret,
+            );
+        }
 
         // If we did not request client certificates, at this point we can
         // precompute the client finished and roll the transcript forward to send

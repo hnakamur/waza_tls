@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const net = std.net;
 const Conn = @import("conn.zig").Conn;
+const FileKeyLogger = @import("conn.zig").FileKeyLogger;
 const CertPool = @import("cert_pool.zig").CertPool;
 const default_cipher_suites_tls13 = @import("cipher_suites.zig").default_cipher_suites_tls13;
 
@@ -233,6 +234,9 @@ test "ClientServer_tls12_p256_no_client_certificate_one_request" {
 test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
     // if (true) return error.SkipZigTest;
 
+    const server_key_log_filename = "tls12-server-key.log";
+    const client_key_log_filename = "tls12-client-key.log";
+
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
@@ -265,10 +269,18 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var cache = try LruSessionCache.init(allocator, null);
+            var key_log_file = try std.fs.Dir.createFile(
+                std.fs.cwd(),
+                client_key_log_filename,
+                .{},
+            );
+            defer key_log_file.close();
+            var key_logger = FileKeyLogger.init(key_log_file);
             var client_config = Conn.Config{
                 .max_version = .v1_2,
                 .insecure_skip_verify = true,
                 .client_session_cache = cache,
+                .key_logger = key_logger.keyLogger(),
             };
             defer client_config.deinit(allocator);
             std.log.info("testClient client_config=0x{x}, session=0x{x}", .{
@@ -303,6 +315,13 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var key_log_file = try std.fs.Dir.createFile(
+                std.fs.cwd(),
+                server_key_log_filename,
+                .{},
+            );
+            defer key_log_file.close();
+            var key_logger = FileKeyLogger.init(key_log_file);
             var server_config = blk: {
                 var certificates = try allocator.alloc(CertificateChain, 1);
                 errdefer allocator.free(certificates);
@@ -312,6 +331,7 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
                     .certificates = certificates,
                     .max_version = .v1_3,
                     .session_tickets_disabled = false,
+                    .key_logger = key_logger.keyLogger(),
                 };
             };
             defer server_config.deinit(allocator);
@@ -604,6 +624,9 @@ test "ClientServer_tls13_p256_no_client_certificate_one_request" {
 test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
     // if (true) return error.SkipZigTest;
 
+    const server_key_log_filename = "tls13-server-key.log";
+    const client_key_log_filename = "tls13-client-key.log";
+
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
@@ -636,11 +659,19 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
 
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
             var cache = try LruSessionCache.init(allocator, null);
+            var key_log_file = try std.fs.Dir.createFile(
+                std.fs.cwd(),
+                client_key_log_filename,
+                .{},
+            );
+            defer key_log_file.close();
+            var key_logger = FileKeyLogger.init(key_log_file);
             var client_config = Conn.Config{
                 .max_version = .v1_3,
                 .insecure_skip_verify = true,
                 .cipher_suites = &default_cipher_suites_tls13,
                 .client_session_cache = cache,
+                .key_logger = key_logger.keyLogger(),
             };
             defer client_config.deinit(allocator);
             std.log.info("testClient client_config=0x{x}, session=0x{x}", .{
@@ -675,6 +706,13 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
             const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            var key_log_file = try std.fs.Dir.createFile(
+                std.fs.cwd(),
+                server_key_log_filename,
+                .{},
+            );
+            defer key_log_file.close();
+            var key_logger = FileKeyLogger.init(key_log_file);
             var server_config = blk: {
                 var certificates = try allocator.alloc(CertificateChain, 1);
                 errdefer allocator.free(certificates);
@@ -684,6 +722,7 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
                     .certificates = certificates,
                     .max_version = .v1_3,
                     .session_tickets_disabled = false,
+                    .key_logger = key_logger.keyLogger(),
                 };
             };
             defer server_config.deinit(allocator);

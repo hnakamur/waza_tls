@@ -33,6 +33,7 @@ const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const Conn = @import("conn.zig").Conn;
 const ClientHandshakeStateTls13 = @import("handshake_client_tls13.zig").ClientHandshakeStateTls13;
 const ClientSessionState = @import("session.zig").ClientSessionState;
+const KeyLog = @import("conn.zig").KeyLog;
 const crypto = @import("crypto.zig");
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
@@ -466,7 +467,12 @@ pub const ClientHandshakeStateTls12 = struct {
             .{std.fmt.fmtSliceHexLower(self.master_secret.?)},
         );
 
-        // TODO: implement write key log
+        try self.conn.config.writeKeyLog(
+            allocator,
+            KeyLog.label_tls12,
+            self.hello.random,
+            self.master_secret.?,
+        );
 
         self.finished_hash.?.discardHandshakeBuffer();
     }

@@ -41,6 +41,7 @@ const constantTimeEqlBytes = @import("constant_time.zig").constantTimeEqlBytes;
 const max_session_ticket_lifetime_seconds = @import("common.zig").max_session_ticket_lifetime_seconds;
 const Conn = @import("conn.zig").Conn;
 const downgrade_canary_tls12 = @import("conn.zig").downgrade_canary_tls12;
+const KeyLog = @import("conn.zig").KeyLog;
 const supported_signature_algorithms = @import("common.zig").supported_signature_algorithms;
 const ServerHandshakeStateTls13 = @import("handshake_server_tls13.zig").ServerHandshakeStateTls13;
 const decryptTicket = @import("ticket.zig").decryptTicket;
@@ -611,6 +612,12 @@ pub const ServerHandshakeStateTls12 = struct {
         std.log.debug(
             "ServerHandshakeStateTls12 master_secret={}",
             .{fmtx.fmtSliceHexEscapeLower(self.master_secret.?)},
+        );
+        try self.conn.config.writeKeyLog(
+            allocator,
+            KeyLog.label_tls12,
+            self.client_hello.random,
+            self.master_secret.?,
         );
 
         // If we received a client cert in response to our certificate request message,
