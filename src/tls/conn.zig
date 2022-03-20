@@ -575,7 +575,10 @@ pub const Conn = struct {
         }
 
         while (self.input.readableLength() == 0) {
-            try self.readRecord(self.allocator);
+            self.readRecord(self.allocator) catch |err| {
+                if (err == error.EndOfStream) return 0;
+                return err;
+            };
             while (self.handshake_bytes.len > 0) {
                 try self.handlePostHandshakeMessage(self.allocator);
             }
@@ -594,7 +597,10 @@ pub const Conn = struct {
             self.raw_input.items.len > 0 and
             @intToEnum(RecordType, self.raw_input.items[0]) == .alert)
         {
-            try self.readRecord(self.allocator);
+            self.readRecord(self.allocator) catch |err| {
+                if (err == error.EndOfStream) return 0;
+                return err;
+            };
         }
         return n;
     }
