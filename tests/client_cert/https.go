@@ -145,6 +145,7 @@ func runClient(args []string) error {
 	caFilename := fs.String("ca", "", "certificate authority filename")
 	reqCount := fs.Int("req-count", 1, "request count")
 	clientSessionCacheCapacity := fs.Int("client-session-cache-capacity", 0, "client session cache capacity (0=disabled)")
+	intRenegotiation := fs.Int("renegotiation", 0, "renegotiation, 0=never, 1=once, 2=freely")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -159,9 +160,23 @@ func runClient(args []string) error {
 		return fmt.Errorf("invalid max minor version: %d", *maxMinorVersion)
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+
+	var renegotiation tls.RenegotiationSupport
+	switch *intRenegotiation {
+	case 0:
+		renegotiation = tls.RenegotiateNever
+	case 1:
+		renegotiation = tls.RenegotiateOnceAsClient
+	case 2:
+		renegotiation = tls.RenegotiateFreelyAsClient
+	default:
+		return fmt.Errorf("invalid renegotiation value: %d", *intRenegotiation)
+	}
+
 	tr.TLSClientConfig = &tls.Config{
 		MaxVersion:         maxVersion,
 		InsecureSkipVerify: *skipVerifyCert,
+		Renegotiation:      renegotiation,
 	}
 	if *certFilename != "" && *keyFilename != "" {
 		cert, err := tls.LoadX509KeyPair(*certFilename, *keyFilename)

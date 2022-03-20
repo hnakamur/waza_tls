@@ -441,7 +441,7 @@ pub const ClientHandshakeStateTls13 = struct {
             "ClientHandshakeStateTls13.establishHandshakeKeys client_secret={}",
             .{std.fmt.fmtSliceHexLower(client_secret)},
         );
-        try self.conn.out.setTrafficSecret(allocator, self.suite.?, client_secret);
+        try self.conn.out.moveSetTrafficSecret(allocator, self.suite.?, client_secret);
         std.log.debug(
             "ClientHandshakeStateTls13.establishHandshakeKeys out.traffic_secret={}",
             .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
@@ -457,7 +457,7 @@ pub const ClientHandshakeStateTls13 = struct {
             "ClientHandshakeStateTls13.establishHandshakeKeys server_secret={}",
             .{std.fmt.fmtSliceHexLower(server_secret)},
         );
-        try self.conn.in.setTrafficSecret(allocator, self.suite.?, server_secret);
+        try self.conn.in.moveSetTrafficSecret(allocator, self.suite.?, server_secret);
         std.log.debug(
             "ClientHandshakeStateTls13.establishHandshakeKeys in.traffic_secret={}",
             .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
@@ -669,7 +669,7 @@ pub const ClientHandshakeStateTls13 = struct {
             "ClientHandshakeStateTls13.establishHandshakeKeys server_secret={}",
             .{std.fmt.fmtSliceHexLower(server_secret)},
         );
-        try self.conn.in.setTrafficSecret(allocator, self.suite.?, server_secret);
+        try self.conn.in.moveSetTrafficSecret(allocator, self.suite.?, server_secret);
         std.log.debug(
             "ClientHandshakeStateTls13.establishHandshakeKeys in.traffic_secret={}",
             .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
@@ -820,7 +820,7 @@ pub const ClientHandshakeStateTls13 = struct {
 
         const traffic_secret = try allocator.dupe(u8, self.traffic_secret);
         errdefer allocator.free(traffic_secret);
-        try self.conn.out.setTrafficSecret(allocator, self.suite.?, traffic_secret);
+        try self.conn.out.moveSetTrafficSecret(allocator, self.suite.?, traffic_secret);
 
         if (!self.conn.config.session_tickets_disabled and
             self.conn.config.client_session_cache != null)

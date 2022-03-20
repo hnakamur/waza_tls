@@ -91,6 +91,7 @@ pub const HandshakeMsg = union(MsgType) {
 
     pub fn deinit(self: *HandshakeMsg, allocator: mem.Allocator) void {
         switch (self.*) {
+            .hello_request => |*msg| msg.deinit(allocator),
             .client_hello => |*msg| msg.deinit(allocator),
             .server_hello => |*msg| msg.deinit(allocator),
             .new_session_ticket => |*msg| msg.deinit(allocator),
@@ -107,6 +108,7 @@ pub const HandshakeMsg = union(MsgType) {
 
     pub fn marshal(self: *HandshakeMsg, allocator: mem.Allocator) ![]const u8 {
         return try switch (self.*) {
+            .hello_request => |*msg| msg.marshal(allocator),
             .client_hello => |*msg| msg.marshal(allocator),
             .server_hello => |*msg| msg.marshal(allocator),
             .new_session_ticket => |*msg| msg.marshal(allocator),
@@ -138,6 +140,9 @@ pub const HandshakeMsg = union(MsgType) {
         const msg_type = @intToEnum(MsgType, data[0]);
         std.log.debug("HandshakeMsg.unmarshal msg_type={}", .{msg_type});
         switch (msg_type) {
+            .hello_request => return HandshakeMsg{
+                .hello_request = try HelloRequestMsg.unmarshal(allocator, msg_data),
+            },
             .client_hello => return HandshakeMsg{
                 .client_hello = try ClientHelloMsg.unmarshal(allocator, msg_data),
             },
@@ -181,7 +186,6 @@ pub const HandshakeMsg = union(MsgType) {
 
 pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
-const HelloRequestMsg = void;
 const EndOfEarlyDataMsg = void;
 const NextProtocolMsg = void;
 const MessageHashMsg = void;
@@ -2666,6 +2670,30 @@ pub const KeyUpdateMsg = struct {
 
         self.raw = raw;
         return raw;
+    }
+};
+
+pub const HelloRequestMsg = struct {
+    pub fn deinit(self: *HelloRequestMsg, allocator: mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+    ) !HelloRequestMsg {
+        _ = allocator;
+        if (msg_data.len != handshake_msg_header_len) {
+            return error.InvalidHelloRequestMsg;
+        }
+        return HelloRequestMsg{};
+    }
+
+    pub fn marshal(self: *KeyUpdateMsg, allocator: mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+        return &[_]u8{ MsgType.hello_request, 0, 0, 0 };
     }
 };
 

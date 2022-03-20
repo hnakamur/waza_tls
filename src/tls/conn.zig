@@ -155,6 +155,33 @@ pub const FileKeyLogger = struct {
     }
 };
 
+// RenegotiationSupport enumerates the different levels of support for TLS
+// renegotiation. TLS renegotiation is the act of performing subsequent
+// handshakes on a connection after the first. This significantly complicates
+// the state machine and has been the source of numerous, subtle security
+// issues. Initiating a renegotiation is not supported, but support for
+// accepting renegotiation requests may be enabled.
+//
+// Even when enabled, the server may not change its identity between handshakes
+// (i.e. the leaf certificate must be the same). Additionally, concurrent
+// handshake and application data flow is not permitted so renegotiation can
+// only be used with protocols that synchronise with the renegotiation, such as
+// HTTPS.
+//
+// Renegotiation is not defined in TLS 1.3.
+pub const RenegotiationSupport = enum {
+    // RenegotiateNever disables renegotiation.
+    never,
+
+    // RenegotiateOnceAsClient allows a remote server to request
+    // renegotiation once per connection.
+    once_as_client,
+
+    // RenegotiateFreelyAsClient allows a remote server to repeatedly
+    // request renegotiation.
+    freely_as_client,
+};
+
 // Currently Conn is not thread-safe.
 pub const Conn = struct {
     pub const Config = struct {
@@ -249,6 +276,10 @@ pub const Conn = struct {
         // be used. The client will use the first preference as the type for
         // its key share in TLS 1.3. This may change in the future.
         curve_preferences: []const CurveId = &default_curve_preferences,
+
+        // Renegotiation controls what types of renegotiation are supported.
+        // The default, none, is correct for the vast majority of applications.
+        renegotiation: RenegotiationSupport = .never,
 
         // session_ticket_keys contains zero or more ticket keys. If set, it means the
         // the keys were set with SessionTicketKey or SetSessionTicketKeys. The
@@ -592,9 +623,52 @@ pub const Conn = struct {
         }
     }
 
+    // handleRenegotiation processes a HelloRequest handshake message.
+    fn handleRenegotiation(self: *Conn, allocator: mem.Allocator) !void {
+        if (self.version.? == .v1_3) {
+            return error.TlsInternalErrorUnexpectedRenegotiation;
+        }
+
+        var hello_req = blk_hello_req: {
+            var hs_msg = try self.readHandshake(allocator);
+            switch (hs_msg) {
+                .hello_request => |msg| break :blk_hello_req msg,
+                else => {
+                    self.sendAlert(.unexpected_message) catch {};
+                    return error.UnexpectedMessage;
+                },
+            }
+        };
+        defer hello_req.deinit(allocator);
+
+        if (self.role != .client) {
+            try self.sendAlert(.no_renegotiation);
+        }
+
+        switch (self.config.renegotiation) {
+            .never => try self.sendAlert(.no_renegotiation),
+            .once_as_client => if (self.handshakes > 1) {
+                try self.sendAlert(.no_renegotiation);
+            },
+            .freely_as_client => {
+                // Ok.
+            },
+        }
+
+        // TODO: lock handshakeMutex
+
+        // TODO: set handshakeStatus
+        if (self.clientHandshake(allocator)) |_| {
+            self.handshakes += 1;
+        } else |err| {
+            return err;
+        }
+    }
+
     fn handlePostHandshakeMessage(self: *Conn, allocator: mem.Allocator) !void {
         if (self.version.? != .v1_3) {
-            @panic("not implemented yet");
+            try self.handleRenegotiation(allocator);
+            return;
         }
 
         var hs_msg = try self.readHandshake(allocator);
@@ -639,7 +713,7 @@ pub const Conn = struct {
             allocator,
             self.in.traffic_secret,
         );
-        try self.in.setTrafficSecret(allocator, cipher_suite.?, new_in_secret);
+        try self.in.moveSetTrafficSecret(allocator, cipher_suite.?, new_in_secret);
         std.log.info("handleKeyUpdate updated self.in.traffic_secret", .{});
 
         if (key_update.update_requested) {
@@ -658,7 +732,7 @@ pub const Conn = struct {
                 allocator,
                 self.out.traffic_secret,
             );
-            try self.out.setTrafficSecret(allocator, cipher_suite.?, new_out_secret);
+            try self.out.moveSetTrafficSecret(allocator, cipher_suite.?, new_out_secret);
             std.log.info("handleKeyUpdate updated self.out.traffic_secret", .{});
         }
     }
@@ -796,13 +870,15 @@ pub const Conn = struct {
             const client_hello_bytes = try client_hello.marshal(allocator);
             try self.writeRecord(allocator, .handshake, client_hello_bytes);
 
-            var hs_msg = try self.readHandshake(allocator);
-            var server_hello = switch (hs_msg) {
-                .server_hello => |sh| sh,
-                else => {
-                    self.sendAlert(.unexpected_message) catch {};
-                    return error.UnexpectedMessage;
-                },
+            var server_hello = blk_server_hello: {
+                var hs_msg = try self.readHandshake(allocator);
+                switch (hs_msg) {
+                    .server_hello => |sh| break :blk_server_hello sh,
+                    else => {
+                        self.sendAlert(.unexpected_message) catch {};
+                        return error.UnexpectedMessage;
+                    },
+                }
             };
             errdefer server_hello.deinit(allocator);
 
@@ -986,7 +1062,7 @@ pub const Conn = struct {
         };
 
         if (self.handshakes > 0) {
-            @panic("not implemented yet");
+            client_hello.secure_renegotiation = try allocator.dupe(u8, &self.client_finished);
         }
 
         if (client_hello.supported_versions[0] == .v1_3) {
@@ -1208,7 +1284,7 @@ pub const Conn = struct {
         var rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
-        std.log.debug(
+        std.log.info(
             "Conn.readRecordOrChangeCipherSpec self=0x{x}, rec_type={}, rec_ver={}, payload_len={}",
             .{ @ptrToInt(self), rec_type, rec_ver, payload_len },
         );
@@ -1274,10 +1350,10 @@ pub const Conn = struct {
             break :blk try self.in.decrypt(allocator, record.items, &rec_type);
         };
         defer allocator.free(data);
-        // std.log.debug(
-        //     "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}",
-        //     .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data) },
-        // );
+        std.log.info(
+            "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}, rec_type={}",
+            .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data), rec_type },
+        );
 
         if (self.in.cipher == null and rec_type == .application_data) {
             return error.UnexpectedMessage;
@@ -1297,6 +1373,7 @@ pub const Conn = struct {
         switch (rec_type) {
             .alert => {
                 if (data.len != 2) {
+                    std.log.warn("Conn.readRecordOrChangeCipherSpec unexpected alert data length={}", .{data.len});
                     self.sendAlert(.unexpected_message) catch |err| {
                         return self.in.setError(err);
                     };
@@ -2011,8 +2088,8 @@ const HalfConn = struct {
         mem.set(u8, &self.seq, 0);
     }
 
-    // ownership of secret will be moved to HalfConn even when setTrafficSecret returns an error.
-    pub fn setTrafficSecret(
+    // ownership of secret will be moved to HalfConn even when this method returns an error.
+    pub fn moveSetTrafficSecret(
         self: *HalfConn,
         allocator: mem.Allocator,
         suite: *const CipherSuiteTls13,
@@ -2020,6 +2097,7 @@ const HalfConn = struct {
     ) !void {
         allocator.free(self.traffic_secret);
         self.traffic_secret = secret;
+
         var key: []const u8 = undefined;
         var iv: []const u8 = undefined;
         try suite.trafficKey(allocator, secret, &key, &iv);

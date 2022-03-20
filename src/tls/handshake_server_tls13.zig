@@ -537,7 +537,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 "ServerHandshakeStateTls13.sendServerParameters client_secret={}",
                 .{std.fmt.fmtSliceHexLower(client_secret)},
             );
-            try self.conn.in.setTrafficSecret(allocator, self.suite.?, client_secret);
+            try self.conn.in.moveSetTrafficSecret(allocator, self.suite.?, client_secret);
             std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters in.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.in.traffic_secret)},
@@ -553,7 +553,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 "ServerHandshakeStateTls13.sendServerParameters server_secret={}",
                 .{std.fmt.fmtSliceHexLower(server_secret)},
             );
-            try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+            try self.conn.out.moveSetTrafficSecret(allocator, self.suite.?, server_secret);
             std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters out.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
@@ -794,7 +794,7 @@ pub const ServerHandshakeStateTls13 = struct {
                 "ServerHandshakeStateTls13.sendServerFinished server_secret={}",
                 .{std.fmt.fmtSliceHexLower(server_secret)},
             );
-            try self.conn.out.setTrafficSecret(allocator, self.suite.?, server_secret);
+            try self.conn.out.moveSetTrafficSecret(allocator, self.suite.?, server_secret);
             std.log.debug(
                 "ServerHandshakeStateTls13.sendServerFinished out.traffic_secret={}",
                 .{std.fmt.fmtSliceHexLower(self.conn.out.traffic_secret)},
@@ -1041,7 +1041,7 @@ pub const ServerHandshakeStateTls13 = struct {
 
         const traffic_secret = try allocator.dupe(u8, self.traffic_secret);
         errdefer allocator.free(traffic_secret);
-        try self.conn.in.setTrafficSecret(allocator, self.suite.?, traffic_secret);
+        try self.conn.in.moveSetTrafficSecret(allocator, self.suite.?, traffic_secret);
         std.log.info("ServerHandshakeStateTls13.readClientFinished exit", .{});
     }
 };
