@@ -437,7 +437,6 @@ pub const ClientHandshakeStateTls13 = struct {
             client_handshake_traffic_label,
             self.transcript,
         );
-        defer allocator.free(client_secret);
         std.log.debug(
             "ClientHandshakeStateTls13.establishHandshakeKeys client_secret={}",
             .{std.fmt.fmtSliceHexLower(client_secret)},
@@ -454,7 +453,6 @@ pub const ClientHandshakeStateTls13 = struct {
             server_handshake_traffic_label,
             self.transcript,
         );
-        defer allocator.free(server_secret);
         std.log.debug(
             "ClientHandshakeStateTls13.establishHandshakeKeys server_secret={}",
             .{std.fmt.fmtSliceHexLower(server_secret)},
@@ -667,7 +665,6 @@ pub const ClientHandshakeStateTls13 = struct {
             server_application_traffic_label,
             self.transcript,
         );
-        defer allocator.free(server_secret);
         std.log.debug(
             "ClientHandshakeStateTls13.establishHandshakeKeys server_secret={}",
             .{std.fmt.fmtSliceHexLower(server_secret)},
@@ -821,7 +818,9 @@ pub const ClientHandshakeStateTls13 = struct {
         self.transcript.update(finished_msg_bytes);
         try self.conn.writeRecord(allocator, .handshake, finished_msg_bytes);
 
-        try self.conn.out.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
+        const traffic_secret = try allocator.dupe(u8, self.traffic_secret);
+        errdefer allocator.free(traffic_secret);
+        try self.conn.out.setTrafficSecret(allocator, self.suite.?, traffic_secret);
 
         if (!self.conn.config.session_tickets_disabled and
             self.conn.config.client_session_cache != null)

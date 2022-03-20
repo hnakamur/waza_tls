@@ -100,8 +100,25 @@ pub const HandshakeMsg = union(MsgType) {
             .certificate_verify => |*msg| msg.deinit(allocator),
             .client_key_exchange => |*msg| msg.deinit(allocator),
             .finished => |*msg| msg.deinit(allocator),
+            .key_update => |*msg| msg.deinit(allocator),
             else => @panic("not implemented yet"),
         }
+    }
+
+    pub fn marshal(self: *HandshakeMsg, allocator: mem.Allocator) ![]const u8 {
+        return try switch (self.*) {
+            .client_hello => |*msg| msg.marshal(allocator),
+            .server_hello => |*msg| msg.marshal(allocator),
+            .new_session_ticket => |*msg| msg.marshal(allocator),
+            .certificate => |*msg| msg.marshal(allocator),
+            .server_key_exchange => |*msg| msg.marshal(allocator),
+            .server_hello_done => |*msg| msg.marshal(allocator),
+            .certificate_verify => |*msg| msg.marshal(allocator),
+            .client_key_exchange => |*msg| msg.marshal(allocator),
+            .finished => |*msg| msg.marshal(allocator),
+            .key_update => |*msg| msg.marshal(allocator),
+            else => @panic("not implemented yet"),
+        };
     }
 
     pub fn unmarshal(
@@ -154,6 +171,9 @@ pub const HandshakeMsg = union(MsgType) {
             .finished => return HandshakeMsg{
                 .finished = try FinishedMsg.unmarshal(allocator, msg_data),
             },
+            .key_update => return HandshakeMsg{
+                .key_update = try KeyUpdateMsg.unmarshal(allocator, msg_data),
+            },
             else => @panic("not implemented yet"),
         }
     }
@@ -163,7 +183,6 @@ pub const handshake_msg_header_len = enumTypeLen(MsgType) + intTypeLen(u24);
 
 const HelloRequestMsg = void;
 const EndOfEarlyDataMsg = void;
-const KeyUpdateMsg = void;
 const NextProtocolMsg = void;
 const MessageHashMsg = void;
 
@@ -906,7 +925,7 @@ pub const CertificateMsg = union(ProtocolVersion) {
         return switch (self.*) {
             .v1_3 => |*m| try m.marshal(allocator),
             .v1_2 => |*m| try m.marshal(allocator),
-            else => {},
+            else => @panic("unsupported TLS version"),
         };
     }
 };
@@ -2601,7 +2620,73 @@ pub const CertificateVerifyMsg = struct {
     }
 };
 
+pub const KeyUpdateMsg = struct {
+    raw: []const u8 = "",
+    update_requested: bool = false,
+
+    pub fn deinit(self: *KeyUpdateMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
+    }
+
+    fn unmarshal(
+        allocator: mem.Allocator,
+        msg_data: []const u8,
+    ) !KeyUpdateMsg {
+        var bv: BytesView = undefined;
+        const raw = try allocator.dupe(u8, msg_data);
+        errdefer allocator.free(raw);
+        bv = BytesView.init(raw);
+        bv.skip(handshake_msg_header_len);
+
+        const update_requested = try bv.readByte();
+        if (!bv.empty() or (update_requested != 0 and update_requested != 1)) {
+            return error.InvalidKeyUpdateMsg;
+        }
+
+        return KeyUpdateMsg{
+            .raw = raw,
+            .update_requested = (update_requested == 1),
+        };
+    }
+
+    pub fn marshal(self: *KeyUpdateMsg, allocator: mem.Allocator) ![]const u8 {
+        if (self.raw.len > 0) {
+            return self.raw;
+        }
+
+        const msg_len: usize = u8_size + u24_size + u8_size;
+        var raw = try allocator.alloc(u8, msg_len);
+        errdefer allocator.free(raw);
+
+        var fbs = io.fixedBufferStream(raw);
+        var writer = fbs.writer();
+        try writeInt(u8, MsgType.key_update, writer);
+        try writeInt(u24, 1, writer);
+        try writeInt(u8, @as(u8, if (self.update_requested) 1 else 0), writer);
+
+        self.raw = raw;
+        return raw;
+    }
+};
+
 const testing = std.testing;
+
+test "KeyUpdateMsg.marshal" {
+    testing.log_level = .err;
+    const allocator = testing.allocator;
+
+    var msg = KeyUpdateMsg{ .update_requested = true };
+    const got = try msg.marshal(allocator);
+    defer allocator.free(got);
+
+    const want = "\x18\x00\x00\x01\x01";
+    try testing.expectEqualSlices(u8, want, got);
+
+    var msg2 = try KeyUpdateMsg.unmarshal(allocator, want);
+    defer msg2.deinit(allocator);
+
+    try testing.expectEqual(msg.update_requested, msg2.update_requested);
+}
 
 test "ClientHelloMsg.marshal" {
     const allocator = testing.allocator;

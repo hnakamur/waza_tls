@@ -7,6 +7,7 @@ const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const KeyAgreement = @import("key_agreement.zig").KeyAgreement;
 const RsaKeyAgreement = @import("key_agreement.zig").RsaKeyAgreement;
 const EcdheKeyAgreement = @import("key_agreement.zig").EcdheKeyAgreement;
+const traffic_update_label = @import("key_schedule.zig").traffic_update_label;
 const HashType = @import("auth.zig").HashType;
 const crypto = @import("crypto.zig");
 const hkdf = @import("hkdf.zig");
@@ -168,6 +169,22 @@ pub const CipherSuiteTls13 = struct {
         defer if (new_secret == null) allocator.free(new_secret2);
 
         return try hkdf.extract(self.hash_type, allocator, new_secret2, current_secret);
+    }
+
+    // nextTrafficSecret generates the next traffic secret, given the current one,
+    // according to RFC 8446, Section 7.2.
+    pub fn nextTrafficSecret(
+        self: *const CipherSuiteTls13,
+        allocator: mem.Allocator,
+        traffic_secret: []const u8,
+    ) ![]const u8 {
+        return try self.expandLabel(
+            allocator,
+            traffic_secret,
+            traffic_update_label,
+            "",
+            @intCast(u16, self.hash_type.digestLength()),
+        );
     }
 
     // trafficKey generates traffic keys according to RFC 8446, Section 7.3.

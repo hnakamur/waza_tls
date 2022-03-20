@@ -533,7 +533,6 @@ pub const ServerHandshakeStateTls13 = struct {
                 client_handshake_traffic_label,
                 self.transcript,
             );
-            defer allocator.free(client_secret);
             std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters client_secret={}",
                 .{std.fmt.fmtSliceHexLower(client_secret)},
@@ -550,7 +549,6 @@ pub const ServerHandshakeStateTls13 = struct {
                 server_handshake_traffic_label,
                 self.transcript,
             );
-            defer allocator.free(server_secret);
             std.log.debug(
                 "ServerHandshakeStateTls13.sendServerParameters server_secret={}",
                 .{std.fmt.fmtSliceHexLower(server_secret)},
@@ -792,7 +790,6 @@ pub const ServerHandshakeStateTls13 = struct {
                 server_application_traffic_label,
                 self.transcript,
             );
-            defer allocator.free(server_secret);
             std.log.debug(
                 "ServerHandshakeStateTls13.sendServerFinished server_secret={}",
                 .{std.fmt.fmtSliceHexLower(server_secret)},
@@ -1042,7 +1039,9 @@ pub const ServerHandshakeStateTls13 = struct {
             return error.InvalidClientFinishedHash;
         }
 
-        try self.conn.in.setTrafficSecret(allocator, self.suite.?, self.traffic_secret);
+        const traffic_secret = try allocator.dupe(u8, self.traffic_secret);
+        errdefer allocator.free(traffic_secret);
+        try self.conn.in.setTrafficSecret(allocator, self.suite.?, traffic_secret);
         std.log.info("ServerHandshakeStateTls13.readClientFinished exit", .{});
     }
 };

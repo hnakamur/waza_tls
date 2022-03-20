@@ -19,6 +19,7 @@ const CurveId = @import("handshake_msg.zig").CurveId;
 const EcPointFormat = @import("handshake_msg.zig").EcPointFormat;
 const HandshakeMsg = @import("handshake_msg.zig").HandshakeMsg;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
+const KeyUpdateMsg = @import("handshake_msg.zig").KeyUpdateMsg;
 const KeyShare = @import("handshake_msg.zig").KeyShare;
 const PskMode = @import("handshake_msg.zig").PskMode;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
@@ -142,7 +143,7 @@ pub const FileKeyLogger = struct {
     file: std.fs.File,
 
     pub fn init(file: std.fs.File) Self {
-        return .{.file = file};
+        return .{ .file = file };
     }
 
     pub fn keyLogger(self: *Self) KeyLogger {
@@ -611,11 +612,54 @@ pub const Conn = struct {
                     else => @panic("unsupported tls version"),
                 }
             },
-            .key_update => @panic("not implemented yet"),
+            .key_update => |*msg| try self.handleKeyUpdate(allocator, msg),
             else => {
                 self.sendAlert(.unexpected_message) catch {};
                 return error.TlsUnexpectedHandshakeMessageType;
             },
+        }
+    }
+
+    fn handleKeyUpdate(
+        self: *Conn,
+        allocator: mem.Allocator,
+        key_update: *KeyUpdateMsg,
+    ) !void {
+        std.log.info("handleKeyUpdate.start, updated_requested={}", .{key_update.update_requested});
+        const cipher_suite = cipherSuiteTls13ById(self.cipher_suite_id.?);
+        if (cipher_suite == null) {
+            std.log.info("handleKeyUpdate no cipher_suite found for id", .{});
+            self.sendAlert(.internal_error) catch |err| {
+                self.in.setError(err) catch {};
+                return err;
+            };
+        }
+
+        const new_in_secret = try cipher_suite.?.nextTrafficSecret(
+            allocator,
+            self.in.traffic_secret,
+        );
+        try self.in.setTrafficSecret(allocator, cipher_suite.?, new_in_secret);
+        std.log.info("handleKeyUpdate updated self.in.traffic_secret", .{});
+
+        if (key_update.update_requested) {
+            // TODO: lock self.out
+
+            var msg = KeyUpdateMsg{};
+            defer msg.deinit(allocator);
+            self.writeRecord(allocator, .handshake, try msg.marshal(allocator)) catch |err| {
+                std.log.info("handleKeyUpdate failed to write KeyUpdateMsg", .{});
+                // Surface the error at the next write.
+                self.out.setError(err) catch {};
+                return;
+            };
+
+            const new_out_secret = try cipher_suite.?.nextTrafficSecret(
+                allocator,
+                self.out.traffic_secret,
+            );
+            try self.out.setTrafficSecret(allocator, cipher_suite.?, new_out_secret);
+            std.log.info("handleKeyUpdate updated self.out.traffic_secret", .{});
         }
     }
 
@@ -1967,14 +2011,15 @@ const HalfConn = struct {
         mem.set(u8, &self.seq, 0);
     }
 
+    // ownership of secret will be moved to HalfConn even when setTrafficSecret returns an error.
     pub fn setTrafficSecret(
         self: *HalfConn,
         allocator: mem.Allocator,
         suite: *const CipherSuiteTls13,
         secret: []const u8,
     ) !void {
-        if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
-        self.traffic_secret = try allocator.dupe(u8, secret);
+        allocator.free(self.traffic_secret);
+        self.traffic_secret = secret;
         var key: []const u8 = undefined;
         var iv: []const u8 = undefined;
         try suite.trafficKey(allocator, secret, &key, &iv);
@@ -2000,6 +2045,7 @@ const HalfConn = struct {
     }
 
     fn setError(self: *HalfConn, err: anyerror) !void {
+        // TODO: set PermanentError if net error
         self.err = err;
         return err;
     }

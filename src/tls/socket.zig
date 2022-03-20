@@ -846,7 +846,7 @@ test "ClientServer_tls13_p256_client_certificate" {
 }
 
 test "ServerOnly_tls13_p256" {
-    if (true) return error.SkipZigTest;
+    // if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
@@ -911,7 +911,48 @@ test "ServerOnly_tls13_p256" {
 
 const skip_communicate_to_outside = false;
 
-test "Connect to localhost TLS 1.3" {
+test "Connect to localhost TLS 1.3 skip_verify" {
+    if (skip_communicate_to_outside) return error.SkipZigTest;
+
+    const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
+
+    testing.log_level = .info;
+
+    try struct {
+        fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
+            var client_config = Conn.Config{
+                .max_version = .v1_3,
+                .server_name = "naruh.dev",
+                .insecure_skip_verify = true,
+            };
+            defer client_config.deinit(allocator);
+
+            var client = try Client.init(allocator, addr, &client_config);
+            defer client.deinit(allocator);
+            defer client.close() catch {};
+
+            std.log.debug(
+                "testClient &client.conn=0x{x} &client.conn.in=0x{x}, &client.conn.out=0x{x}",
+                .{ @ptrToInt(&client.conn), @ptrToInt(&client.conn.in), @ptrToInt(&client.conn.out) },
+            );
+            _ = try client.conn.write("GET / HTTP/1.1\r\nHost: naruh.dev\r\n\r\n");
+
+            var buffer = [_]u8{0} ** 1024;
+            const n = try client.conn.read(&buffer);
+            try testing.expectEqual(@as(?ProtocolVersion, .v1_3), client.conn.version);
+            std.log.debug("response:\n{s}", .{buffer[0..n]});
+            try testing.expect(mem.startsWith(u8, buffer[0..n], "HTTP/1.1 200 OK\r\n"));
+        }
+
+        fn runTest() !void {
+            const allocator = testing.allocator;
+            const addr = try std.net.Address.parseIp("127.0.0.1", 8443);
+            try testClient(addr, allocator);
+        }
+    }.runTest();
+}
+
+test "Connect to localhost TLS 1.3 one request" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
