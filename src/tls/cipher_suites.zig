@@ -1214,7 +1214,7 @@ test "AeadXorNonceAeadChaCha20Poly1305" {
 }
 
 test "tls_aes_128_gcm_sha256" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
     var suite = cipherSuiteTls13ById(.tls_aes_128_gcm_sha256).?;

@@ -343,7 +343,7 @@ test "Hash.Sha384" {
 }
 
 test "PrivateKey.sign" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const allocator = testing.allocator;

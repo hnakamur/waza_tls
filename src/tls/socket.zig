@@ -74,7 +74,7 @@ test "ClientServer_tls12_rsa2048" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .warn;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -242,7 +242,7 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
     const LruSessionCache = @import("session.zig").LruSessionCache;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -355,7 +355,7 @@ test "ClientServer_tls12_p256_client_certificate" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -459,7 +459,7 @@ test "ClientServer_tls13_rsa2048" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -544,7 +544,7 @@ test "ClientServer_tls13_p256_no_client_certificate_one_request" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -632,7 +632,7 @@ test "ClientServer_tls13_p256_no_client_certificate_two_requests" {
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
     const LruSessionCache = @import("session.zig").LruSessionCache;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -748,7 +748,7 @@ test "ClientServer_tls13_p256_client_certificate" {
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -846,13 +846,13 @@ test "ClientServer_tls13_p256_client_certificate" {
 }
 
 test "ServerOnly_tls13_p256" {
-    // if (true) return error.SkipZigTest;
+    if (true) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
     const CertificateChain = @import("certificate_chain.zig").CertificateChain;
     const x509KeyPair = @import("certificate_chain.zig").x509KeyPair;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testServer(server: *Server) !void {
@@ -909,14 +909,14 @@ test "ServerOnly_tls13_p256" {
     }.runTest();
 }
 
-const skip_communicate_to_outside = false;
+const skip_communicate_to_outside = true;
 
 test "Connect to localhost TLS 1.3 skip_verify" {
     if (skip_communicate_to_outside) return error.SkipZigTest;
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -957,7 +957,7 @@ test "Connect to localhost TLS 1.3 one request" {
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .info;
+    testing.log_level = .err;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {
@@ -998,7 +998,7 @@ test "Connect to localhost TLS 1.2 skip_verify" {
 
     const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     try struct {
         fn testClient(addr: net.Address, allocator: mem.Allocator) !void {

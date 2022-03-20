@@ -258,7 +258,7 @@ pub const LruSessionCache = struct {
 const testing = std.testing;
 
 test "ClientSessionState" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     var s = ClientSessionState{
         .ver = .v1_3,
@@ -270,7 +270,7 @@ test "ClientSessionState" {
 }
 
 test "LruSessionCache" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     var cache = try LruSessionCache.init(allocator, 2);
     defer cache.deinit();

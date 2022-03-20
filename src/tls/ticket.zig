@@ -243,7 +243,7 @@ pub fn decryptTicket(
 const testing = std.testing;
 
 test "SessionStateTls12.marshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const state = SessionStateTls12{
@@ -277,7 +277,7 @@ test "SessionStateTls12.marshal" {
 }
 
 test "SessionStateTls13.unmarshal" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const plaintext = "\x03\x04\x00\x13\x01\x00\x00\x00\x00\x62\x2c\x8f\xe0\x20\x45\x1f\x6c\x6e\xaf\xe7\xd0\x59\x41\x17\xeb\xdc\x50\x3f\xed\x57\x01\xec\xc9\xab\xd5\xed\x63\xa1\xea\xdb\xa6\x79\xd0\x63\xa9\x01\x00\x00\x00";
@@ -291,7 +291,7 @@ test "SessionStateTls13.unmarshal" {
 }
 
 test "encryptTicket" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
@@ -313,7 +313,7 @@ test "encryptTicket" {
 }
 
 test "decryptTicket" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const ticket_keys = &[_]TicketKey{.{

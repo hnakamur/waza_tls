@@ -494,7 +494,7 @@ pub const Conn = struct {
     packets_sent: usize = 0,
     bytes_sent: usize = 0,
     handshake_complete: bool = false,
-    raw_input: io.BufferedReader(4096, net.Stream.Reader),
+    raw_input: std.ArrayListUnmanaged(u8) = .{},
     input: FifoType = FifoType.init(),
     retry_count: usize = 0,
     handshake_bytes: []const u8 = "",
@@ -535,26 +535,26 @@ pub const Conn = struct {
             .stream = stream,
             .in = in,
             .out = out,
-            .raw_input = io.bufferedReader(stream.reader()),
             .config = config,
         };
     }
 
     pub fn deinit(self: *Conn, allocator: mem.Allocator) void {
         self.send_buf.deinit(allocator);
-        if (self.ocsp_response.len > 0) allocator.free(self.ocsp_response);
-        if (self.scts.len > 0) memx.freeElemsAndFreeSlice([]const u8, self.scts, allocator);
-        if (self.server_name.len > 0) allocator.free(self.server_name);
-        if (self.handshake_bytes.len > 0) allocator.free(self.handshake_bytes);
+        allocator.free(self.ocsp_response);
+        memx.freeElemsAndFreeSlice([]const u8, self.scts, allocator);
+        allocator.free(self.server_name);
+        allocator.free(self.handshake_bytes);
         if (self.handshake_state) |*hs| hs.deinit(allocator);
-        if (self.client_protocol.len > 0) allocator.free(self.client_protocol);
+        allocator.free(self.client_protocol);
         memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
         x509.Certificate.deinitChains(self.verified_chains, allocator);
-        if (self.resumption_secret.len > 0) allocator.free(self.resumption_secret);
+        allocator.free(self.resumption_secret);
 
         allocator.free(self.ticket_keys);
         self.in.deinit(allocator);
         self.out.deinit(allocator);
+        self.raw_input.deinit(allocator);
     }
 
     pub fn write(self: *Conn, bytes: []const u8) !usize {
@@ -591,8 +591,8 @@ pub const Conn = struct {
         // have already tried to reuse the HTTP connection for a new request.
         // See https://golang.org/cl/76400046 and https://golang.org/issue/3514
         if (n > 0 and self.input.readableLength() == 0 and
-            self.raw_input.fifo.readableLength() > 0 and
-            @intToEnum(RecordType, self.raw_input.fifo.readableSlice(0)[0]) == .alert)
+            self.raw_input.items.len > 0 and
+            @intToEnum(RecordType, self.raw_input.items[0]) == .alert)
         {
             try self.readRecord(self.allocator);
         }
@@ -1253,33 +1253,90 @@ pub const Conn = struct {
         try self.readRecordOrChangeCipherSpec(allocator, true);
     }
 
+    // readFromUntil reads from r into self.raw_input until self.raw_input contains
+    // at least n bytes or else returns an error.
+    fn readFromUntil(
+        self: *Conn,
+        allocator: mem.Allocator,
+        reader: anytype,
+        n: usize,
+    ) !void {
+        if (self.raw_input.items.len >= n) {
+            return;
+        }
+        const needs = n - self.raw_input.items.len;
+        std.log.debug("readFromUntil conn=0x{x}, needs={}", .{ @ptrToInt(self), needs });
+        // There might be extra input waiting on the wire. Make a best effort
+        // attempt to fetch it so that it can be used in (*Conn).Read to
+        // "predict" closeNotify alerts.
+        try self.raw_input.ensureUnusedCapacity(allocator, needs + min_read);
+        var at_least_reader = atLeastReader(reader, needs);
+        std.log.debug(
+            "readFromUntil conn=0x{x}, raw_input=0x{x}",
+            .{ @ptrToInt(self), @ptrToInt(&self.raw_input) },
+        );
+        try readAllToArrayList(allocator, &at_least_reader, &self.raw_input);
+    }
+
     pub fn readRecordOrChangeCipherSpec(
         self: *Conn,
         allocator: mem.Allocator,
         expect_change_cipher_spec: bool,
     ) anyerror!void {
+        std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec start, self=0x{x}, self.raw_input.items.len={}",
+            .{ @ptrToInt(self), self.raw_input.items.len },
+        );
+        defer std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec exit, self=0x{x}, self.raw_input.items.len={}",
+            .{ @ptrToInt(self), self.raw_input.items.len },
+        );
         if (self.in.err) |err| {
+            std.log.debug(
+                "Conn.readRecordOrChangeCipherSpec early exit#1, self=0x{x}, err={s}",
+                .{ @ptrToInt(self), @errorName(err) },
+            );
             return err;
         }
         const handshake_complete = self.handshake_complete;
         if (self.input.readableLength() != 0) {
+            std.log.debug(
+                "Conn.readRecordOrChangeCipherSpec early exit#2, self=0x{x}",
+                .{@ptrToInt(self)},
+            );
             return error.InternalError;
         }
-        var record = try std.ArrayListUnmanaged(u8).initCapacity(allocator, record_header_len);
-        defer record.deinit(allocator);
 
-        record.expandToCapacity();
-        const header_bytes_read = try self.raw_input.reader().readAll(record.items);
-        if (header_bytes_read == 0) {
+        self.readFromUntil(
+            allocator,
+            self.stream.reader(),
+            record_header_len,
+        ) catch |err| {
             // RFC 8446, Section 6.1 suggests that EOF without an alertCloseNotify
             // is an error, but popular web sites seem to do this, so we accept it
             // if and only if at the record boundary.
-            return error.EndOfStream;
-        } else if (header_bytes_read < record_header_len) {
-            return error.UnexpectedEof;
-        }
+            if (err == error.UnexpectedEof and self.raw_input.items.len == 0) {
+                std.log.debug(
+                    "Conn.readRecordOrChangeCipherSpec early exit#3, self=0x{x}",
+                    .{@ptrToInt(self)},
+                );
+                return error.EndOfStream;
+            }
 
-        var fbs = io.fixedBufferStream(record.items);
+            // TODO: only set error to self.in if needed
+            self.in.setError(err) catch {};
+            std.log.debug(
+                "Conn.readRecordOrChangeCipherSpec early exit#4, self=0x{x}, err={s}",
+                .{ @ptrToInt(self), @errorName(err) },
+            );
+            return err;
+        };
+        std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec after readFromUntil reader_header_len, self=0x{x}, self.raw_input.items.len={}",
+            .{ @ptrToInt(self), self.raw_input.items.len },
+        );
+
+        var fbs = io.fixedBufferStream(self.raw_input.items);
         var r = fbs.reader();
         var rec_type = try r.readEnum(RecordType, .Big);
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
@@ -1291,6 +1348,10 @@ pub const Conn = struct {
         if (self.version) |con_ver| {
             if (con_ver != .v1_3 and con_ver != rec_ver) {
                 self.sendAlert(.protocol_version) catch {};
+                std.log.debug(
+                    "Conn.readRecordOrChangeCipherSpec early exit#5, self=0x{x}",
+                    .{@ptrToInt(self)},
+                );
                 return error.InvalidRecordHeader;
             }
         } else {
@@ -1311,43 +1372,29 @@ pub const Conn = struct {
             max_ciphertext;
         if (payload_len > max_payload_len) {
             self.sendAlert(.record_overflow) catch {};
-            return error.InvalidRecordHeader;
+            const err = error.OversizedRecord;
+            self.in.setError(err) catch {};
+            return err;
         }
 
-        // std.log.debug(
-        //     "Conn.readRecordOrChangeCipherSpec self=0x{x}, before get data",
-        //     .{@ptrToInt(self)},
-        // );
+        const record_len = record_header_len + payload_len;
+        self.readFromUntil(allocator, self.stream.reader(), record_len) catch |err| {
+            // TODO: only set error to self.in if needed
+            self.in.setError(err) catch {};
+            return err;
+        };
+        std.log.debug(
+            "Conn.readRecordOrChangeCipherSpec self=0x{x}, after readFromUntil record_len={}, self.raw_input.items.len={}",
+            .{ @ptrToInt(self), record_len, self.raw_input.items.len },
+        );
         var data = blk: {
-            try record.resize(allocator, record_header_len + payload_len);
-            const payload_bytes_read = try self.raw_input.reader().readAll(
-                record.items[record_header_len..],
-            );
-            if (payload_bytes_read < payload_len) {
-                return error.UnexpectedEof;
-            }
+            defer discardBytesOfArrayList(&self.raw_input, record_len);
+            const record = self.raw_input.items[0..record_len];
             std.log.debug(
-                "before in.decrpyt, record.items={}, rec_type={}",
-                .{ std.fmt.fmtSliceHexLower(record.items), rec_type },
+                "Conn.readRecordOrChangeCipherSpec self=0x{x}, record={}",
+                .{ @ptrToInt(self), std.fmt.fmtSliceHexLower(record) },
             );
-            if (rec_type == .alert) {
-                if (payload_len < 2) {
-                    std.log.warn(
-                        "Invalid payload length for receiving alert, length={}",
-                        .{payload_len},
-                    );
-                    return error.InvalidAlertReceived;
-                }
-                const level = @intToEnum(AlertLevel, record.items[record_header_len]);
-                const desc = @intToEnum(AlertDescription, record.items[record_header_len + 1]);
-                std.log.warn(
-                    "Received alert, level={}, desc={}, payload_len={}",
-                    .{ level, desc, payload_len },
-                );
-                return error.ReceivedAlert;
-            }
-
-            break :blk try self.in.decrypt(allocator, record.items, &rec_type);
+            break :blk try self.in.decrypt(allocator, record, &rec_type);
         };
         defer allocator.free(data);
         std.log.info(
@@ -1459,6 +1506,10 @@ pub const Conn = struct {
                 self.handshake_bytes = data;
                 data = "";
             },
+            else => std.log.warn(
+                "tls.Conn.readRecordOrChangeCipherSpec got unsupported record type={}",
+                .{rec_type},
+            ),
         }
     }
 
@@ -1835,6 +1886,42 @@ pub const Conn = struct {
     }
 };
 
+const min_read = 512;
+
+fn readAllToArrayList(
+    allocator: mem.Allocator,
+    src_reader: anytype,
+    dest: *std.ArrayListUnmanaged(u8),
+) !void {
+    std.log.debug("readAllToArrayList start dest=0x{x}", .{@ptrToInt(dest)});
+    while (true) {
+        try dest.ensureUnusedCapacity(allocator, min_read);
+        const old_len = dest.items.len;
+        var buf: []u8 = undefined;
+        buf.ptr = dest.items.ptr;
+        buf.len = dest.capacity;
+        std.log.debug(
+            "readAllToArrayList dest=0x{x}, old_len={}, buf.len={}",
+            .{ @ptrToInt(dest), old_len, buf.len },
+        );
+        const bytes_read = try src_reader.read(buf[old_len..]);
+        std.log.debug(
+            "readAllToArrayList dest=0x{x}, bytes_read={}",
+            .{ @ptrToInt(dest), bytes_read },
+        );
+        dest.items.len += bytes_read;
+        if (bytes_read == 0) {
+            return;
+        }
+    }
+}
+
+fn discardBytesOfArrayList(list: *std.ArrayListUnmanaged(u8), n: usize) void {
+    const rest_len = list.items.len - n;
+    std.mem.copy(u8, list.items, list.items[n..]);
+    list.items.len = rest_len;
+}
+
 fn clientSessionCacheKey(
     allocator: mem.Allocator,
     server_address: net.Address,
@@ -2144,10 +2231,13 @@ fn supportedVersionsFromMax(max_version: ProtocolVersion) []const ProtocolVersio
     return supported_versions[i..];
 }
 
+// AtLeastReader reads from inner_reader, stopping with EOF once at least n bytes have been
+// read. It is different from an io.LimitedReader in that it doesn't cut short
+// the last Read call, and in that it considers an early EOF an error.
 pub fn AtLeastReader(comptime ReaderType: type) type {
     return struct {
         inner_reader: ReaderType,
-        bytes_left: u64,
+        n: usize,
 
         pub const Error = error{UnexpectedEof} || ReaderType.Error;
         pub const Reader = io.Reader(*Self, Error, read);
@@ -2157,16 +2247,18 @@ pub fn AtLeastReader(comptime ReaderType: type) type {
         /// Returns the number of bytes read. It may be less than dest.len.
         /// If the number of bytes read is 0, it means end of stream.
         /// End of stream is not an error condition.
-        /// If the number of bytes read from inner_reader is 0 and bytes_left
+        /// If the number of bytes read from inner_reader is 0 and self.n
         /// is greater than 0, it returns error.UnexpectedEof.
         pub fn read(self: *Self, dest: []u8) Error!usize {
-            const max_read = std.math.min(self.bytes_left, dest.len);
-            const n = try self.inner_reader.read(dest[0..max_read]);
-            self.bytes_left -= n;
-            if (n == 0 and self.bytes_left > 0) {
+            if (self.n == 0) {
+                return 0;   
+            }
+            const bytes_read = try self.inner_reader.read(dest);
+            self.n -= std.math.min(self.n, bytes_read);
+            if (bytes_read == 0 and self.n > 0) {
                 return error.UnexpectedEof;
             }
-            return n;
+            return bytes_read;
         }
 
         pub fn reader(self: *Self) Reader {
@@ -2176,9 +2268,8 @@ pub fn AtLeastReader(comptime ReaderType: type) type {
 }
 
 /// Returns an initialised `AtLeastReader`
-/// `bytes_left` is a `u64` to be able to take 64 bit file offsets
-pub fn atLeastReader(inner_reader: anytype, bytes_left: u64) AtLeastReader(@TypeOf(inner_reader)) {
-    return .{ .inner_reader = inner_reader, .bytes_left = bytes_left };
+pub fn atLeastReader(inner_reader: anytype, n: usize) AtLeastReader(@TypeOf(inner_reader)) {
+    return .{ .inner_reader = inner_reader, .n = n };
 }
 
 // hostnameInSni converts name into an appropriate hostname for SNI.
@@ -2259,6 +2350,14 @@ test "atLeastReader" {
         try testing.expectEqual(buf.len, try reader.read(&buf));
         try testing.expectEqual(input.len - buf.len, try reader.read(&buf));
         try testing.expectError(error.UnexpectedEof, reader.read(&buf));
+    }
+    {
+        const input = "hello";
+        var fbs = io.fixedBufferStream(input);
+        var reader = atLeastReader(fbs.reader(), 3);
+        var buf = [_]u8{0} ** 4;
+        try testing.expectEqual(buf.len, try reader.read(&buf));
+        try testing.expectEqual(@as(usize, 0), try reader.read(&buf));
     }
 }
 

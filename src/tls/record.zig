@@ -3,4 +3,5 @@ pub const RecordType = enum(u8) {
     alert = 21,
     handshake = 22,
     application_data = 23,
+    _,
 };

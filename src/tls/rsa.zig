@@ -561,7 +561,7 @@ fn emsaPssEncode(
 }
 
 test "emsaPssEncode" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const m_hash = "\x7f\xdd\xeb\x8d\x8a\x9e\x4c\x5e\x2e\x7e\x8c\x13\x5a\xb8\xf8\xb6\x19\xba\x21\xae\xb5\x2d\x61\xba\x85\xeb\x1e\x29\x28\x32\xe6\x81";
     const em_bits = 2047;
@@ -766,7 +766,7 @@ fn emsaPssVerify(
 const testing = std.testing;
 
 test "rsa.signPss and verifyPss" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
 
     const RandomForTest = @import("random_for_test.zig").RandomForTest;

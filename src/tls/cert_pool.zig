@@ -171,7 +171,7 @@ pub const CertPool = struct {
 const testing = std.testing;
 
 test "CertPool" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
 
     const allocator = testing.allocator;
 

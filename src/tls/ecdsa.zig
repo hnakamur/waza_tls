@@ -611,7 +611,7 @@ pub fn verifyGeneric(
 const testing = std.testing;
 
 test "ecdsa.PrivateKey.sign" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const RandomForTest = @import("random_for_test.zig").RandomForTest;
     const initial = [_]u8{0} ** 48;
@@ -800,7 +800,7 @@ test "ecdsa.hashToInt" {
 }
 
 test "ecdsa.PrivateKey.parseAsn1" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
     var offset: usize = 0;
