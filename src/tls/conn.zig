@@ -498,7 +498,6 @@ pub const Conn = struct {
     input: FifoType = FifoType.init(),
     retry_count: usize = 0,
     handshake_bytes: []const u8 = "",
-    handshake_state: ?HandshakeState = null,
     client_protocol: []const u8 = "",
     close_notify_sent: bool = false,
     close_notify_err: ?anyerror = null,
@@ -545,7 +544,6 @@ pub const Conn = struct {
         memx.freeElemsAndFreeSlice([]const u8, self.scts, allocator);
         allocator.free(self.server_name);
         allocator.free(self.handshake_bytes);
-        if (self.handshake_state) |*hs| hs.deinit(allocator);
         allocator.free(self.client_protocol);
         memx.deinitSliceAndElems(x509.Certificate, self.peer_certificates, allocator);
         x509.Certificate.deinitChains(self.verified_chains, allocator);
@@ -854,9 +852,13 @@ pub const Conn = struct {
     }
 
     pub fn clientHandshake(self: *Conn, allocator: mem.Allocator) !void {
+        // This may be a renegotiation handshake, in which case some fields
+        // need to be reset.
+        self.did_resume = false;
+
         var load_result: ?LoadSessionResult = null;
         defer if (load_result) |*res| res.deinit(allocator);
-        self.handshake_state = blk: {
+        var handshake_state = blk: {
             var ecdhe_params: ?EcdheParameters = null;
             errdefer if (ecdhe_params) |*params| params.deinit(allocator);
             var client_hello = try self.makeClientHello(allocator, &ecdhe_params);
@@ -914,51 +916,51 @@ pub const Conn = struct {
                 const binder_key = try allocator.dupe(u8, load_result.?.binder_key);
                 errdefer allocator.free(binder_key);
 
-                break :blk HandshakeState{
-                    .client = ClientHandshakeState{
-                        .v1_3 = ClientHandshakeStateTls13{
-                            .hello = client_hello,
-                            .server_hello = server_hello,
-                            .conn = self,
-                            .ecdhe_params = ecdhe_params.?,
-                            .session = load_result.?.session,
-                            .early_secret = early_secret,
-                            .binder_key = binder_key,
-                        },
+                break :blk ClientHandshakeState{
+                    .v1_3 = ClientHandshakeStateTls13{
+                        .hello = client_hello,
+                        .server_hello = server_hello,
+                        .conn = self,
+                        .ecdhe_params = ecdhe_params.?,
+                        .session = load_result.?.session,
+                        .early_secret = early_secret,
+                        .binder_key = binder_key,
                     },
                 };
             }
 
-            break :blk HandshakeState{
-                .client = ClientHandshakeState{
-                    .v1_2 = ClientHandshakeStateTls12{
-                        .hello = client_hello,
-                        .server_hello = server_hello,
-                        .conn = self,
-                        .session = load_result.?.session,
-                    },
+            break :blk ClientHandshakeState{
+                .v1_2 = ClientHandshakeStateTls12{
+                    .hello = client_hello,
+                    .server_hello = server_hello,
+                    .conn = self,
+                    .session = load_result.?.session,
                 },
             };
         };
+        defer handshake_state.deinit(allocator);
 
         std.log.info("clientHandshake, state=0x{x}, session=0x{x}", .{
-            @ptrToInt(&self.handshake_state.?),
-            @ptrToInt(self.handshake_state.?.client.getSession()),
+            @ptrToInt(&handshake_state),
+            @ptrToInt(handshake_state.getSession()),
         });
-        try self.handshake_state.?.client.handshake(allocator);
+        try handshake_state.handshake(allocator);
+        if (self.version.? == .v1_3) {
+            return;
+        }
 
         // If we had a successful handshake and hs.session is different from
         // the one already cached - cache a new one.
         std.log.info("Conn.clientHandshake before checking load_result", .{});
         if (load_result) |res| {
             std.log.info("Conn.clientHandshake load_result is not null, cache_key={s}", .{res.cache_key});
-            var hs_session = self.handshake_state.?.client.getSession();
+            var hs_session = handshake_state.getSession();
             std.log.info("Conn.clientHandshake hs_session={any}", .{hs_session});
             if (res.cache_key.len > 0 and hs_session != null and
                 (res.session == null or res.session.? != hs_session.?))
             {
                 try self.config.client_session_cache.?.put(res.cache_key, hs_session.?);
-                switch (self.handshake_state.?.client) {
+                switch (handshake_state) {
                     .v1_2 => |*state| if (state.owns_session) {
                         allocator.destroy(state.session.?);
                         state.owns_session = false;
@@ -972,10 +974,9 @@ pub const Conn = struct {
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
-        self.handshake_state = HandshakeState{
-            .server = ServerHandshakeState.init(self.version.?, self, client_hello),
-        };
-        try self.handshake_state.?.server.handshake(allocator);
+        var handshake_state =  ServerHandshakeState.init(self.version.?, self, client_hello);
+        defer handshake_state.deinit(allocator);
+        try handshake_state.handshake(allocator);
     }
 
     fn makeClientHello(
@@ -2257,7 +2258,7 @@ pub fn AtLeastReader(comptime ReaderType: type) type {
         /// is greater than 0, it returns error.UnexpectedEof.
         pub fn read(self: *Self, dest: []u8) Error!usize {
             if (self.n == 0) {
-                return 0;   
+                return 0;
             }
             const bytes_read = try self.inner_reader.read(dest);
             self.n -= std.math.min(self.n, bytes_read);
