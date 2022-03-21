@@ -480,6 +480,7 @@ pub const Conn = struct {
     // connection so far. If renegotiation is disabled then this is either
     // zero or one.
     handshakes: usize = 0,
+    handshake_err: ?anyerror = null, // error resulting from handshake
     cipher_suite_id: ?CipherSuiteId = null,
     ocsp_response: []const u8 = "", // stapled OCSP response
     scts: []const []const u8 = &.{}, // signed certificate timestamps from server
@@ -622,9 +623,7 @@ pub const Conn = struct {
             };
             self.close_notify_sent = true;
         }
-        if (self.close_notify_err) |err| {
-            return err;
-        }
+        return self.close_notify_err.?;
     }
 
     // handleRenegotiation processes a HelloRequest handshake message.
@@ -637,22 +636,19 @@ pub const Conn = struct {
             var hs_msg = try self.readHandshake(allocator);
             switch (hs_msg) {
                 .hello_request => |msg| break :blk_hello_req msg,
-                else => {
-                    self.sendAlert(.unexpected_message) catch {};
-                    return error.UnexpectedMessage;
-                },
+                else => return self.sendAlert(.unexpected_message),
             }
         };
         defer hello_req.deinit(allocator);
 
         if (self.role != .client) {
-            try self.sendAlert(.no_renegotiation);
+            return self.sendAlert(.no_renegotiation);
         }
 
         switch (self.config.renegotiation) {
-            .never => try self.sendAlert(.no_renegotiation),
+            .never => return self.sendAlert(.no_renegotiation),
             .once_as_client => if (self.handshakes > 1) {
-                try self.sendAlert(.no_renegotiation);
+                return self.sendAlert(.no_renegotiation);
             },
             .freely_as_client => {
                 // Ok.
@@ -662,25 +658,23 @@ pub const Conn = struct {
         // TODO: lock handshakeMutex
 
         // TODO: set handshakeStatus
-        if (self.clientHandshake(allocator)) |_| {
-            self.handshakes += 1;
-        } else |err| {
+        self.clientHandshake(allocator) catch |err| {
+            self.handshake_err = err;
             return err;
-        }
+        };
+        self.handshakes += 1;
     }
 
     fn handlePostHandshakeMessage(self: *Conn, allocator: mem.Allocator) !void {
         if (self.version.? != .v1_3) {
-            try self.handleRenegotiation(allocator);
-            return;
+            return self.handleRenegotiation(allocator);
         }
 
         var hs_msg = try self.readHandshake(allocator);
         defer hs_msg.deinit(allocator);
         self.retry_count += 1;
         if (self.retry_count > max_useless_records) {
-            self.sendAlert(.unexpected_message) catch {};
-            return error.TlsTooManyNonAdvancingRecords;
+            self.sendAlert(.unexpected_message) catch return error.TlsTooManyNonAdvancingRecords;
         }
 
         switch (hs_msg) {
@@ -692,8 +686,8 @@ pub const Conn = struct {
             },
             .key_update => |*msg| try self.handleKeyUpdate(allocator, msg),
             else => {
-                self.sendAlert(.unexpected_message) catch {};
-                return error.TlsUnexpectedHandshakeMessageType;
+                self.sendAlert(.unexpected_message) catch
+                    return error.TlsUnexpectedHandshakeMessageType;
             },
         }
     }
@@ -707,10 +701,7 @@ pub const Conn = struct {
         const cipher_suite = cipherSuiteTls13ById(self.cipher_suite_id.?);
         if (cipher_suite == null) {
             std.log.info("handleKeyUpdate no cipher_suite found for id", .{});
-            self.sendAlert(.internal_error) catch |err| {
-                self.in.setError(err) catch {};
-                return err;
-            };
+            self.sendAlert(.internal_error) catch |err| return self.in.setError(err);
         }
 
         const new_in_secret = try cipher_suite.?.nextTrafficSecret(
@@ -747,8 +738,8 @@ pub const Conn = struct {
         msg: *NewSessionTicketMsgTls13,
     ) !void {
         if (self.role != .client) {
-            self.sendAlert(.unexpected_message) catch {};
-            return error.TlsReceivedNewSessionTicketFromClient;
+            self.sendAlert(.unexpected_message) catch
+                return error.TlsReceivedNewSessionTicketFromClient;
         }
 
         if (self.config.session_tickets_disabled or self.config.client_session_cache == null) {
@@ -760,8 +751,8 @@ pub const Conn = struct {
             return;
         }
         if (msg.lifetime > max_session_ticket_lifetime_seconds) {
-            self.sendAlert(.illegal_parameter) catch {};
-            return error.TlsReceivedNewSessionTicketWithInvalidLifetime;
+            self.sendAlert(.illegal_parameter) catch
+                return error.TlsReceivedNewSessionTicketWithInvalidLifetime;
         }
 
         const cipher_suite = cipherSuiteTls13ById(self.cipher_suite_id.?);
@@ -770,7 +761,7 @@ pub const Conn = struct {
                 "Conn.handleNewSessionTicket internal_error cipher_suite={}, self.resumption_secret={s}",
                 .{ cipher_suite, self.resumption_secret },
             );
-            try self.sendAlert(.internal_error);
+            return self.sendAlert(.internal_error);
         }
 
         // Save the resumption_master_secret and nonce instead of deriving the PSK
@@ -825,6 +816,7 @@ pub const Conn = struct {
         std.log.info("Conn.handleNewSessionTicket put client_session_cache, cache_key={s}", .{cache_key});
     }
 
+    // sendAlert always returns an error.
     pub fn sendAlert(self: *Conn, desc: AlertDescription) !void {
         const level = desc.level();
         std.log.debug("Conn.sendAlert, level={}, desc={}", .{ level, desc });
@@ -832,6 +824,7 @@ pub const Conn = struct {
         self.writeRecord(self.allocator, .alert, &data) catch |w_err| {
             std.log.err("Conn.sendAlert, w_err={s}", .{@errorName(w_err)});
             if (desc == .close_notify) {
+                // closeNotify is a special case in that it isn't an error.
                 std.log.err("Conn.sendAlert, return w_err={s}", .{@errorName(w_err)});
                 return w_err;
             }
@@ -882,10 +875,7 @@ pub const Conn = struct {
                 var hs_msg = try self.readHandshake(allocator);
                 switch (hs_msg) {
                     .server_hello => |sh| break :blk_server_hello sh,
-                    else => {
-                        self.sendAlert(.unexpected_message) catch {};
-                        return error.UnexpectedMessage;
-                    },
+                    else => return self.sendAlert(.unexpected_message),
                 }
             };
             errdefer server_hello.deinit(allocator);
@@ -905,8 +895,7 @@ pub const Conn = struct {
                 @enumToInt(self.version.?) <= @enumToInt(ProtocolVersion.v1_1) and
                 tls11_downgrade))
             {
-                self.sendAlert(.illegal_parameter) catch {};
-                return error.DowngradeAttemptDetected;
+                self.sendAlert(.illegal_parameter) catch return error.DowngradeAttemptDetected;
             }
 
             if (self.version.? == .v1_3) {
@@ -974,7 +963,7 @@ pub const Conn = struct {
 
     pub fn serverHandshake(self: *Conn, allocator: mem.Allocator) !void {
         const client_hello = try self.readClientHello(allocator);
-        var handshake_state =  ServerHandshakeState.init(self.version.?, self, client_hello);
+        var handshake_state = ServerHandshakeState.init(self.version.?, self, client_hello);
         defer handshake_state.deinit(allocator);
         try handshake_state.handshake(allocator);
     }
@@ -1098,9 +1087,8 @@ pub const Conn = struct {
             server_hello.vers;
 
         const ver = self.config.mutualVersion(&[_]ProtocolVersion{peer_ver});
-        if (ver) |_| {} else {
-            self.sendAlert(.protocol_version) catch {};
-            return error.UnsupportedVersion;
+        if (ver == null) {
+            self.sendAlert(.protocol_version) catch return error.UnsupportedVersion;
         }
         self.version = ver;
         self.in.ver = ver;
@@ -1210,13 +1198,11 @@ pub const Conn = struct {
     fn readClientHello(self: *Conn, allocator: mem.Allocator) !ClientHelloMsg {
         var hs_msg = try self.readHandshake(allocator);
         errdefer hs_msg.deinit(allocator);
-        const client_hello = switch (hs_msg) {
-            .client_hello => |msg| msg,
-            else => {
-                self.sendAlert(.unexpected_message) catch {};
-                return error.UnexpectedMessage;
-            },
-        };
+        switch (hs_msg) {
+            .client_hello => {},
+            else => try self.sendAlert(.unexpected_message),
+        }
+        const client_hello = hs_msg.client_hello;
 
         // TODO: implement for case when Config.getConfigForClient is not null.
 
@@ -1234,8 +1220,7 @@ pub const Conn = struct {
             self.in.ver = ver;
             self.out.ver = ver;
         } else {
-            self.sendAlert(.protocol_version) catch {};
-            return error.ProtocolVersionMismatch;
+            self.sendAlert(.protocol_version) catch return error.ProtocolVersionMismatch;
         }
 
         return client_hello;
@@ -1346,6 +1331,21 @@ pub const Conn = struct {
         var fbs = io.fixedBufferStream(self.raw_input.items);
         var r = fbs.reader();
         var rec_type = try r.readEnum(RecordType, .Big);
+
+        // No valid TLS record has a type of 0x80, however SSLv2 handshakes
+        // start with a uint16 length where the MSB is set and the first record
+        // is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
+        // an SSLv2 client.
+        if (!handshake_complete and @enumToInt(rec_type) == 0x80) {
+            self.sendAlert(.protocol_version) catch {
+                std.log.debug(
+                    "Conn.readRecordOrChangeCipherSpec early exit#5, self=0x{x}",
+                    .{@ptrToInt(self)},
+                );
+                return self.in.setError(error.UnsupportedSslV2HandshakeReceived);
+            };
+        }
+
         const rec_ver = try r.readEnum(ProtocolVersion, .Big);
         const payload_len = try r.readIntBig(u16);
         std.log.info(
@@ -1353,13 +1353,14 @@ pub const Conn = struct {
             .{ @ptrToInt(self), rec_type, rec_ver, payload_len },
         );
         if (self.version) |con_ver| {
-            if (con_ver != .v1_3 and con_ver != rec_ver) {
-                self.sendAlert(.protocol_version) catch {};
-                std.log.debug(
-                    "Conn.readRecordOrChangeCipherSpec early exit#5, self=0x{x}",
-                    .{@ptrToInt(self)},
-                );
-                return error.InvalidRecordHeader;
+            if (con_ver != .v1_3 and rec_ver != con_ver) {
+                self.sendAlert(.protocol_version) catch {
+                    std.log.debug(
+                        "Conn.readRecordOrChangeCipherSpec early exit#6, self=0x{x}",
+                        .{@ptrToInt(self)},
+                    );
+                    return self.in.setError(error.InvalidRecordHeader);
+                };
             }
         } else {
             // First message, be extra suspicious: this might not be a TLS
@@ -1369,7 +1370,11 @@ pub const Conn = struct {
             if ((rec_type != .alert and rec_type != .handshake) or
                 @enumToInt(rec_ver) >= 0x1000)
             {
-                return error.InvalidRecordHeader;
+                std.log.debug(
+                    "Conn.readRecordOrChangeCipherSpec early exit#7, self=0x{x}",
+                    .{@ptrToInt(self)},
+                );
+                return self.in.setError(error.InvalidRecordHeader);
             }
         }
 
@@ -1387,8 +1392,7 @@ pub const Conn = struct {
         const record_len = record_header_len + payload_len;
         self.readFromUntil(allocator, self.stream.reader(), record_len) catch |err| {
             // TODO: only set error to self.in if needed
-            self.in.setError(err) catch {};
-            return err;
+            return self.in.setError(err);
         };
         std.log.debug(
             "Conn.readRecordOrChangeCipherSpec self=0x{x}, after readFromUntil record_len={}, self.raw_input.items.len={}",
@@ -1401,16 +1405,26 @@ pub const Conn = struct {
                 "Conn.readRecordOrChangeCipherSpec self=0x{x}, record={}",
                 .{ @ptrToInt(self), std.fmt.fmtSliceHexLower(record) },
             );
-            break :blk try self.in.decrypt(allocator, record, &rec_type);
+            if (self.in.decrypt(allocator, record, &rec_type)) |decrypted|
+                break :blk decrypted
+            else |err| {
+                self.sendAlert(AlertDescription.fromError(err)) catch |err2|
+                    return self.in.setError(err2);
+                return err; // needed for compilation, but sendAlert always return an error.
+            }
         };
         defer allocator.free(data);
         std.log.info(
             "Conn.readRecordOrChangeCipherSpec self=0x{x}, data={}, rec_type={}",
             .{ @ptrToInt(self), fmtx.fmtSliceHexEscapeLower(data), rec_type },
         );
+        if (data.len > max_plain_text) {
+            self.sendAlert(.record_overflow) catch |err| return self.in.setError(err);
+        }
 
+        // Application Data messages are always protected.
         if (self.in.cipher == null and rec_type == .application_data) {
-            return error.UnexpectedMessage;
+            self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
         }
 
         if (rec_type != .alert and rec_type != .change_cipher_spec and data.len > 0) {
@@ -1421,16 +1435,14 @@ pub const Conn = struct {
         if (self.version != null and self.version.? == .v1_3 and rec_type == .handshake and
             self.handshake_bytes.len > 0)
         {
-            return error.UnexpectedMessage;
+            self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
         }
 
         switch (rec_type) {
             .alert => {
                 if (data.len != 2) {
                     std.log.warn("Conn.readRecordOrChangeCipherSpec unexpected alert data length={}", .{data.len});
-                    self.sendAlert(.unexpected_message) catch |err| {
-                        return self.in.setError(err);
-                    };
+                    self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
                 }
                 const desc = @intToEnum(AlertDescription, data[1]);
                 if (desc != .close_notify) {
@@ -1449,23 +1461,18 @@ pub const Conn = struct {
                         return self.in.setError(error.RemoteError);
                     },
                     else => {
-                        self.sendAlert(.unexpected_message) catch |err| {
+                        self.sendAlert(.unexpected_message) catch |err|
                             return self.in.setError(err);
-                        };
                     },
                 }
             },
             .change_cipher_spec => {
                 if (data.len != 1 or data[0] != 1) {
-                    self.sendAlert(.decode_error) catch |err| {
-                        return self.in.setError(err);
-                    };
+                    self.sendAlert(.decode_error) catch |err| return self.in.setError(err);
                 }
                 // Handshake messages are not allowed to fragment across the CCS.
                 if (self.handshake_bytes.len > 0) {
-                    self.sendAlert(.unexpected_message) catch |err| {
-                        return self.in.setError(err);
-                    };
+                    self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
                 }
                 // In TLS 1.3, change_cipher_spec records are ignored until the
                 // Finished. See RFC 8446, Appendix D.4. Note that according to Section
@@ -1477,15 +1484,14 @@ pub const Conn = struct {
                 }
 
                 if (!expect_change_cipher_spec) {
-                    self.sendAlert(.unexpected_message) catch |err| {
-                        return self.in.setError(err);
-                    };
+                    self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
                 }
                 std.log.debug(
                     "Conn.readRecordOrChangeCipherSpec calling changeCipherSpec, self=0x{x}, &self.in=0x{x}",
                     .{ @ptrToInt(self), @ptrToInt(&self.in) },
                 );
                 self.in.changeCipherSpec() catch {
+                    // TODO: convert error to desc
                     self.sendAlert(.internal_error) catch |err| {
                         return self.in.setError(err);
                     };
@@ -1493,9 +1499,7 @@ pub const Conn = struct {
             },
             .application_data => {
                 if (!handshake_complete or expect_change_cipher_spec) {
-                    self.sendAlert(.unexpected_message) catch |err| {
-                        return self.in.setError(err);
-                    };
+                    self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
                 }
                 // Some OpenSSL servers send empty records in order to randomize the
                 // CBC IV. Ignore a limited number of empty records.
@@ -1506,24 +1510,19 @@ pub const Conn = struct {
             },
             .handshake => {
                 if (data.len == 0 or expect_change_cipher_spec) {
-                    if (self.sendAlert(.unexpected_message)) |_| {} else |err| {
-                        return self.in.setError(err);
-                    }
+                    self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err);
                 }
                 self.handshake_bytes = data;
                 data = "";
             },
-            else => std.log.warn(
-                "tls.Conn.readRecordOrChangeCipherSpec got unsupported record type={}",
-                .{rec_type},
-            ),
+            else => self.sendAlert(.unexpected_message) catch |err| return self.in.setError(err),
         }
     }
 
     fn retryReadRecord(
         self: *Conn,
         expect_change_cipher_spec: bool,
-    ) anyerror!void {
+    ) !void {
         self.retry_count += 1;
         if (self.retry_count > max_useless_records) {
             self.sendAlert(.unexpected_message) catch {};
@@ -2216,6 +2215,7 @@ const HalfConn = struct {
         @panic("TLS: sequence number wraparound");
     }
 
+    // Note: setError always returns the err.
     fn setError(self: *HalfConn, err: anyerror) !void {
         // TODO: set PermanentError if net error
         self.err = err;
