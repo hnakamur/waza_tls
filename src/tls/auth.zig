@@ -391,7 +391,7 @@ fn signatureSchemesForCertificate(
     allocator: mem.Allocator,
     ver: ProtocolVersion,
     cert: *const CertificateChain,
-) ![]SignatureScheme {
+) ![]const SignatureScheme {
     std.debug.assert(cert.private_key != null);
     const priv_key = cert.private_key.?;
     var sig_algs = blk: {
@@ -444,15 +444,15 @@ fn signatureSchemesForCertificate(
             else => @panic("not implmented yet"),
         }
     };
-    if (cert.supported_signature_algorithms) |sup_algs| {
-        defer allocator.free(sig_algs);
+    if (cert.supported_signature_algorithms.len > 0) {
+        defer allocator.free(cert.supported_signature_algorithms);
         var filtered_algs = try std.ArrayListUnmanaged(SignatureScheme).initCapacity(
             allocator,
-            sig_algs.len,
+            cert.supported_signature_algorithms.len,
         );
         errdefer filtered_algs.deinit(allocator);
         for (sig_algs) |alg| {
-            if (isSupportedSignatureAlgorithm(alg, sup_algs)) {
+            if (isSupportedSignatureAlgorithm(alg, cert.supported_signature_algorithms)) {
                 try filtered_algs.append(allocator, alg);
             }
         }

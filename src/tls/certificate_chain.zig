@@ -23,7 +23,7 @@ pub const CertificateChain = struct {
     private_key: ?crypto.PrivateKey = null,
     // SupportedSignatureAlgorithms is an optional list restricting what
     // signature algorithms the PrivateKey can be used for.
-    supported_signature_algorithms: ?[]const SignatureScheme = null,
+    supported_signature_algorithms: []const SignatureScheme = &.{},
     // OCSPStaple contains an optional OCSP response which will be served
     // to clients that request it.
     ocsp_staple: []const u8 = "",
@@ -42,6 +42,7 @@ pub const CertificateChain = struct {
         if (self.private_key) |*key| {
             key.deinit(allocator);
         }
+        allocator.free(self.supported_signature_algorithms);
         allocator.free(self.ocsp_staple);
 
         for (self.signed_certificate_timestamps) |sct| allocator.free(sct);
