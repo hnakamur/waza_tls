@@ -94,7 +94,7 @@ pub const ServerHandshakeStateTls12 = struct {
     rsa_sign_ok: bool = false,
     session_state: ?SessionStateTls12 = null,
     finished_hash: ?FinishedHash = null,
-    master_secret: ?[]const u8 = null,
+    master_secret: []const u8 = "",
     cert_chain: ?*const CertificateChain = null,
 
     pub fn init(conn: *Conn, client_hello: ClientHelloMsg) ServerHandshakeStateTls12 {
@@ -105,7 +105,7 @@ pub const ServerHandshakeStateTls12 = struct {
         self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
-        if (self.master_secret) |s| allocator.free(s);
+        allocator.free(self.master_secret);
         if (self.session_state) |*state| state.deinit(allocator);
     }
 
@@ -620,13 +620,13 @@ pub const ServerHandshakeStateTls12 = struct {
         );
         std.log.debug(
             "ServerHandshakeStateTls12 master_secret={}",
-            .{fmtx.fmtSliceHexEscapeLower(self.master_secret.?)},
+            .{fmtx.fmtSliceHexEscapeLower(self.master_secret)},
         );
         try self.conn.config.writeKeyLog(
             allocator,
             KeyLog.label_tls12,
             self.client_hello.random,
-            self.master_secret.?,
+            self.master_secret,
         );
 
         // If we received a client cert in response to our certificate request message,
@@ -723,7 +723,7 @@ pub const ServerHandshakeStateTls12 = struct {
             allocator,
             ver,
             suite,
-            self.master_secret.?,
+            self.master_secret,
             self.client_hello.random,
             self.hello.?.random,
             suite.mac_len,
@@ -761,7 +761,7 @@ pub const ServerHandshakeStateTls12 = struct {
         std.log.debug("ServerHandshakeStateTls12 got client_finished", .{});
         const verify_data = try self.finished_hash.?.clientSum(
             allocator,
-            self.master_secret.?,
+            self.master_secret,
         );
 
         if (constantTimeEqlBytes(&verify_data, client_finished_msg.verify_data) != 1) {
@@ -807,7 +807,7 @@ pub const ServerHandshakeStateTls12 = struct {
                 .vers = self.conn.version.?,
                 .cipher_suite = self.suite.?.id,
                 .created_at = created_at,
-                .master_secret = try allocator.dupe(u8, self.master_secret.?),
+                .master_secret = try allocator.dupe(u8, self.master_secret),
                 .certificates = certs_from_client,
             };
         };
@@ -836,7 +836,7 @@ pub const ServerHandshakeStateTls12 = struct {
 
         const verify_data = try self.finished_hash.?.serverSum(
             allocator,
-            self.master_secret.?,
+            self.master_secret,
         );
         var finished = FinishedMsg{
             .verify_data = &verify_data,
