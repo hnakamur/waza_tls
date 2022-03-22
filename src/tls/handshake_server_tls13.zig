@@ -73,7 +73,7 @@ pub const ServerHandshakeStateTls13 = struct {
     suite: ?*const CipherSuiteTls13 = null,
     cert_chain: ?*CertificateChain = null,
     sig_alg: ?SignatureScheme = null,
-    early_secret: ?[]const u8 = null,
+    early_secret: []const u8 = "",
     shared_key: []const u8 = "",
     handshake_secret: []const u8 = "",
     master_secret: []const u8 = "",
@@ -88,12 +88,12 @@ pub const ServerHandshakeStateTls13 = struct {
     pub fn deinit(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) void {
         self.client_hello.deinit(allocator);
         if (self.hello) |*hello| hello.deinit(allocator);
-        if (self.early_secret) |s| allocator.free(s);
-        if (self.shared_key.len > 0) allocator.free(self.shared_key);
-        if (self.handshake_secret.len > 0) allocator.free(self.handshake_secret);
-        if (self.master_secret.len > 0) allocator.free(self.master_secret);
-        if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
-        if (self.client_finished.len > 0) allocator.free(self.client_finished);
+        allocator.free(self.early_secret);
+        allocator.free(self.shared_key);
+        allocator.free(self.handshake_secret);
+        allocator.free(self.master_secret);
+        allocator.free(self.traffic_secret);
+        allocator.free(self.client_finished);
     }
 
     pub fn handshake(self: *ServerHandshakeStateTls13, allocator: mem.Allocator) !void {
@@ -425,7 +425,7 @@ pub const ServerHandshakeStateTls13 = struct {
             std.log.info("ServerHandshakeStateTls13.checkForResumption psk={}", .{std.fmt.fmtSliceHexLower(psk)});
 
             const early_secret = try self.suite.?.extract(allocator, psk, null);
-            if (self.early_secret) |secret| allocator.free(secret);
+            allocator.free(self.early_secret);
             self.early_secret = early_secret;
             std.log.info("ServerHandshakeStateTls13.checkForResumption early_secret={}", .{std.fmt.fmtSliceHexLower(early_secret)});
 
@@ -509,9 +509,11 @@ pub const ServerHandshakeStateTls13 = struct {
 
         {
             self.handshake_secret = blk: {
-                const early_secret = self.early_secret orelse
+                const early_secret = if (self.early_secret.len > 0)
+                    self.early_secret
+                else
                     try self.suite.?.extract(allocator, null, null);
-                defer if (self.early_secret == null) allocator.free(early_secret);
+                defer if (self.early_secret.len == 0) allocator.free(early_secret);
 
                 const current_secret = try self.suite.?.deriveSecret(
                     allocator,

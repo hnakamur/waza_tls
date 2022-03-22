@@ -66,10 +66,10 @@ pub const ClientHandshakeStateTls13 = struct {
         self.server_hello.deinit(allocator);
         self.ecdhe_params.deinit(allocator);
         if (self.cert_req) |*cert_req| cert_req.deinit(allocator);
-        if (self.early_secret.len > 0) allocator.free(self.early_secret);
-        if (self.binder_key.len > 0) allocator.free(self.binder_key);
-        if (self.master_secret.len > 0) allocator.free(self.master_secret);
-        if (self.traffic_secret.len > 0) allocator.free(self.traffic_secret);
+        allocator.free(self.early_secret);
+        allocator.free(self.binder_key);
+        allocator.free(self.master_secret);
+        allocator.free(self.traffic_secret);
     }
 
     pub fn handshake(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {
