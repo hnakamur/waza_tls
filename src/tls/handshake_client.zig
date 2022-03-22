@@ -106,10 +106,10 @@ pub const ClientHandshakeStateTls12 = struct {
         }
 
         try self.finished_hash.?.write(try self.hello.marshal(allocator));
-        std.log.debug("client: clientHello {}", .{std.fmt.fmtSliceHexLower(self.hello.raw.?)});
+        std.log.debug("client: clientHello {}", .{std.fmt.fmtSliceHexLower(self.hello.raw)});
         try self.finished_hash.?.debugLogClientHash(allocator, "client: clientHello");
         try self.finished_hash.?.write(try self.server_hello.marshal(allocator));
-        std.log.debug("client: serverHello {}", .{std.fmt.fmtSliceHexLower(self.server_hello.raw.?)});
+        std.log.debug("client: serverHello {}", .{std.fmt.fmtSliceHexLower(self.server_hello.raw)});
         try self.finished_hash.?.debugLogClientHash(allocator, "client: serverHello");
 
         self.conn.buffering = true;
@@ -184,7 +184,7 @@ pub const ClientHandshakeStateTls12 = struct {
         defer cert_msg.deinit(allocator);
 
         try self.finished_hash.?.write(try cert_msg.marshal(allocator));
-        std.log.info("client: cert {}", .{std.fmt.fmtSliceHexLower(cert_msg.raw.?)});
+        std.log.info("client: cert {}", .{std.fmt.fmtSliceHexLower(cert_msg.raw)});
         try self.finished_hash.?.debugLogClientHash(allocator, "client: cert");
 
         var hs_msg = try self.conn.readHandshake(allocator);
@@ -240,7 +240,7 @@ pub const ClientHandshakeStateTls12 = struct {
                 {
                     defer skx_msg.deinit(allocator);
                     try self.finished_hash.?.write(try skx_msg.marshal(allocator));
-                    std.log.info("client: skx {}", .{std.fmt.fmtSliceHexLower(skx_msg.raw.?)});
+                    std.log.info("client: skx {}", .{std.fmt.fmtSliceHexLower(skx_msg.raw)});
                     try self.finished_hash.?.debugLogClientHash(allocator, "client: skx");
                     key_agreement.processServerKeyExchange(
                         allocator,
@@ -270,7 +270,7 @@ pub const ClientHandshakeStateTls12 = struct {
                         cert_req_msg = m2;
                         std.log.info(
                             "client: certReq {}",
-                            .{std.fmt.fmtSliceHexLower(cert_req_msg.raw.?)},
+                            .{std.fmt.fmtSliceHexLower(cert_req_msg.raw)},
                         );
                         std.log.info("client: cert_req_msg={}", .{cert_req_msg});
 
@@ -337,7 +337,7 @@ pub const ClientHandshakeStateTls12 = struct {
             .server_hello_done => |*hello_done_msg| {
                 defer hello_done_msg.deinit(allocator);
                 try self.finished_hash.?.write(try hello_done_msg.marshal(allocator));
-                std.log.info("client: helloDone {}", .{std.fmt.fmtSliceHexLower(hello_done_msg.raw.?)});
+                std.log.info("client: helloDone {}", .{std.fmt.fmtSliceHexLower(hello_done_msg.raw)});
                 try self.finished_hash.?.debugLogClientHash(allocator, "client: helloDone");
             },
             else => {
@@ -533,7 +533,7 @@ pub const ClientHandshakeStateTls12 = struct {
         try self.finished_hash.?.write(try session_ticket_msg.marshal(allocator));
         std.log.info(
             "client: sessionTicket={}",
-            .{std.fmt.fmtSliceHexLower(session_ticket_msg.raw.?)},
+            .{std.fmt.fmtSliceHexLower(session_ticket_msg.raw)},
         );
 
         {
@@ -629,7 +629,7 @@ pub const ClientHandshakeStateTls12 = struct {
         defer server_finished_msg.deinit(allocator);
         std.log.debug(
             "ClientHandshakeStateTls12.readFinished server_finished_bytes={}",
-            .{fmtx.fmtSliceHexEscapeLower(server_finished_msg.raw.?)},
+            .{fmtx.fmtSliceHexEscapeLower(server_finished_msg.raw)},
         );
 
         const verify_data = try self.finished_hash.?.serverSum(

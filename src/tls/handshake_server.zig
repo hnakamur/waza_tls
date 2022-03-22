@@ -572,7 +572,7 @@ pub const ServerHandshakeStateTls12 = struct {
                 }
                 defer cert_msg.deinit(allocator);
 
-                try self.finished_hash.?.write(cert_msg.raw.?);
+                try self.finished_hash.?.write(cert_msg.raw);
 
                 try self.conn.processCertsFromClient(allocator, &CertificateChain{
                     .certificate_chain = cert_msg.certificates,

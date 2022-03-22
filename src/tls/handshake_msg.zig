@@ -191,7 +191,7 @@ const NextProtocolMsg = void;
 const MessageHashMsg = void;
 
 pub const ClientHelloMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     vers: ProtocolVersion = undefined,
     random: []const u8 = undefined,
     session_id: []const u8 = undefined,
@@ -218,6 +218,7 @@ pub const ClientHelloMsg = struct {
     psk_binders: []const []const u8 = &[_][]u8{},
 
     pub fn deinit(self: *ClientHelloMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         allocator.free(self.random);
         allocator.free(self.session_id);
         allocator.free(self.cipher_suites);
@@ -247,7 +248,6 @@ pub const ClientHelloMsg = struct {
 
         for (self.psk_binders) |psk_binder| allocator.free(psk_binder);
         allocator.free(self.psk_binders);
-        freeOptionalField(self, allocator, "raw");
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ClientHelloMsg {
@@ -291,8 +291,8 @@ pub const ClientHelloMsg = struct {
     }
 
     pub fn marshal(self: *ClientHelloMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const msg_len: usize = try countLength(*const ClientHelloMsg, writeTo, self);
@@ -336,10 +336,8 @@ pub const ClientHelloMsg = struct {
         }
         memx.freeElemsAndFreeSlice([]const u8, self.psk_binders, allocator);
         self.psk_binders = psk_binders;
-        if (self.raw != null) {
-            allocator.free(self.raw.?);
-            self.raw = null;
-        }
+        allocator.free(self.raw);
+        self.raw = "";
     }
 
     fn unmarshalExtensions(self: *ClientHelloMsg, allocator: mem.Allocator, bv: *BytesView) !void {
@@ -642,7 +640,7 @@ pub const ClientHelloMsg = struct {
 };
 
 pub const ServerHelloMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     vers: ProtocolVersion = undefined,
     random: []const u8 = "",
     session_id: []const u8 = "",
@@ -664,6 +662,7 @@ pub const ServerHelloMsg = struct {
     selected_group: ?CurveId = null,
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         allocator.free(self.random);
         allocator.free(self.session_id);
         allocator.free(self.secure_renegotiation);
@@ -675,7 +674,6 @@ pub const ServerHelloMsg = struct {
         if (self.server_share) |*server_share| server_share.deinit(allocator);
         allocator.free(self.supported_points);
         allocator.free(self.cookie);
-        freeOptionalField(self, allocator, "raw");
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ServerHelloMsg {
@@ -714,8 +712,8 @@ pub const ServerHelloMsg = struct {
     }
 
     pub fn marshal(self: *ServerHelloMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const msg_len: usize = try countLength(*const ServerHelloMsg, writeTo, self);
@@ -929,13 +927,13 @@ pub const CertificateMsg = union(ProtocolVersion) {
 };
 
 pub const CertificateMsgTls12 = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     certificates: []const []const u8 = &[_][]u8{},
 
     pub fn deinit(self: *CertificateMsgTls12, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         for (self.certificates) |certificate| allocator.free(certificate);
         allocator.free(self.certificates);
-        freeOptionalField(self, allocator, "raw");
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsgTls12 {
@@ -953,8 +951,8 @@ pub const CertificateMsgTls12 = struct {
     }
 
     pub fn marshal(self: *CertificateMsgTls12, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         var certs_len: usize = 0;
@@ -984,14 +982,14 @@ pub const CertificateMsgTls12 = struct {
 pub const status_type_ocsp: u8 = 1;
 
 pub const CertificateMsgTls13 = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     cert_chain: CertificateChain,
     ocsp_stapling: bool = false,
     scts: bool = false,
 
     pub fn deinit(self: *CertificateMsgTls13, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         self.cert_chain.deinit(allocator);
-        if (self.raw) |raw| allocator.free(raw);
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateMsgTls13 {
@@ -1018,8 +1016,8 @@ pub const CertificateMsgTls13 = struct {
     }
 
     pub fn marshal(self: *CertificateMsgTls13, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const cert_chain = CertificateChain{
@@ -1095,13 +1093,13 @@ pub const CertificateRequestMsgTls12 = struct {
         ecdsa_sign = 2,
     };
 
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     certificate_types: []const CertificateType = &.{},
     supported_signature_algorithms: []const SignatureScheme = &.{},
     certificate_authorities: []const []const u8 = &.{},
 
     pub fn deinit(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) void {
-        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.raw);
 
         allocator.free(self.certificate_types);
         allocator.free(self.supported_signature_algorithms);
@@ -1139,8 +1137,8 @@ pub const CertificateRequestMsgTls12 = struct {
     }
 
     pub fn marshal(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         var msg_len: usize = u8_size + u24_size + u8_size + self.certificate_types.len;
@@ -1240,15 +1238,15 @@ test "CertificateRequestMsgTls12" {
         try testing.expectEqualSlices(u8, want_certificate_authorities[i], auth);
     }
 
-    allocator.free(msg.raw.?);
-    msg.raw = null;
+    allocator.free(msg.raw);
+    msg.raw = "";
 
     const msg_data2 = try msg.marshal(allocator);
     try testing.expectEqualSlices(u8, msg_data, msg_data2);
 }
 
 pub const CertificateRequestMsgTls13 = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     ocsp_stapling: bool = false,
     scts: bool = false,
     supported_signature_algorithms: []SignatureScheme = &.{},
@@ -1256,7 +1254,7 @@ pub const CertificateRequestMsgTls13 = struct {
     certificate_authorities: []const []const u8 = &.{},
 
     pub fn deinit(self: *CertificateRequestMsgTls13, allocator: mem.Allocator) void {
-        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.raw);
 
         allocator.free(self.supported_signature_algorithms);
         allocator.free(self.supported_signature_algorithms_cert);
@@ -1372,8 +1370,8 @@ pub const CertificateRequestMsgTls13 = struct {
     }
 
     pub fn marshal(self: *CertificateRequestMsgTls13, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         var msg_len: usize = u8_size + u24_size + u8_size + u16_size;
@@ -1523,20 +1521,20 @@ test "CertificateRequestMsgTls13" {
         try testing.expectEqualSlices(u8, want_certificate_authorities[i], auth);
     }
 
-    allocator.free(msg.raw.?);
-    msg.raw = null;
+    allocator.free(msg.raw);
+    msg.raw = "";
 
     const msg_data2 = try msg.marshal(allocator);
     try testing.expectEqualSlices(u8, msg_data, msg_data2);
 }
 
 pub const ServerKeyExchangeMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     key: []const u8,
 
     pub fn deinit(self: *ServerKeyExchangeMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         allocator.free(self.key);
-        freeOptionalField(self, allocator, "raw");
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ServerKeyExchangeMsg {
@@ -1552,8 +1550,8 @@ pub const ServerKeyExchangeMsg = struct {
     }
 
     pub fn marshal(self: *ServerKeyExchangeMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const body_len = self.key.len;
@@ -1571,11 +1569,11 @@ pub const ServerKeyExchangeMsg = struct {
 };
 
 pub const CertificateStatusMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     response: []const u8 = "",
 
     pub fn deinit(self: *CertificateStatusMsg, allocator: mem.Allocator) void {
-        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.raw);
         allocator.free(self.response);
     }
 
@@ -1606,8 +1604,8 @@ pub const CertificateStatusMsg = struct {
     }
 
     pub fn marshal(self: *CertificateStatusMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const msg_len = u8_size + u24_size + u8_size + u24_size + self.response.len;
@@ -1649,10 +1647,10 @@ test "CertificateStatusMsg.marshal" {
 }
 
 pub const ServerHelloDoneMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
 
     pub fn deinit(self: *ServerHelloDoneMsg, allocator: mem.Allocator) void {
-        freeOptionalField(self, allocator, "raw");
+        allocator.free(self.raw);
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ServerHelloDoneMsg {
@@ -1670,8 +1668,8 @@ pub const ServerHelloDoneMsg = struct {
     }
 
     pub fn marshal(self: *ServerHelloDoneMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const raw_len = handshake_msg_header_len;
@@ -1688,12 +1686,12 @@ pub const ServerHelloDoneMsg = struct {
 };
 
 pub const ClientKeyExchangeMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     ciphertext: []const u8 = undefined,
 
     pub fn deinit(self: *ClientKeyExchangeMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         allocator.free(self.ciphertext);
-        freeOptionalField(self, allocator, "raw");
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !ClientKeyExchangeMsg {
@@ -1709,8 +1707,8 @@ pub const ClientKeyExchangeMsg = struct {
     }
 
     pub fn marshal(self: *ClientKeyExchangeMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const body_len = self.ciphertext.len;
@@ -1728,11 +1726,11 @@ pub const ClientKeyExchangeMsg = struct {
 };
 
 pub const FinishedMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     verify_data: []const u8 = undefined,
 
     pub fn deinit(self: *FinishedMsg, allocator: mem.Allocator) void {
-        freeOptionalField(self, allocator, "raw");
+        allocator.free(self.raw);
         allocator.free(self.verify_data);
     }
 
@@ -1749,8 +1747,8 @@ pub const FinishedMsg = struct {
     }
 
     pub fn marshal(self: *FinishedMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const body_len = self.verify_data.len;
@@ -1807,11 +1805,11 @@ pub const NewSessionTicketMsg = union(ProtocolVersion) {
 };
 
 pub const NewSessionTicketMsgTls12 = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     ticket: []const u8 = "",
 
     pub fn deinit(self: *NewSessionTicketMsgTls12, allocator: mem.Allocator) void {
-        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.raw);
         allocator.free(self.ticket);
     }
 
@@ -1833,8 +1831,8 @@ pub const NewSessionTicketMsgTls12 = struct {
     }
 
     pub fn marshal(self: *NewSessionTicketMsgTls12, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const msg_len = u8_size + u24_size + u32_size + u16_size + self.ticket.len;
@@ -1876,7 +1874,7 @@ test "NewSessionTicketMsgTls12.marshal" {
 }
 
 pub const NewSessionTicketMsgTls13 = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     lifetime: u32 = 0,
     age_add: u32 = 0,
     nonce: []const u8 = "",
@@ -1884,7 +1882,7 @@ pub const NewSessionTicketMsgTls13 = struct {
     max_early_data: u32 = 0,
 
     pub fn deinit(self: *NewSessionTicketMsgTls13, allocator: mem.Allocator) void {
-        if (self.raw) |raw| allocator.free(raw);
+        allocator.free(self.raw);
         allocator.free(self.nonce);
         allocator.free(self.label);
     }
@@ -1933,8 +1931,8 @@ pub const NewSessionTicketMsgTls13 = struct {
     }
 
     pub fn marshal(self: *NewSessionTicketMsgTls13, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         const early_data_len = if (self.max_early_data > 0)
@@ -2467,12 +2465,12 @@ pub const u24_size = @divExact(@typeInfo(u24).Int.bits, @bitSizeOf(u8));
 pub const u32_size = @divExact(@typeInfo(u32).Int.bits, @bitSizeOf(u8));
 
 pub const EncryptedExtensionsMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     alpn_protocol: []const u8 = "",
 
     pub fn deinit(self: *EncryptedExtensionsMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         allocator.free(self.alpn_protocol);
-        if (self.raw) |raw| allocator.free(raw);
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !EncryptedExtensionsMsg {
@@ -2511,8 +2509,8 @@ pub const EncryptedExtensionsMsg = struct {
     }
 
     pub fn marshal(self: *EncryptedExtensionsMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         var msg_len: usize = u8_size + u24_size + u16_size;
@@ -2548,13 +2546,13 @@ pub const EncryptedExtensionsMsg = struct {
 };
 
 pub const CertificateVerifyMsg = struct {
-    raw: ?[]const u8 = null,
+    raw: []const u8 = "",
     signature_algorithm: SignatureScheme = undefined,
     signature: []const u8 = "",
 
     pub fn deinit(self: *CertificateVerifyMsg, allocator: mem.Allocator) void {
+        allocator.free(self.raw);
         allocator.free(self.signature);
-        if (self.raw) |raw| allocator.free(raw);
     }
 
     fn unmarshal(
@@ -2578,8 +2576,8 @@ pub const CertificateVerifyMsg = struct {
     }
 
     pub fn marshal(self: *CertificateVerifyMsg, allocator: mem.Allocator) ![]const u8 {
-        if (self.raw) |raw| {
-            return raw;
+        if (self.raw.len > 0) {
+            return self.raw;
         }
 
         var msg_len: usize = u8_size + u24_size + u16_size +
@@ -2744,8 +2742,8 @@ test "ClientHelloMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.client_hello;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
@@ -3044,8 +3042,8 @@ test "ServerHelloMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.server_hello;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
@@ -3304,8 +3302,8 @@ test "CertificateMsgTls12.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.certificate.v1_2;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
@@ -3375,8 +3373,8 @@ test "ServerKeyExchangeMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.server_key_exchange;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
@@ -3435,8 +3433,8 @@ test "ServerHelloDoneMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.server_hello_done;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
@@ -3491,8 +3489,8 @@ test "ClientKeyExchangeMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.client_key_exchange;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }
@@ -3550,8 +3548,8 @@ test "FinishedMsg.unmarshal" {
             defer msg.deinit(allocator);
 
             var got = msg.finished;
-            try testing.expectEqualSlices(u8, data, got.raw.?);
-            got.raw = null;
+            try testing.expectEqualSlices(u8, data, got.raw);
+            got.raw = "";
 
             try testingExpectPrintEqual(allocator, "{}", want, &got);
         }

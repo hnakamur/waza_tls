@@ -260,10 +260,8 @@ pub const ClientHandshakeStateTls13 = struct {
             }});
         }
 
-        if (self.hello.raw) |raw| {
-            allocator.free(raw);
-            self.hello.raw = null;
-        }
+        allocator.free(self.hello.raw);
+        self.hello.raw = "";
         if (self.hello.psk_identities.len > 0) {
             const psk_suite = cipherSuiteTls13ById(self.session.?.cipher_suite);
             if (psk_suite == null) {
