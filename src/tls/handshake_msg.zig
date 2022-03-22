@@ -1995,17 +1995,6 @@ test "NewSessionTicketMsgTls13.marshal" {
     try testing.expectEqual(msg.max_early_data, msg2.max_early_data);
 }
 
-pub fn freeOptionalField(
-    lhs: anytype,
-    allocator: mem.Allocator,
-    comptime field_name: []const u8,
-) void {
-    if (@field(lhs, field_name)) |f| {
-        allocator.free(f);
-        @field(lhs, field_name) = null;
-    }
-}
-
 const CertificateStatusType = enum(u8) {
     ocsp = 1,
     _,

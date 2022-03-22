@@ -14,7 +14,6 @@ const ClientKeyExchangeMsg = @import("handshake_msg.zig").ClientKeyExchangeMsg;
 const FinishedMsg = @import("handshake_msg.zig").FinishedMsg;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const CompressionMethod = @import("handshake_msg.zig").CompressionMethod;
-const freeOptionalField = @import("handshake_msg.zig").freeOptionalField;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const CertificateChain = @import("certificate_chain.zig").CertificateChain;
