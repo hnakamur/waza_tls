@@ -379,12 +379,12 @@ pub const CertificateType = enum {
 };
 
 pub const Certificate = struct {
-    raw: []const u8,
-    raw_tbs_certificate: []const u8,
+    raw: []const u8 = "",
+    raw_tbs_certificate: []const u8 = "",
     version: i64,
     serial_number: math.big.int.Const,
     signature_algorithm: SignatureAlgorithm,
-    raw_issuer: []const u8,
+    raw_issuer: []const u8 = "",
     issuer: pkix.Name,
     not_before: datetime.datetime.Datetime,
     not_after: datetime.datetime.Datetime,
@@ -401,43 +401,43 @@ pub const Certificate = struct {
     max_path_len: ?u64 = null,
 
     key_usage: KeyUsage = .{},
-    ext_key_usages: []const ExtKeyUsage = &[_]ExtKeyUsage{},
-    unknown_usages: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
+    ext_key_usages: []const ExtKeyUsage = &.{},
+    unknown_usages: []asn1.ObjectIdentifier = &.{},
 
-    subject_key_id: []const u8 = &[_]u8{},
-    authority_key_id: []const u8 = &[_]u8{},
+    subject_key_id: []const u8 = "",
+    authority_key_id: []const u8 = "",
 
     // RFC 5280, 4.2.2.1 (Authority Information Access)
-    ocsp_servers: []const []const u8 = &[_][]const u8{},
-    issuing_certificate_urls: []const []const u8 = &[_][]const u8{},
+    ocsp_servers: []const []const u8 = &.{},
+    issuing_certificate_urls: []const []const u8 = &.{},
 
     // Subject Alternate Name values. (Note that these values may not be valid
     // if invalid values were contained within a parsed certificate. For
     // example, an element of DNSNames may not be a valid DNS domain name.)
-    dns_names: []const []const u8 = &[_][]const u8{},
-    email_addresses: []const []const u8 = &[_][]const u8{},
-    ip_addresses: []std.net.Address = &[_]std.net.Address{},
-    uris: []Uri = &[_]Uri{},
+    dns_names: []const []const u8 = &.{},
+    email_addresses: []const []const u8 = &.{},
+    ip_addresses: []std.net.Address = &.{},
+    uris: []Uri = &.{},
 
     // Name constraints
     // if true then the name constraints are marked critical.
     permitted_dns_domains_critical: bool = false,
-    permitted_dns_domains: []const []const u8 = &[_][]const u8{},
-    excluded_dns_domains: []const []const u8 = &[_][]const u8{},
-    permitted_ip_ranges: []netx.IpAddressNet = &[_]netx.IpAddressNet{},
-    excluded_ip_ranges: []netx.IpAddressNet = &[_]netx.IpAddressNet{},
-    permitted_email_addresses: []const []const u8 = &[_][]const u8{},
-    excluded_email_addresses: []const []const u8 = &[_][]const u8{},
-    permitted_uri_domains: []const []const u8 = &[_][]const u8{},
-    excluded_uri_domains: []const []const u8 = &[_][]const u8{},
+    permitted_dns_domains: []const []const u8 = &.{},
+    excluded_dns_domains: []const []const u8 = &.{},
+    permitted_ip_ranges: []netx.IpAddressNet = &.{},
+    excluded_ip_ranges: []netx.IpAddressNet = &.{},
+    permitted_email_addresses: []const []const u8 = &.{},
+    excluded_email_addresses: []const []const u8 = &.{},
+    permitted_uri_domains: []const []const u8 = &.{},
+    excluded_uri_domains: []const []const u8 = &.{},
 
-    policy_identifiers: []asn1.ObjectIdentifier = &[_]asn1.ObjectIdentifier{},
+    policy_identifiers: []asn1.ObjectIdentifier = &.{},
 
-    crl_distribution_points: []const []const u8 = &[_][]const u8{},
+    crl_distribution_points: []const []const u8 = &.{},
 
-    extensions: []pkix.Extension,
-    signature: []const u8 = &[_]u8{},
-    unhandled_critical_extensions: []*const pkix.Extension = &[_]*const pkix.Extension{},
+    extensions: []pkix.Extension = &.{},
+    signature: []const u8 = "",
+    unhandled_critical_extensions: []*const pkix.Extension = &.{},
 
     pub fn parse(allocator: mem.Allocator, der: []const u8) !Certificate {
         var input = asn1.String.init(der);
@@ -599,39 +599,31 @@ pub const Certificate = struct {
         self.issuer.deinit(allocator);
         self.subject.deinit(allocator);
         self.public_key.deinit(allocator);
-        if (self.ext_key_usages.len > 0) allocator.free(self.ext_key_usages);
+        allocator.free(self.ext_key_usages);
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.unknown_usages, allocator);
-        if (self.subject_key_id.len > 0) allocator.free(self.subject_key_id);
-        if (self.authority_key_id.len > 0) allocator.free(self.authority_key_id);
+        allocator.free(self.subject_key_id);
+        allocator.free(self.authority_key_id);
         memx.freeElemsAndFreeSlice([]const u8, self.ocsp_servers, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.issuing_certificate_urls, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.dns_names, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.email_addresses, allocator);
-        if (self.ip_addresses.len > 0) {
-            allocator.free(self.ip_addresses);
-        }
+        allocator.free(self.ip_addresses);
         memx.deinitSliceAndElems(Uri, self.uris, allocator);
         memx.deinitSliceAndElems(asn1.ObjectIdentifier, self.policy_identifiers, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.crl_distribution_points, allocator);
 
         memx.freeElemsAndFreeSlice([]const u8, self.permitted_dns_domains, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.excluded_dns_domains, allocator);
-        if (self.permitted_ip_ranges.len > 0) {
-            allocator.free(self.permitted_ip_ranges);
-        }
-        if (self.excluded_ip_ranges.len > 0) {
-            allocator.free(self.excluded_ip_ranges);
-        }
+        allocator.free(self.permitted_ip_ranges);
+        allocator.free(self.excluded_ip_ranges);
         memx.freeElemsAndFreeSlice([]const u8, self.permitted_email_addresses, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.excluded_email_addresses, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.permitted_uri_domains, allocator);
         memx.freeElemsAndFreeSlice([]const u8, self.excluded_uri_domains, allocator);
 
         memx.deinitSliceAndElems(pkix.Extension, self.extensions, allocator);
-        if (self.signature.len > 0) allocator.free(self.signature);
-        if (self.unhandled_critical_extensions.len > 0) {
-            allocator.free(self.unhandled_critical_extensions);
-        }
+        allocator.free(self.signature);
+        allocator.free(self.unhandled_critical_extensions);
     }
 
     pub fn clone(
