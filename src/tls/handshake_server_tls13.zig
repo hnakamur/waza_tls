@@ -640,8 +640,7 @@ pub const ServerHandshakeStateTls13 = struct {
         {
             var cert_msg = blk: {
                 const scts = self.client_hello.scts and
-                    self.cert_chain.?.signed_certificate_timestamps != null and
-                    self.cert_chain.?.signed_certificate_timestamps.?.len > 0;
+                    self.cert_chain.?.signed_certificate_timestamps.len > 0;
                 const ocsp_stapling = self.client_hello.ocsp_stapling and
                     self.cert_chain.?.ocsp_staple.len > 0;
                 std.log.debug(
@@ -658,10 +657,9 @@ pub const ServerHandshakeStateTls13 = struct {
                 errdefer cert_chain.deinit(allocator);
 
                 if (scts) {
-                    cert_chain.signed_certificate_timestamps =
-                        try memx.dupeStringList(
+                    cert_chain.signed_certificate_timestamps = try memx.dupeStringList(
                         allocator,
-                        self.cert_chain.?.signed_certificate_timestamps.?,
+                        self.cert_chain.?.signed_certificate_timestamps,
                     );
                 }
                 if (ocsp_stapling) {

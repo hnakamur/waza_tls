@@ -551,9 +551,10 @@ pub const ClientHandshakeStateTls13 = struct {
         }
         self.transcript.update(try cert_msg.marshal(allocator));
 
-        if (cert_msg.cert_chain.signed_certificate_timestamps) |scts| {
-            self.conn.scts = try memx.dupeStringList(allocator, scts);
-        }
+        self.conn.scts = try memx.dupeStringList(
+            allocator,
+            cert_msg.cert_chain.signed_certificate_timestamps,
+        );
         self.conn.ocsp_response = try allocator.dupe(u8, cert_msg.cert_chain.ocsp_staple);
 
         try self.conn.verifyServerCertificate(cert_msg.cert_chain.certificate_chain);
@@ -707,17 +708,17 @@ pub const ClientHandshakeStateTls13 = struct {
             };
             errdefer cert2_copy.deinit(allocator);
             cert2_copy.ocsp_staple = try allocator.dupe(u8, cert2.ocsp_staple);
-            if (cert2.signed_certificate_timestamps) |scts| {
-                cert2_copy.signed_certificate_timestamps = try memx.dupeStringList(allocator, scts);
-            }
+            cert2_copy.signed_certificate_timestamps = try memx.dupeStringList(
+                allocator,
+                cert2.signed_certificate_timestamps,
+            );
             break :blk cert2_copy;
         } else CertificateChain{};
 
         var cert_msg = CertificateMsgTls13{
             .cert_chain = cert_for_msg,
             .scts = self.cert_req.?.scts and
-                cert_for_msg.signed_certificate_timestamps != null and
-                cert_for_msg.signed_certificate_timestamps.?.len > 0,
+                cert_for_msg.signed_certificate_timestamps.len > 0,
             .ocsp_stapling = self.cert_req.?.ocsp_stapling and cert_for_msg.ocsp_staple.len > 0,
         };
         defer cert_msg.deinit(allocator);

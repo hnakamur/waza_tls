@@ -1009,8 +1009,7 @@ pub const CertificateMsgTls13 = struct {
         return CertificateMsgTls13{
             .cert_chain = cert_chain,
             .ocsp_stapling = cert_chain.ocsp_staple.len > 0,
-            .scts = cert_chain.signed_certificate_timestamps != null and
-                cert_chain.signed_certificate_timestamps.?.len > 0,
+            .scts = cert_chain.signed_certificate_timestamps.len != 0,
             .raw = raw,
         };
     }
@@ -1026,7 +1025,7 @@ pub const CertificateMsgTls13 = struct {
             .signed_certificate_timestamps = if (self.scts)
                 self.cert_chain.signed_certificate_timestamps
             else
-                null,
+                &.{},
         };
 
         var msg_len: usize = u8_size + u24_size + u8_size + cert_chain.marshaledLen();
@@ -3620,11 +3619,11 @@ test "CertificateMsgTls13.marshal case1" {
     try testing.expectEqualStrings(msg.cert_chain.ocsp_staple, msg2.cert_chain.ocsp_staple);
 
     try testing.expectEqual(
-        msg.cert_chain.signed_certificate_timestamps.?.len,
-        msg2.cert_chain.signed_certificate_timestamps.?.len,
+        msg.cert_chain.signed_certificate_timestamps.len,
+        msg2.cert_chain.signed_certificate_timestamps.len,
     );
-    for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
-        try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
+    for (msg.cert_chain.signed_certificate_timestamps) |sct, i| {
+        try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps[i]);
     }
 }
 
@@ -3669,11 +3668,11 @@ test "CertificateMsgTls13.marshal case2" {
     try testing.expectEqualStrings(msg.cert_chain.ocsp_staple, msg2.cert_chain.ocsp_staple);
 
     try testing.expectEqual(
-        msg.cert_chain.signed_certificate_timestamps.?.len,
-        msg2.cert_chain.signed_certificate_timestamps.?.len,
+        msg.cert_chain.signed_certificate_timestamps.len,
+        msg2.cert_chain.signed_certificate_timestamps.len,
     );
-    for (msg.cert_chain.signed_certificate_timestamps.?) |sct, i| {
-        try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps.?[i]);
+    for (msg.cert_chain.signed_certificate_timestamps) |sct, i| {
+        try testing.expectEqualStrings(sct, msg2.cert_chain.signed_certificate_timestamps[i]);
     }
 }
 

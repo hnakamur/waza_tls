@@ -1700,9 +1700,7 @@ pub const Conn = struct {
 
         self.peer_certificates = certs;
         self.ocsp_response = try allocator.dupe(u8, cert_chain.ocsp_staple);
-        if (cert_chain.signed_certificate_timestamps) |scts| {
-            self.scts = try memx.dupeStringList(allocator, scts);
-        }
+        self.scts = try memx.dupeStringList(allocator, cert_chain.signed_certificate_timestamps);
 
         // TODO: implement
         std.log.info("Conn.processCertsFromClient ok", .{});

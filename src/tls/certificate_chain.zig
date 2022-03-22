@@ -29,25 +29,24 @@ pub const CertificateChain = struct {
     ocsp_staple: []const u8 = "",
     // SignedCertificateTimestamps contains an optional list of Signed
     // Certificate Timestamps which will be served to clients that request it.
-    signed_certificate_timestamps: ?[]const []const u8 = null,
+    signed_certificate_timestamps: []const []const u8 = &.{},
     // Leaf is the parsed form of the leaf certificate, which may be initialized
     // using x509.ParseCertificate to reduce per-handshake processing. If nil,
     // the leaf certificate will be parsed as needed.
     leaf: ?*x509.Certificate = null,
 
     pub fn deinit(self: *CertificateChain, allocator: mem.Allocator) void {
-        if (self.certificate_chain.len > 0) {
-            for (self.certificate_chain) |cert| allocator.free(cert);
-            allocator.free(self.certificate_chain);
-        }
+        for (self.certificate_chain) |cert| allocator.free(cert);
+        allocator.free(self.certificate_chain);
+
         if (self.private_key) |*key| {
             key.deinit(allocator);
         }
-        if (self.ocsp_staple.len > 0) allocator.free(self.ocsp_staple);
-        if (self.signed_certificate_timestamps) |scts| {
-            for (scts) |sct| allocator.free(sct);
-            allocator.free(scts);
-        }
+        allocator.free(self.ocsp_staple);
+
+        for (self.signed_certificate_timestamps) |sct| allocator.free(sct);
+        allocator.free(self.signed_certificate_timestamps);
+
         if (self.leaf) |leaf| {
             leaf.deinit(allocator);
         }
@@ -139,9 +138,9 @@ pub const CertificateChain = struct {
 
     pub fn sctsMarshaledLen(self: *const CertificateChain) usize {
         var scts_marshaled_len: usize = 0;
-        if (self.signed_certificate_timestamps) |scts| {
+        if (self.signed_certificate_timestamps.len > 0) {
             scts_marshaled_len = u16_size * 3;
-            for (scts) |sct| {
+            for (self.signed_certificate_timestamps) |sct| {
                 scts_marshaled_len += u16_size + sct.len;
             }
         }
@@ -166,17 +165,15 @@ pub const CertificateChain = struct {
                     try writeInt(u24, self.ocsp_staple.len, writer);
                     try writeBytes(self.ocsp_staple, writer);
                 }
-                if (self.signed_certificate_timestamps != null) {
-                    if (self.signed_certificate_timestamps) |scts| {
-                        try writeInt(u16, ExtensionType.sct, writer);
-                        var rest_len = scts_len - u16_size * 2;
-                        try writeInt(u16, rest_len, writer);
-                        rest_len -= u16_size;
-                        try writeInt(u16, rest_len, writer);
-                        for (scts) |sct| {
-                            try writeInt(u16, sct.len, writer);
-                            try writeBytes(sct, writer);
-                        }
+                if (self.signed_certificate_timestamps.len != 0) {
+                    try writeInt(u16, ExtensionType.sct, writer);
+                    var rest_len = scts_len - u16_size * 2;
+                    try writeInt(u16, rest_len, writer);
+                    rest_len -= u16_size;
+                    try writeInt(u16, rest_len, writer);
+                    for (self.signed_certificate_timestamps) |sct| {
+                        try writeInt(u16, sct.len, writer);
+                        try writeBytes(sct, writer);
                     }
                 }
             }
