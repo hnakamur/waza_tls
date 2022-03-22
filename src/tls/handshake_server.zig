@@ -12,6 +12,7 @@ const CurveId = @import("handshake_msg.zig").CurveId;
 const ClientHelloMsg = @import("handshake_msg.zig").ClientHelloMsg;
 const ServerHelloMsg = @import("handshake_msg.zig").ServerHelloMsg;
 const CertificateMsgTls12 = @import("handshake_msg.zig").CertificateMsgTls12;
+const CertificateStatusMsg = @import("handshake_msg.zig").CertificateStatusMsg;
 const SignatureScheme = @import("handshake_msg.zig").SignatureScheme;
 const CertificateRequestMsgTls12 = @import("handshake_msg.zig").CertificateRequestMsgTls12;
 const ServerHelloDoneMsg = @import("handshake_msg.zig").ServerHelloDoneMsg;
@@ -463,7 +464,15 @@ pub const ServerHandshakeStateTls12 = struct {
         }
 
         if (self.hello.?.ocsp_stapling) {
-            @panic("not implemented yet");
+            var cert_status = CertificateStatusMsg{
+                .response = self.cert_chain.?.ocsp_staple,
+            };
+            defer {
+                cert_status.response = "";
+                cert_status.deinit(allocator);
+            }
+            try self.finished_hash.?.write(try cert_status.marshal(allocator));
+            try self.conn.writeRecord(allocator, .handshake, try cert_status.marshal(allocator));
         }
 
         var key_agreement = self.suite.?.ka(self.conn.version.?);

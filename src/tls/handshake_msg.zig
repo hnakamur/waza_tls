@@ -222,37 +222,31 @@ pub const ClientHelloMsg = struct {
         allocator.free(self.session_id);
         allocator.free(self.cipher_suites);
         allocator.free(self.compression_methods);
-        if (self.server_name.len > 0) allocator.free(self.server_name);
-        if (self.supported_curves.len > 0) allocator.free(self.supported_curves);
-        if (self.session_ticket.len > 0) allocator.free(self.session_ticket);
-        if (self.supported_points.len > 0) allocator.free(self.supported_points);
-        if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
-        if (self.alpn_protocols.len > 0) {
-            for (self.alpn_protocols) |protocol| allocator.free(protocol);
-            allocator.free(self.alpn_protocols);
-        }
-        if (self.supported_signature_algorithms.len > 0) {
-            allocator.free(self.supported_signature_algorithms);
-        }
-        if (self.supported_signature_algorithms_cert.len > 0) {
-            allocator.free(self.supported_signature_algorithms_cert);
-        }
-        if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
-        if (self.supported_versions.len > 0) allocator.free(self.supported_versions);
-        if (self.cookie.len > 0) allocator.free(self.cookie);
-        if (self.key_shares.len > 0) {
-            for (self.key_shares) |*key_share| key_share.deinit(allocator);
-            allocator.free(self.key_shares);
-        }
-        if (self.psk_modes.len > 0) allocator.free(self.psk_modes);
+        allocator.free(self.server_name);
+        allocator.free(self.supported_curves);
+        allocator.free(self.session_ticket);
+        allocator.free(self.supported_points);
+        allocator.free(self.secure_renegotiation);
+
+        for (self.alpn_protocols) |protocol| allocator.free(protocol);
+        allocator.free(self.alpn_protocols);
+
+        allocator.free(self.supported_signature_algorithms);
+        allocator.free(self.supported_signature_algorithms_cert);
+        allocator.free(self.secure_renegotiation);
+        allocator.free(self.supported_versions);
+        allocator.free(self.cookie);
+
+        for (self.key_shares) |*key_share| key_share.deinit(allocator);
+        allocator.free(self.key_shares);
+
+        allocator.free(self.psk_modes);
 
         for (self.psk_identities) |*identity| identity.deinit(allocator);
         allocator.free(self.psk_identities);
 
-        if (self.psk_binders.len > 0) {
-            for (self.psk_binders) |psk_binder| allocator.free(psk_binder);
-            allocator.free(self.psk_binders);
-        }
+        for (self.psk_binders) |psk_binder| allocator.free(psk_binder);
+        allocator.free(self.psk_binders);
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -670,17 +664,17 @@ pub const ServerHelloMsg = struct {
     selected_group: ?CurveId = null,
 
     pub fn deinit(self: *ServerHelloMsg, allocator: mem.Allocator) void {
-        if (self.random.len > 0) allocator.free(self.random);
-        if (self.session_id.len > 0) allocator.free(self.session_id);
-        if (self.secure_renegotiation.len > 0) allocator.free(self.secure_renegotiation);
-        if (self.alpn_protocol.len > 0) allocator.free(self.alpn_protocol);
-        if (self.scts.len > 0) {
-            for (self.scts) |sct| allocator.free(sct);
-            allocator.free(self.scts);
-        }
+        allocator.free(self.random);
+        allocator.free(self.session_id);
+        allocator.free(self.secure_renegotiation);
+        allocator.free(self.alpn_protocol);
+
+        for (self.scts) |sct| allocator.free(sct);
+        allocator.free(self.scts);
+
         if (self.server_share) |*server_share| server_share.deinit(allocator);
-        if (self.supported_points.len > 0) allocator.free(self.supported_points);
-        if (self.cookie.len > 0) allocator.free(self.cookie);
+        allocator.free(self.supported_points);
+        allocator.free(self.cookie);
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -939,10 +933,8 @@ pub const CertificateMsgTls12 = struct {
     certificates: []const []const u8 = &[_][]u8{},
 
     pub fn deinit(self: *CertificateMsgTls12, allocator: mem.Allocator) void {
-        if (self.certificates.len > 0) {
-            for (self.certificates) |certificate| allocator.free(certificate);
-            allocator.free(self.certificates);
-        }
+        for (self.certificates) |certificate| allocator.free(certificate);
+        allocator.free(self.certificates);
         freeOptionalField(self, allocator, "raw");
     }
 
@@ -1109,22 +1101,13 @@ pub const CertificateRequestMsgTls12 = struct {
     certificate_authorities: []const []const u8 = &.{},
 
     pub fn deinit(self: *CertificateRequestMsgTls12, allocator: mem.Allocator) void {
-        std.log.info("CertificateRequestMsgTls12.deinit start, self=0x{x}", .{@ptrToInt(self)});
         if (self.raw) |raw| allocator.free(raw);
-        if (self.certificate_types.len > 0) {
-            allocator.free(self.certificate_types);
-        }
-        if (self.supported_signature_algorithms.len > 0) {
-            allocator.free(self.supported_signature_algorithms);
-        }
-        std.log.info(
-            "CertificateRequestMsgTls12.deinit self.certificate_authorities.len={}",
-            .{self.certificate_authorities.len},
-        );
-        if (self.certificate_authorities.len > 0) {
-            for (self.certificate_authorities) |auth| allocator.free(auth);
-            allocator.free(self.certificate_authorities);
-        }
+
+        allocator.free(self.certificate_types);
+        allocator.free(self.supported_signature_algorithms);
+
+        for (self.certificate_authorities) |auth| allocator.free(auth);
+        allocator.free(self.certificate_authorities);
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateRequestMsgTls12 {
@@ -1274,16 +1257,12 @@ pub const CertificateRequestMsgTls13 = struct {
 
     pub fn deinit(self: *CertificateRequestMsgTls13, allocator: mem.Allocator) void {
         if (self.raw) |raw| allocator.free(raw);
-        if (self.supported_signature_algorithms.len > 0) {
-            allocator.free(self.supported_signature_algorithms);
-        }
-        if (self.supported_signature_algorithms_cert.len > 0) {
-            allocator.free(self.supported_signature_algorithms_cert);
-        }
-        if (self.certificate_authorities.len > 0) {
-            for (self.certificate_authorities) |auth| allocator.free(auth);
-            allocator.free(self.certificate_authorities);
-        }
+
+        allocator.free(self.supported_signature_algorithms);
+        allocator.free(self.supported_signature_algorithms_cert);
+
+        for (self.certificate_authorities) |auth| allocator.free(auth);
+        allocator.free(self.certificate_authorities);
     }
 
     fn unmarshal(allocator: mem.Allocator, msg_data: []const u8) !CertificateRequestMsgTls13 {
@@ -1906,8 +1885,8 @@ pub const NewSessionTicketMsgTls13 = struct {
 
     pub fn deinit(self: *NewSessionTicketMsgTls13, allocator: mem.Allocator) void {
         if (self.raw) |raw| allocator.free(raw);
-        if (self.nonce.len > 0) allocator.free(self.nonce);
-        if (self.label.len > 0) allocator.free(self.label);
+        allocator.free(self.nonce);
+        allocator.free(self.label);
     }
 
     fn unmarshal(
@@ -2122,7 +2101,7 @@ pub const KeyShare = struct {
     data: []const u8 = "",
 
     pub fn deinit(self: *KeyShare, allocator: mem.Allocator) void {
-        if (self.data.len > 0) allocator.free(self.data);
+        allocator.free(self.data);
     }
 };
 
@@ -2492,7 +2471,7 @@ pub const EncryptedExtensionsMsg = struct {
     alpn_protocol: []const u8 = "",
 
     pub fn deinit(self: *EncryptedExtensionsMsg, allocator: mem.Allocator) void {
-        if (self.alpn_protocol.len > 0) allocator.free(self.alpn_protocol);
+        allocator.free(self.alpn_protocol);
         if (self.raw) |raw| allocator.free(raw);
     }
 
@@ -2574,7 +2553,7 @@ pub const CertificateVerifyMsg = struct {
     signature: []const u8 = "",
 
     pub fn deinit(self: *CertificateVerifyMsg, allocator: mem.Allocator) void {
-        if (self.signature.len > 0) allocator.free(self.signature);
+        allocator.free(self.signature);
         if (self.raw) |raw| allocator.free(raw);
     }
 
