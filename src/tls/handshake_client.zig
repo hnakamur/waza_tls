@@ -75,7 +75,7 @@ pub const ClientHandshakeStateTls12 = struct {
     server_hello: ServerHelloMsg,
     suite: ?*const CipherSuiteTls12 = null,
     finished_hash: ?FinishedHash = null,
-    master_secret: ?[]const u8 = null,
+    master_secret: []const u8 = "",
     owns_session: bool = false,
     session: ?*ClientSessionState = null,
 
@@ -83,7 +83,7 @@ pub const ClientHandshakeStateTls12 = struct {
         self.hello.deinit(allocator);
         self.server_hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
-        if (self.master_secret) |s| allocator.free(s);
+        allocator.free(self.master_secret);
         if (self.owns_session) {
             self.session.?.deinit(allocator);
             allocator.destroy(self.session.?);
@@ -464,14 +464,14 @@ pub const ClientHandshakeStateTls12 = struct {
         );
         std.log.debug(
             "ClientHandshakeStateTls12 master_secret={}",
-            .{std.fmt.fmtSliceHexLower(self.master_secret.?)},
+            .{std.fmt.fmtSliceHexLower(self.master_secret)},
         );
 
         try self.conn.config.writeKeyLog(
             allocator,
             KeyLog.label_tls12,
             self.hello.random,
-            self.master_secret.?,
+            self.master_secret,
         );
 
         self.finished_hash.?.discardHandshakeBuffer();
@@ -484,7 +484,7 @@ pub const ClientHandshakeStateTls12 = struct {
             allocator,
             ver,
             suite,
-            self.master_secret.?,
+            self.master_secret,
             self.hello.random,
             self.server_hello.random,
             suite.mac_len,
@@ -540,7 +540,7 @@ pub const ClientHandshakeStateTls12 = struct {
             const session_ticket = session_ticket_msg.ticket;
             session_ticket_msg.ticket = "";
 
-            const master_secret = try allocator.dupe(u8, self.master_secret.?);
+            const master_secret = try allocator.dupe(u8, self.master_secret);
             errdefer allocator.free(master_secret);
 
             var server_certificates = try x509.Certificate.cloneSlice(
@@ -591,10 +591,7 @@ pub const ClientHandshakeStateTls12 = struct {
         try self.conn.writeRecord(allocator, .change_cipher_spec, &[_]u8{1});
         std.log.debug("ClientHandshakeStateTls12.sendFinished after writeRecord change_cipher_spec", .{});
 
-        const verify_data = try self.finished_hash.?.clientSum(
-            allocator,
-            self.master_secret.?,
-        );
+        const verify_data = try self.finished_hash.?.clientSum(allocator, self.master_secret);
         var finished = FinishedMsg{
             .verify_data = &verify_data,
         };
@@ -632,10 +629,7 @@ pub const ClientHandshakeStateTls12 = struct {
             .{fmtx.fmtSliceHexEscapeLower(server_finished_msg.raw)},
         );
 
-        const verify_data = try self.finished_hash.?.serverSum(
-            allocator,
-            self.master_secret.?,
-        );
+        const verify_data = try self.finished_hash.?.serverSum(allocator, self.master_secret);
 
         if (constantTimeEqlBytes(&verify_data, server_finished_msg.verify_data) != 1) {
             std.log.debug("ClientHandshakeStateTls12.readFinished verified data mismach,\n  ours={}\ntheirs={}", .{
@@ -710,7 +704,7 @@ pub const ClientHandshakeStateTls12 = struct {
         }
 
         // Restore masterSecret, peerCerts, and ocspResponse from previous state
-        if (self.master_secret) |secret| allocator.free(secret);
+        allocator.free(self.master_secret);
         self.master_secret = try allocator.dupe(u8, self.session.?.master_secret);
 
         memx.deinitSliceAndElems(x509.Certificate, self.conn.peer_certificates, allocator);
