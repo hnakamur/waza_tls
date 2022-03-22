@@ -199,23 +199,23 @@ pub const ClientHelloMsg = struct {
     compression_methods: []const CompressionMethod,
     server_name: []const u8 = "",
     ocsp_stapling: bool = undefined,
-    supported_curves: []const CurveId = &[_]CurveId{},
-    supported_points: []const EcPointFormat = &[_]EcPointFormat{},
+    supported_curves: []const CurveId = &.{},
+    supported_points: []const EcPointFormat = &.{},
     ticket_supported: bool = false,
     session_ticket: []const u8 = "",
-    supported_signature_algorithms: []const SignatureScheme = &[_]SignatureScheme{},
-    supported_signature_algorithms_cert: []const SignatureScheme = &[_]SignatureScheme{},
+    supported_signature_algorithms: []const SignatureScheme = &.{},
+    supported_signature_algorithms_cert: []const SignatureScheme = &.{},
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
-    alpn_protocols: []const []const u8 = &[_][]u8{},
+    alpn_protocols: []const []const u8 = &.{},
     scts: bool = false,
-    supported_versions: []const ProtocolVersion = &[_]ProtocolVersion{},
+    supported_versions: []const ProtocolVersion = &.{},
     cookie: []const u8 = "",
-    key_shares: []KeyShare = &[_]KeyShare{},
+    key_shares: []KeyShare = &.{},
     early_data: bool = false,
-    psk_modes: []const PskMode = &[_]PskMode{},
-    psk_identities: []PskIdentity = &[_]PskIdentity{},
-    psk_binders: []const []const u8 = &[_][]u8{},
+    psk_modes: []const PskMode = &.{},
+    psk_identities: []PskIdentity = &.{},
+    psk_binders: []const []const u8 = &.{},
 
     pub fn deinit(self: *ClientHelloMsg, allocator: mem.Allocator) void {
         allocator.free(self.raw);
@@ -651,11 +651,11 @@ pub const ServerHelloMsg = struct {
     secure_renegotiation_supported: bool = false,
     secure_renegotiation: []const u8 = "",
     alpn_protocol: []const u8 = "",
-    scts: []const []const u8 = &[_][]u8{},
+    scts: []const []const u8 = &.{},
     supported_version: ?ProtocolVersion = null,
     server_share: ?KeyShare = null,
     selected_identity: ?u16 = null,
-    supported_points: []const EcPointFormat = &[_]EcPointFormat{},
+    supported_points: []const EcPointFormat = &.{},
 
     // HelloRetryRequest extensions
     cookie: []const u8 = "",
@@ -928,7 +928,7 @@ pub const CertificateMsg = union(ProtocolVersion) {
 
 pub const CertificateMsgTls12 = struct {
     raw: []const u8 = "",
-    certificates: []const []const u8 = &[_][]u8{},
+    certificates: []const []const u8 = &.{},
 
     pub fn deinit(self: *CertificateMsgTls12, allocator: mem.Allocator) void {
         allocator.free(self.raw);
@@ -1687,7 +1687,7 @@ pub const ServerHelloDoneMsg = struct {
 
 pub const ClientKeyExchangeMsg = struct {
     raw: []const u8 = "",
-    ciphertext: []const u8 = undefined,
+    ciphertext: []const u8 = "",
 
     pub fn deinit(self: *ClientKeyExchangeMsg, allocator: mem.Allocator) void {
         allocator.free(self.raw);
@@ -1727,7 +1727,7 @@ pub const ClientKeyExchangeMsg = struct {
 
 pub const FinishedMsg = struct {
     raw: []const u8 = "",
-    verify_data: []const u8 = undefined,
+    verify_data: []const u8 = "",
 
     pub fn deinit(self: *FinishedMsg, allocator: mem.Allocator) void {
         allocator.free(self.raw);
@@ -2112,7 +2112,7 @@ pub const PskMode = enum(u8) {
 // TLS 1.3 PSK Identity. Can be a Session Ticket, or a reference to a saved
 // session. See RFC 8446, Section 4.2.11.
 pub const PskIdentity = struct {
-    label: []const u8,
+    label: []const u8 = "",
     obfuscated_ticket_age: u32,
 
     pub fn deinit(self: *PskIdentity, allocator: mem.Allocator) void {
