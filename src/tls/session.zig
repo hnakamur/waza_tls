@@ -22,25 +22,24 @@ pub const ClientSessionState = struct {
     age_add: u32 = 0,
 
     pub fn deinit(self: *ClientSessionState, allocator: mem.Allocator) void {
-        if (self.session_ticket.len > 0) allocator.free(self.session_ticket);
-        if (self.master_secret.len > 0) allocator.free(self.master_secret);
-        if (self.server_certificates.len > 0) {
-            for (self.server_certificates) |*cert| cert.deinit(allocator);
-            allocator.free(self.server_certificates);
+        allocator.free(self.session_ticket);
+        allocator.free(self.master_secret);
+
+        for (self.server_certificates) |*cert| cert.deinit(allocator);
+        allocator.free(self.server_certificates);
+
+        for (self.verified_chains) |chain| {
+            for (chain) |*cert| cert.deinit(allocator);
+            allocator.free(chain);
         }
-        if (self.verified_chains.len > 0) {
-            for (self.verified_chains) |chain| {
-                for (chain) |*cert| cert.deinit(allocator);
-                allocator.free(chain);
-            }
-            allocator.free(self.verified_chains);
-        }
-        if (self.ocsp_response.len > 0) allocator.free(self.ocsp_response);
-        if (self.scts.len > 0) {
-            for (self.scts) |sct| allocator.free(sct);
-            allocator.free(self.scts);
-        }
-        if (self.nonce.len > 0) allocator.free(self.nonce);
+        allocator.free(self.verified_chains);
+
+        allocator.free(self.ocsp_response);
+
+        for (self.scts) |sct| allocator.free(sct);
+        allocator.free(self.scts);
+
+        allocator.free(self.nonce);
     }
 
     // pub fn clone(self: *const ClientSessionState, allocator: mem.Allocator) !ClientSessionState {}
@@ -62,7 +61,7 @@ pub const LoadSessionResult = struct {
 
 pub const LruSessionCache = struct {
     const Self = @This();
-    const Queue = std.TailQueue(ClientSessionState);
+    const Queue = std.TailQueue(*ClientSessionState);
     const Node = Queue.Node;
     // It is safe to use Node instead of *Node here
     // because this Map is never expanded from the initial capacity.
@@ -90,6 +89,10 @@ pub const LruSessionCache = struct {
         std.log.debug("LruSessionCache.deinit self=0x{x}", .{@ptrToInt(self)});
         var it = self.map.iterator();
         while (it.next()) |entry| {
+            std.log.debug(
+                "LruSessionCache.deinit self=0x{x}, key_ptr.*={s}, value_ptr=0x{x}",
+                .{ @ptrToInt(self), entry.key_ptr.*, @ptrToInt(entry.value_ptr) },
+            );
             self.map.allocator.free(entry.key_ptr.*);
             self.removeHelper(entry.value_ptr);
         }
@@ -98,7 +101,8 @@ pub const LruSessionCache = struct {
 
     // LruSessionCache take ownership of cs.
     // cs must be created with the allocator which was passed to init.
-    pub fn put(self: *Self, session_key: []const u8, cs: *const ClientSessionState) !void {
+    // caller owns session_key.
+    pub fn put(self: *Self, session_key: []const u8, cs: *ClientSessionState) !void {
         std.log.info("LruSessionCache.put start, self=0x{x}, session_key={s}, cs=0x{x}", .{
             @ptrToInt(self),
             session_key,
@@ -106,7 +110,7 @@ pub const LruSessionCache = struct {
         });
         var result = try self.map.getOrPut(session_key);
         if (result.found_existing) {
-            if (&result.value_ptr.data == cs) {
+            if (&result.value_ptr.data.* == cs) {
                 std.log.info("LruSessionCache.put just touch value, self=0x{x}, session_key={s}, cs=0x{x}", .{
                     @ptrToInt(self),
                     session_key,
@@ -150,7 +154,7 @@ pub const LruSessionCache = struct {
         std.log.debug("LruSessionCache.put remove oldest, self=0x{x}, oldest_key={s}, cs=0x{x}", .{
             @ptrToInt(self),
             oldest_key,
-            @ptrToInt(&oldest_value_ptr.data),
+            @ptrToInt(oldest_value_ptr.data),
         });
         self.removeHelper(oldest_value_ptr);
         const kv = self.map.fetchRemove(oldest_key).?;
@@ -168,7 +172,7 @@ pub const LruSessionCache = struct {
             std.log.debug("LruSessionCache.remove, self=0x{x}, session_key={s}, removed 0x{x}", .{
                 @ptrToInt(self),
                 session_key,
-                @ptrToInt(&node_ptr.data),
+                @ptrToInt(node_ptr.data),
             });
             self.queue.remove(node_ptr);
             self.removeHelper(node_ptr);
@@ -190,9 +194,9 @@ pub const LruSessionCache = struct {
             std.log.info("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=0x{x}", .{
                 @ptrToInt(self),
                 session_key,
-                @ptrToInt(&node_ptr.data),
+                @ptrToInt(node_ptr.data),
             });
-            return &node_ptr.data;
+            return node_ptr.data;
         } else {
             std.log.info("LruSessionCache.getPtr, self=0x{x}, session_key={s}, ret=null", .{
                 @ptrToInt(self),
@@ -205,9 +209,9 @@ pub const LruSessionCache = struct {
     fn putHelper(
         self: *Self,
         result: Map.GetOrPutResult,
-        cs: *const ClientSessionState,
+        cs: *ClientSessionState,
     ) !void {
-        result.value_ptr.data = cs.*;
+        result.value_ptr.data = cs;
         self.queue.append(result.value_ptr);
         std.log.debug("LruSessionCache.putHelper, &node.data=0x{x}, queue.len={}", .{
             @ptrToInt(&result.value_ptr.data),
@@ -217,8 +221,9 @@ pub const LruSessionCache = struct {
 
     fn removeHelper(self: *Self, node: *Node) void {
         const allocator = self.map.allocator;
-        std.log.debug("LruSessionCache.removeHelper, &node.data=0x{x}", .{@ptrToInt(&node.data)});
+        std.log.debug("LruSessionCache.removeHelper, node.data=0x{x}", .{@ptrToInt(node.data)});
         node.data.deinit(allocator);
+        allocator.destroy(node.data);
     }
 
     fn debugLogKeys(self: *const Self) void {
@@ -270,7 +275,7 @@ test "ClientSessionState" {
 }
 
 test "LruSessionCache" {
-    testing.log_level = .err;
+    testing.log_level = .debug;
     const allocator = testing.allocator;
     var cache = try LruSessionCache.init(allocator, 2);
     defer cache.deinit();
@@ -278,36 +283,46 @@ test "LruSessionCache" {
     {
         var ticket1 = try allocator.dupe(u8, "ticket1");
         errdefer allocator.free(ticket1);
-        try cache.put("key1", &.{
+        var value1 = try allocator.create(ClientSessionState);
+        value1.* = .{
             .session_ticket = ticket1,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        });
+        };
+        try cache.put("key1", value1);
         cache.debugLogKeys();
     }
 
     {
         var ticket2 = try allocator.dupe(u8, "ticket2");
-        errdefer allocator.free(ticket2);
-        try cache.put("key1", &.{
+        var value2 = try allocator.create(ClientSessionState);
+        value2.* = .{
             .session_ticket = ticket2,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        });
+        };
+        try cache.put("key1", value2);
         cache.debugLogKeys();
     }
 
-    {
+    const value3 = blk: {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
-        try cache.put("key2", &.{
+
+        var v = try allocator.create(ClientSessionState);
+        v.* = ClientSessionState{
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        });
+        };
+        break :blk v;
+    };
+
+    {
+        try cache.put("key2", value3);
         cache.debugLogKeys();
     }
 
@@ -317,38 +332,34 @@ test "LruSessionCache" {
     cache.debugLogKeys();
 
     {
-        var ticket3 = try allocator.dupe(u8, "ticket3");
-        errdefer allocator.free(ticket3);
-        try cache.put("key2", &.{
-            .session_ticket = ticket3,
-            .ver = .v1_3,
-            .cipher_suite = .tls_aes_128_gcm_sha256,
-            .received_at = Datetime.now(),
-        });
+        std.log.info("put again same value3 with same key2 ===============", .{});
+        try cache.put("key2", value3);
         cache.debugLogKeys();
     }
 
     {
-        var ticket3 = try allocator.dupe(u8, "ticket3");
-        errdefer allocator.free(ticket3);
-        try cache.put("key3", &.{
-            .session_ticket = ticket3,
+        var ticket4 = try allocator.dupe(u8, "ticket4");
+        var value4 = try allocator.create(ClientSessionState);
+        value4.* = .{
+            .session_ticket = ticket4,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        });
+        };
+        try cache.put("key3", value4);
         cache.debugLogKeys();
     }
 
     {
-        var ticket3 = try allocator.dupe(u8, "ticket3");
-        errdefer allocator.free(ticket3);
-        try cache.put("key4", &.{
-            .session_ticket = ticket3,
+        var ticket5 = try allocator.dupe(u8, "ticket5");
+        var value5 = try allocator.create(ClientSessionState);
+        value5.* = .{
+            .session_ticket = ticket5,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
-        });
+        };
+        try cache.put("key4", value5);
         cache.debugLogKeys();
     }
 

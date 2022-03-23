@@ -323,7 +323,7 @@ test "ClientServer_tls12_p256_no_client_certificate_two_requests" {
             const cert_pem = @embedFile("../../tests/p256-self-signed.crt.pem");
             const key_pem = @embedFile("../../tests/p256-self-signed.key.pem");
 
-            const listen_addr = try net.Address.parseIp("127.0.0.1", 0);
+            const listen_addr = try net.Address.parseIp("127.0.0.1", 8443);
             var key_log_file = try std.fs.Dir.createFile(
                 std.fs.cwd(),
                 server_key_log_filename,

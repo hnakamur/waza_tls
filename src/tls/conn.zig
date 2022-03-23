@@ -768,7 +768,7 @@ pub const Conn = struct {
         // to do the least amount of work on NewSessionTicket messages before we
         // know if the ticket will be used. Forward secrecy of resumed connections
         // is guaranteed by the requirement for pskModeDHE.
-        const session = blk: {
+        var session = blk: {
             const session_ticket = msg.label;
             msg.label = "";
             // const session_ticket = try allocator.dupe(u8, msg.label);
@@ -794,7 +794,8 @@ pub const Conn = struct {
 
             const now = datetime.datetime.Datetime.now();
 
-            break :blk ClientSessionState{
+            var s = try allocator.create(ClientSessionState);
+            s.* = .{
                 .session_ticket = session_ticket,
                 .ver = self.version.?,
                 .cipher_suite = self.cipher_suite_id.?,
@@ -808,11 +809,16 @@ pub const Conn = struct {
                 .use_by = now.shiftSeconds(msg.lifetime),
                 .age_add = msg.age_add,
             };
+            break :blk s;
         };
+        errdefer {
+            session.deinit(allocator);
+            allocator.destroy(session);
+        }
 
         const cache_key = try clientSessionCacheKey(allocator, self.remote_address, self.config);
         defer allocator.free(cache_key);
-        try self.config.client_session_cache.?.put(cache_key, &session);
+        try self.config.client_session_cache.?.put(cache_key, session);
         std.log.info("Conn.handleNewSessionTicket put client_session_cache, cache_key={s}", .{cache_key});
     }
 
@@ -951,7 +957,6 @@ pub const Conn = struct {
                 try self.config.client_session_cache.?.put(res.cache_key, hs_session.?);
                 switch (handshake_state) {
                     .v1_2 => |*state| if (state.owns_session) {
-                        allocator.destroy(state.session.?);
                         state.owns_session = false;
                     },
                     else => {},
@@ -1897,22 +1902,13 @@ fn readAllToArrayList(
     src_reader: anytype,
     dest: *std.ArrayListUnmanaged(u8),
 ) !void {
-    std.log.debug("readAllToArrayList start dest=0x{x}", .{@ptrToInt(dest)});
     while (true) {
         try dest.ensureUnusedCapacity(allocator, min_read);
         const old_len = dest.items.len;
         var buf: []u8 = undefined;
         buf.ptr = dest.items.ptr;
         buf.len = dest.capacity;
-        std.log.debug(
-            "readAllToArrayList dest=0x{x}, old_len={}, buf.len={}",
-            .{ @ptrToInt(dest), old_len, buf.len },
-        );
         const bytes_read = try src_reader.read(buf[old_len..]);
-        std.log.debug(
-            "readAllToArrayList dest=0x{x}, bytes_read={}",
-            .{ @ptrToInt(dest), bytes_read },
-        );
         dest.items.len += bytes_read;
         if (bytes_read == 0) {
             return;

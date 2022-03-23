@@ -562,7 +562,8 @@ pub const ClientHandshakeStateTls12 = struct {
 
             const now = datetime.datetime.Datetime.now();
 
-            var session = ClientSessionState{
+            var session = try allocator.create(ClientSessionState);
+            session.* = .{
                 .session_ticket = session_ticket,
                 .ver = self.conn.version.?,
                 .cipher_suite = self.suite.?.id,
@@ -573,15 +574,18 @@ pub const ClientHandshakeStateTls12 = struct {
                 .ocsp_response = ocsp_response,
                 .scts = scts,
             };
-            errdefer session.deinit(allocator);
+            errdefer {
+                session.deinit(allocator);
+                allocator.destroy(session);
+            }
 
             if (self.owns_session) {
                 self.session.?.deinit(allocator);
+                allocator.destroy(self.session.?);
             } else {
-                self.session = try allocator.create(ClientSessionState);
                 self.owns_session = true;
             }
-            self.session.?.* = session;
+            self.session = session;
         }
         std.log.info("ClientHandshakeStateTls12.readSessionTicket set session", .{});
     }
