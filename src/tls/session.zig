@@ -6,8 +6,8 @@ const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const x509 = @import("x509.zig");
 
 pub const ClientSessionState = struct {
-    const AtomicUsize = std.atomic.Atomic(usize);
-    ref_count: AtomicUsize = AtomicUsize.init(1),
+    mutex: std.Thread.Mutex = .{},
+    ref_count: usize = 1,
 
     session_ticket: []const u8 = "",
     ver: ProtocolVersion = undefined,
@@ -25,22 +25,29 @@ pub const ClientSessionState = struct {
     age_add: u32 = 0,
 
     pub fn addRef(self: *ClientSessionState) void {
-        const old_count = self.ref_count.fetchAdd(1, .SeqCst);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.ref_count += 1;
         std.log.warn(
             "ClientSessionState.addRef self=0x{x}, new_count={}",
-            .{ @ptrToInt(self), old_count + 1 },
+            .{ @ptrToInt(self), self.ref_count },
         );
     }
 
     pub fn decRef(self: *ClientSessionState, allocator: mem.Allocator) void {
-        const old_count = self.ref_count.fetchSub(1, .SeqCst);
+        self.mutex.lock();
+        self.ref_count -= 1;
         std.log.warn(
             "ClientSessionState.decRef self=0x{x}, new_count={}",
-            .{ @ptrToInt(self), old_count - 1 },
+            .{ @ptrToInt(self), self.ref_count },
         );
-        if (old_count == 1) {
+        if (self.ref_count == 0) {
             self.deinit(allocator);
+            self.mutex.unlock();
+            // What if addRef is called during destory?
             allocator.destroy(self);
+        } else {
+            self.mutex.unlock();
         }
     }
 
@@ -93,6 +100,7 @@ pub const LruSessionCache = struct {
     pub const Size = Map.Size;
     pub const default_capacity = 64;
 
+    mutex: std.Thread.Mutex = .{},
     map: Map,
     queue: Queue,
     capacity: Size,
@@ -127,6 +135,8 @@ pub const LruSessionCache = struct {
     // cs must be created with the allocator which was passed to init.
     // caller owns session_key.
     pub fn put(self: *Self, session_key: []const u8, cs: *ClientSessionState) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         std.log.warn("LruSessionCache.put start, self=0x{x}, session_key={s}, cs=0x{x}", .{
             @ptrToInt(self),
             session_key,
@@ -188,6 +198,8 @@ pub const LruSessionCache = struct {
     }
 
     pub fn remove(self: *Self, session_key: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         std.log.warn("LruSessionCache.remove start, self=0x{x}, session_key={s}", .{
             @ptrToInt(self),
             session_key,
@@ -212,6 +224,8 @@ pub const LruSessionCache = struct {
 
     // LruSessionCache owns the memory for the returned value.
     pub fn getPtr(self: *Self, session_key: []const u8) ?*ClientSessionState {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.map.getPtr(session_key)) |node_ptr| {
             self.queue.remove(node_ptr);
             self.queue.append(node_ptr);
