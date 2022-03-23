@@ -66,6 +66,14 @@ pub const ClientHandshakeState = union(ProtocolVersion) {
             .v1_1, .v1_0 => @panic("unsupported version"),
         };
     }
+
+    pub fn decRefSession(self: *ClientHandshakeState, allocator: mem.Allocator) void {
+        switch (self.*) {
+            .v1_3 => |*hs| hs.decRefSession(allocator),
+            .v1_2 => |*hs| hs.decRefSession(allocator),
+            .v1_1, .v1_0 => @panic("unsupported version"),
+        }
+    }
 };
 
 pub const ClientHandshakeStateTls12 = struct {
@@ -75,18 +83,22 @@ pub const ClientHandshakeStateTls12 = struct {
     suite: ?*const CipherSuiteTls12 = null,
     finished_hash: ?FinishedHash = null,
     master_secret: []const u8 = "",
-    owns_session: bool = false,
     session: ?*ClientSessionState = null,
+
+    pub fn decRefSession(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) void {
+        if (self.session) |session| {
+            std.log.warn("ClientHandshakeStateTls12.decRefSession decRef cs=0x{x}", .{@ptrToInt(session)});
+            session.decRef(allocator);
+        }
+        self.session = null;
+    }
 
     pub fn deinit(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);
         self.server_hello.deinit(allocator);
         if (self.finished_hash) |*fh| fh.deinit();
         allocator.free(self.master_secret);
-        if (self.owns_session) {
-            self.session.?.deinit(allocator);
-            allocator.destroy(self.session.?);
-        }
+        self.decRefSession(allocator);
     }
 
     pub fn handshake(self: *ClientHandshakeStateTls12, allocator: mem.Allocator) !void {
@@ -574,16 +586,11 @@ pub const ClientHandshakeStateTls12 = struct {
                 .ocsp_response = ocsp_response,
                 .scts = scts,
             };
-            errdefer {
-                session.deinit(allocator);
-                allocator.destroy(session);
-            }
+            session.addRef();
+            errdefer session.decRef(allocator);
 
-            if (self.owns_session) {
-                self.session.?.deinit(allocator);
-                allocator.destroy(self.session.?);
-            } else {
-                self.owns_session = true;
+            if (self.session) |old_session| {
+                old_session.decRef(allocator);
             }
             self.session = session;
         }

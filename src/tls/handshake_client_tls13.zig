@@ -58,8 +58,15 @@ pub const ClientHandshakeStateTls13 = struct {
     early_secret: []const u8 = "",
     binder_key: []const u8 = "",
 
-    // ClientHandshakeStateTls13 does not own session.
     session: ?*ClientSessionState = null,
+
+    pub fn decRefSession(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) void {
+        if (self.session) |session| {
+            std.log.warn("ClientHandshakeStateTls12.decRefSession decRef cs=0x{x}", .{@ptrToInt(session)});
+            session.decRef(allocator);
+        }
+        self.session = null;
+    }
 
     pub fn deinit(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) void {
         self.hello.deinit(allocator);
@@ -70,6 +77,7 @@ pub const ClientHandshakeStateTls13 = struct {
         allocator.free(self.binder_key);
         allocator.free(self.master_secret);
         allocator.free(self.traffic_secret);
+        self.decRefSession(allocator);
     }
 
     pub fn handshake(self: *ClientHandshakeStateTls13, allocator: mem.Allocator) !void {

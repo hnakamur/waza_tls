@@ -911,6 +911,7 @@ pub const Conn = struct {
                 const binder_key = try allocator.dupe(u8, load_result.?.binder_key);
                 errdefer allocator.free(binder_key);
 
+                if (load_result.?.session) |session| session.addRef();
                 break :blk ClientHandshakeState{
                     .v1_3 = ClientHandshakeStateTls13{
                         .hello = client_hello,
@@ -924,6 +925,7 @@ pub const Conn = struct {
                 };
             }
 
+            if (load_result.?.session) |session| session.addRef();
             break :blk ClientHandshakeState{
                 .v1_2 = ClientHandshakeStateTls12{
                     .hello = client_hello,
@@ -955,12 +957,6 @@ pub const Conn = struct {
                 (res.session == null or res.session.? != hs_session.?))
             {
                 try self.config.client_session_cache.?.put(res.cache_key, hs_session.?);
-                switch (handshake_state) {
-                    .v1_2 => |*state| if (state.owns_session) {
-                        state.owns_session = false;
-                    },
-                    else => {},
-                }
                 std.log.info("Conn.clientHandshake put session, cache_key={s}", .{res.cache_key});
             }
         }
