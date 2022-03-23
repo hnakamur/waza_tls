@@ -198,10 +198,10 @@ pub const LruSessionCache = struct {
                 session_key,
                 @ptrToInt(node_ptr.data),
             });
-            self.queue.remove(node_ptr);
-            self.removeHelper(node_ptr);
             const kv = self.map.fetchRemove(session_key).?;
             self.map.allocator.free(kv.key);
+            self.queue.remove(node_ptr);
+            self.removeHelper(node_ptr);
             std.log.debug("LruSessionCache.remove, self=0x{x}, session_key={s}, removed queue.len={}", .{
                 @ptrToInt(self),
                 session_key,
@@ -315,6 +315,7 @@ test "LruSessionCache" {
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         };
+        defer value1.decRef(allocator);
         try cache.put("key1", value1);
         cache.debugLogKeys();
     }
@@ -328,11 +329,12 @@ test "LruSessionCache" {
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         };
+        defer value2.decRef(allocator);
         try cache.put("key1", value2);
         cache.debugLogKeys();
     }
 
-    const value3 = blk: {
+    var value3 = blk: {
         var ticket3 = try allocator.dupe(u8, "ticket3");
         errdefer allocator.free(ticket3);
 
@@ -345,6 +347,7 @@ test "LruSessionCache" {
         };
         break :blk v;
     };
+    defer value3.decRef(allocator);
 
     {
         try cache.put("key2", value3);
@@ -372,6 +375,7 @@ test "LruSessionCache" {
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         };
+        defer value4.decRef(allocator);
         try cache.put("key3", value4);
         cache.debugLogKeys();
     }
@@ -385,6 +389,7 @@ test "LruSessionCache" {
             .cipher_suite = .tls_aes_128_gcm_sha256,
             .received_at = Datetime.now(),
         };
+        defer value5.decRef(allocator);
         try cache.put("key4", value5);
         cache.debugLogKeys();
     }
