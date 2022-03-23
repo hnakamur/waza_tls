@@ -7,7 +7,7 @@ const x509 = @import("x509.zig");
 
 pub const ClientSessionState = struct {
     const AtomicUsize = std.atomic.Atomic(usize);
-    ref_count: AtomicUsize = AtomicUsize.init(0),
+    ref_count: AtomicUsize = AtomicUsize.init(1),
 
     session_ticket: []const u8 = "",
     ver: ProtocolVersion = undefined,

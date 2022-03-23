@@ -586,7 +586,6 @@ pub const ClientHandshakeStateTls12 = struct {
                 .ocsp_response = ocsp_response,
                 .scts = scts,
             };
-            session.addRef();
             errdefer session.decRef(allocator);
 
             if (self.session) |old_session| {

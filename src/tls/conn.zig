@@ -811,10 +811,7 @@ pub const Conn = struct {
             };
             break :blk s;
         };
-        errdefer {
-            session.deinit(allocator);
-            allocator.destroy(session);
-        }
+        defer session.decRef(allocator);
 
         const cache_key = try clientSessionCacheKey(allocator, self.remote_address, self.config);
         defer allocator.free(cache_key);
