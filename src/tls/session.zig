@@ -1,9 +1,9 @@
 const std = @import("std");
 const mem = std.mem;
-const Datetime = @import("datetime").datetime.Datetime;
 const ProtocolVersion = @import("handshake_msg.zig").ProtocolVersion;
 const CipherSuiteId = @import("handshake_msg.zig").CipherSuiteId;
 const x509 = @import("x509.zig");
+const TimestampSeconds = @import("../timestamp.zig").TimestampSeconds;
 
 pub const ClientSessionState = struct {
     mutex: std.Thread.Mutex = .{},
@@ -15,13 +15,13 @@ pub const ClientSessionState = struct {
     master_secret: []const u8 = "",
     server_certificates: []x509.Certificate = &.{},
     verified_chains: [][]x509.Certificate = &.{},
-    received_at: Datetime = undefined,
+    received_at: TimestampSeconds = undefined,
     ocsp_response: []const u8 = "",
     scts: []const []const u8 = &.{},
 
     // TLS 1.3 fields
     nonce: []const u8 = "",
-    use_by: ?Datetime = null,
+    use_by: ?TimestampSeconds = null,
     age_add: u32 = 0,
 
     pub fn addRef(self: *ClientSessionState) void {
@@ -307,7 +307,7 @@ test "ClientSessionState" {
     var s = ClientSessionState{
         .ver = .v1_3,
         .cipher_suite = .tls_aes_128_gcm_sha256,
-        .received_at = Datetime.now(),
+        .received_at = TimestampSeconds.now(),
     };
     defer s.deinit(allocator);
     std.log.debug("state={}", .{s});
@@ -327,7 +327,7 @@ test "LruSessionCache" {
             .session_ticket = ticket1,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
-            .received_at = Datetime.now(),
+            .received_at = TimestampSeconds.now(),
         };
         defer value1.decRef(allocator);
         try cache.put("key1", value1);
@@ -341,7 +341,7 @@ test "LruSessionCache" {
             .session_ticket = ticket2,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
-            .received_at = Datetime.now(),
+            .received_at = TimestampSeconds.now(),
         };
         defer value2.decRef(allocator);
         try cache.put("key1", value2);
@@ -357,7 +357,7 @@ test "LruSessionCache" {
             .session_ticket = ticket3,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
-            .received_at = Datetime.now(),
+            .received_at = TimestampSeconds.now(),
         };
         break :blk v;
     };
@@ -387,7 +387,7 @@ test "LruSessionCache" {
             .session_ticket = ticket4,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
-            .received_at = Datetime.now(),
+            .received_at = TimestampSeconds.now(),
         };
         defer value4.decRef(allocator);
         try cache.put("key3", value4);
@@ -401,7 +401,7 @@ test "LruSessionCache" {
             .session_ticket = ticket5,
             .ver = .v1_3,
             .cipher_suite = .tls_aes_128_gcm_sha256,
-            .received_at = Datetime.now(),
+            .received_at = TimestampSeconds.now(),
         };
         defer value5.decRef(allocator);
         try cache.put("key4", value5);

@@ -2,6 +2,7 @@ const std = @import("std");
 const math = std.math;
 const mem = std.mem;
 const datetime = @import("datetime");
+const TimestampSeconds = @import("../timestamp.zig").TimestampSeconds;
 const CurveId = @import("handshake_msg.zig").CurveId;
 const asn1 = @import("asn1.zig");
 const pkix = @import("pkix.zig");
@@ -386,8 +387,8 @@ pub const Certificate = struct {
     signature_algorithm: SignatureAlgorithm,
     raw_issuer: []const u8 = "",
     issuer: pkix.Name,
-    not_before: datetime.datetime.Datetime,
-    not_after: datetime.datetime.Datetime,
+    not_before: TimestampSeconds,
+    not_after: TimestampSeconds,
     raw_subject: []const u8,
     subject: pkix.Name,
     raw_subject_public_key_info: []const u8,
@@ -511,8 +512,8 @@ pub const Certificate = struct {
             errdefer issuer.deinit(allocator);
 
             var validity = tbs.readAsn1(.sequence) catch return error.MalformedValidity;
-            var not_before = try parseTime(&validity);
-            var not_after = try parseTime(&validity);
+            var not_before = TimestampSeconds.fromDatetime(try parseTime(&validity));
+            var not_after = TimestampSeconds.fromDatetime(try parseTime(&validity));
 
             var subject_seq = tbs.readAsn1Element(.sequence) catch return error.MalformedSubject;
             const raw_subject = subject_seq.bytes;
@@ -692,9 +693,9 @@ pub const Certificate = struct {
         try std.fmt.format(writer, ", signature_algorithm = {}", .{self.signature_algorithm});
         try std.fmt.format(writer, ", issuer = {}", .{self.issuer});
         try std.fmt.format(writer, ", not_before = ", .{});
-        try writeUtcTime(&self.not_before, writer);
+        try writeUtcTime(&self.not_before.toDatetime(), writer);
         try std.fmt.format(writer, ", not_after = ", .{});
-        try writeUtcTime(&self.not_after, writer);
+        try writeUtcTime(&self.not_after.toDatetime(), writer);
         try std.fmt.format(writer, ", subject = {}", .{self.subject});
         try std.fmt.format(writer, ", public_key_algorithm = {}", .{self.public_key_algorithm});
         try std.fmt.format(writer, ", public_key = {}", .{self.public_key});
@@ -1547,14 +1548,14 @@ pub const Certificate = struct {
             }
         }
 
-        var now = opts.current_time orelse datetime.datetime.Datetime.now();
-        if (now.lt(self.not_before)) {
+        var now = opts.current_time orelse TimestampSeconds.now();
+        if (now.order(self.not_before).compare(.lt)) {
             return error.InvalidCertificate;
-        } else if (now.gt(self.not_after)) {
+        } else if (now.order(self.not_after).compare(.gt)) {
             var not_after_buf: [20]u8 = undefined;
-            writeUtcTimeToSlice(&self.not_after, &not_after_buf);
+            writeUtcTimeToSlice(&self.not_after.toDatetime(), &not_after_buf);
             var now_buf: [20]u8 = undefined;
-            writeUtcTimeToSlice(&now, &now_buf);
+            writeUtcTimeToSlice(&now.toDatetime(), &now_buf);
             std.log.warn(
                 "Certificate.isValid, expired, subject={s}, not_after={s}, now={s}",
                 .{ self.subject.common_name, &not_after_buf, &now_buf },

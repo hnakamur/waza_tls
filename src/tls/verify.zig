@@ -2,7 +2,7 @@ const std = @import("std");
 const ascii = std.ascii;
 const mem = std.mem;
 const os = std.os;
-const datetime = @import("datetime");
+const TimestampSeconds = @import("../timestamp.zig").TimestampSeconds;
 const fmtx = @import("../fmtx.zig");
 const memx = @import("../memx.zig");
 const netx = @import("../netx.zig");
@@ -16,7 +16,7 @@ pub const VerifyOptions = struct {
     dns_name: []const u8 = "",
     intermediates: ?*const CertPool = null,
     roots: *const CertPool,
-    current_time: ?datetime.datetime.Datetime = null,
+    current_time: ?TimestampSeconds = null,
     key_usages: []const x509.ExtKeyUsage = &[_]x509.ExtKeyUsage{},
     max_constraint_comparisons: ?usize = null,
 };

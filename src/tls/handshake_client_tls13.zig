@@ -277,12 +277,8 @@ pub const ClientHandshakeStateTls13 = struct {
             }
             if (psk_suite.?.hash_type == self.suite.?.hash_type) {
                 // Update binders and obfuscated_ticket_age.
-                const now = @intCast(u32, self.conn.config.currentTimestampSeconds());
-                const ticket_age = now -
-                    @intCast(
-                    u32,
-                    @divTrunc(self.session.?.received_at.toTimestamp(), std.time.ms_per_s),
-                );
+                const now = self.conn.config.currentTimestampSeconds();
+                const ticket_age = @intCast(u32, now.sub(self.session.?.received_at).seconds);
                 self.hello.psk_identities[0].obfuscated_ticket_age =
                     ticket_age + self.session.?.age_add;
 

@@ -1,6 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const datetime = @import("datetime");
+const TimestampSeconds = @import("../timestamp.zig").TimestampSeconds;
+const DeltaSeconds = @import("../timestamp.zig").DeltaSeconds;
 const AlertDescription = @import("alert.zig").AlertDescription;
 const Conn = @import("conn.zig").Conn;
 const KeyLog = @import("conn.zig").KeyLog;
@@ -385,10 +387,10 @@ pub const ServerHandshakeStateTls13 = struct {
             ) catch continue;
             defer session_state.deinit(allocator);
 
-            const now = datetime.datetime.Datetime.now();
-            if (@divTrunc(now.toTimestamp(), std.time.ms_per_s) - session_state.created_at >
-                max_session_ticket_lifetime_seconds)
-            {
+            const now = self.conn.config.currentTimestampSeconds();
+            if (now.sub(session_state.created_at).order(DeltaSeconds.fromSeconds(
+                max_session_ticket_lifetime_seconds,
+            )).compare(.gt)) {
                 continue;
             }
 
@@ -888,10 +890,10 @@ pub const ServerHandshakeStateTls13 = struct {
                 var scts = try memx.dupeStringList(allocator, self.conn.scts);
                 errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
 
-                const now = datetime.datetime.Datetime.now();
+                const now = self.conn.config.currentTimestampSeconds();
                 break :blk_state SessionStateTls13{
                     .cipher_suite = self.suite.?.id,
-                    .created_at = @intCast(u64, @divTrunc(now.toTimestamp(), std.time.ms_per_s)),
+                    .created_at = now,
                     .resumption_secret = resumption_secret,
                     .certificate = CertificateChain{
                         .certificate_chain = certs_from_client,

@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const datetime = @import("datetime");
+const TimestampSeconds = @import("../timestamp.zig").TimestampSeconds;
 const HashType = @import("auth.zig").HashType;
 const SignatureType = @import("auth.zig").SignatureType;
 const selectSignatureScheme = @import("auth.zig").selectSignatureScheme;
@@ -572,7 +572,7 @@ pub const ClientHandshakeStateTls12 = struct {
             const scts = try memx.dupeStringList(allocator, self.conn.scts);
             errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
 
-            const now = datetime.datetime.Datetime.now();
+            const now = TimestampSeconds.now();
 
             var session = try allocator.create(ClientSessionState);
             session.* = .{

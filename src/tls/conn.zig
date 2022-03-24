@@ -5,8 +5,9 @@ const io = std.io;
 const math = std.math;
 const mem = std.mem;
 const net = std.net;
-const datetime = @import("datetime");
 const memx = @import("../memx.zig");
+const TimestampSeconds = @import("../timestamp.zig").TimestampSeconds;
+const DeltaSeconds = @import("../timestamp.zig").DeltaSeconds;
 const ClientAuthType = @import("client_auth.zig").ClientAuthType;
 const CertPool = @import("cert_pool.zig").CertPool;
 const CipherSuite = @import("cipher_suites.zig").CipherSuite;
@@ -191,7 +192,7 @@ pub const Conn = struct {
         // The Reader must be safe for use by multiple goroutines.
         random: std.rand.Random = std.crypto.random,
 
-        timestamp_seconds_fn: fn () i64 = std.time.timestamp,
+        timestamp_seconds_fn: fn () TimestampSeconds = TimestampSeconds.now,
 
         // certificates contains one or more certificate chains to present to the
         // other side of the connection. The first certificate compatible with the
@@ -372,10 +373,9 @@ pub const Conn = struct {
             }
             // Fast path for the common case where the key is fresh enough.
             if (self.auto_session_ticket_keys.len > 0 and
-                ((datetime.datetime.Datetime.now().toTimestamp() -
-                self.auto_session_ticket_keys[0].created.toTimestamp()) <
-                ticket_key_rotation_seconds * std.time.ms_per_s))
-            {
+                self.currentTimestampSeconds().sub(
+                self.auto_session_ticket_keys[0].created,
+            ).order(DeltaSeconds.fromSeconds(ticket_key_rotation_seconds)).compare(.lt)) {
                 return try allocator.dupe(TicketKey, self.auto_session_ticket_keys);
             }
 
@@ -383,10 +383,9 @@ pub const Conn = struct {
 
             // Re-check the condition in case it changed since obtaining the new lock.
             if (self.auto_session_ticket_keys.len == 0 or
-                ((datetime.datetime.Datetime.now().toTimestamp() -
-                self.auto_session_ticket_keys[0].created.toTimestamp()) >=
-                ticket_key_rotation_seconds * std.time.ms_per_s))
-            {
+                self.currentTimestampSeconds().sub(
+                self.auto_session_ticket_keys[0].created,
+            ).order(DeltaSeconds.fromSeconds(ticket_key_rotation_seconds)).compare(.gte)) {
                 var new_key: [32]u8 = undefined;
                 self.random.bytes(&new_key);
 
@@ -399,10 +398,9 @@ pub const Conn = struct {
                 try valid_keys.append(self.ticketKeyFromBytes(new_key));
                 for (self.auto_session_ticket_keys) |key| {
                     // While rotating the current key, also remove any expired ones.
-                    if ((datetime.datetime.Datetime.now().toTimestamp() -
-                        key.created.toTimestamp()) <
-                        tiket_key_lifetime_seconds * std.time.ms_per_s)
-                    {
+                    if (self.currentTimestampSeconds().sub(
+                        self.auto_session_ticket_keys[0].created,
+                    ).order(DeltaSeconds.fromSeconds(tiket_key_lifetime_seconds)).compare(.lt)) {
                         try valid_keys.append(key);
                     }
                 }
@@ -432,11 +430,11 @@ pub const Conn = struct {
                 .key_name = hashed[0..TicketKey.name_len].*,
                 .aes_key = hashed[TicketKey.name_len .. TicketKey.name_len + 16].*,
                 .hmac_key = hashed[TicketKey.name_len + 16 .. TicketKey.name_len + 32].*,
-                .created = datetime.datetime.Datetime.now(),
+                .created = self.currentTimestampSeconds(),
             };
         }
 
-        pub fn currentTimestampSeconds(self: *Config) i64 {
+        pub fn currentTimestampSeconds(self: *const Config) TimestampSeconds {
             return self.timestamp_seconds_fn();
         }
 
@@ -792,7 +790,7 @@ pub const Conn = struct {
             const scts = try memx.dupeStringList(allocator, self.scts);
             errdefer memx.freeElemsAndFreeSlice([]const u8, scts, allocator);
 
-            const now = datetime.datetime.Datetime.now();
+            const now = self.config.currentTimestampSeconds();
 
             var s = try allocator.create(ClientSessionState);
             s.* = .{
@@ -806,7 +804,7 @@ pub const Conn = struct {
                 .ocsp_response = ocsp_response,
                 .scts = scts,
                 .nonce = nonce,
-                .use_by = now.shiftSeconds(msg.lifetime),
+                .use_by = now.add(DeltaSeconds.fromSeconds(msg.lifetime)),
                 .age_add = msg.age_add,
             };
             break :blk s;
@@ -1574,7 +1572,7 @@ pub const Conn = struct {
 
             const opts = VerifyOptions{
                 .roots = &root_pool,
-                .current_time = datetime.datetime.Datetime.now(),
+                .current_time = self.config.currentTimestampSeconds(),
                 .dns_name = self.config.server_name,
                 .intermediates = &intermediate_pool,
             };
@@ -1679,7 +1677,7 @@ pub const Conn = struct {
 
             const opts = VerifyOptions{
                 .roots = &self.config.client_cas.?,
-                .current_time = datetime.datetime.Datetime.now(),
+                .current_time = self.config.currentTimestampSeconds(),
                 .intermediates = &intermediate_pool,
                 .key_usages = &[_]x509.ExtKeyUsage{.client_auth},
             };
@@ -1766,8 +1764,8 @@ pub const Conn = struct {
             }
 
             const server_cert = session.?.server_certificates[0];
-            const now = datetime.datetime.Datetime.now();
-            if (now.gt(server_cert.not_after)) {
+            const now = self.config.currentTimestampSeconds();
+            if (now.order(server_cert.not_after).compare(.gt)) {
                 // Expired certificate, delete the entry.
                 self.config.client_session_cache.?.remove(cache_key);
                 std.log.info("Conn.loadSession early exit#6", .{});
@@ -1794,8 +1792,8 @@ pub const Conn = struct {
         }
 
         // Check that the session ticket is not expired.
-        const now = datetime.datetime.Datetime.now();
-        if (session.?.use_by != null and now.gt(session.?.use_by.?)) {
+        const now = self.config.currentTimestampSeconds();
+        if (session.?.use_by != null and now.order(session.?.use_by.?).compare(.gt)) {
             self.config.client_session_cache.?.remove(cache_key);
             std.log.info("Conn.loadSession early exit#10", .{});
             return ret;
@@ -1822,10 +1820,7 @@ pub const Conn = struct {
         }
 
         // Set the pre_shared_key extension. See RFC 8446, Section 4.2.11.1.
-        const ticket_age = @intCast(
-            u32,
-            @divTrunc(now.toTimestamp() - session.?.received_at.toTimestamp(), std.time.ms_per_s),
-        );
+        const ticket_age = @intCast(u32, now.sub(session.?.received_at).seconds);
         memx.deinitSliceAndElems(PskIdentity, hello.psk_identities, allocator);
         hello.psk_identities = blk: {
             const label = try allocator.dupe(u8, session.?.session_ticket);

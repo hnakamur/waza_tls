@@ -3,6 +3,7 @@ const crypto = std.crypto;
 const fmt = std.fmt;
 const math = std.math;
 const mem = std.mem;
+const DeltaSeconds = @import("../timestamp.zig").DeltaSeconds;
 const HashType = @import("auth.zig").HashType;
 const SignatureType = @import("auth.zig").SignatureType;
 const isSupportedSignatureAlgorithm = @import("auth.zig").isSupportedSignatureAlgorithm;
@@ -288,8 +289,10 @@ pub const ServerHandshakeStateTls12 = struct {
         std.log.info("ServerHandshakeStateTls12.checkForResumption updated session_state", .{});
 
         const created_at = self.session_state.?.created_at;
-        const now = @intCast(u64, self.conn.config.currentTimestampSeconds());
-        if (now - created_at > max_session_ticket_lifetime_seconds) {
+        const now = self.conn.config.currentTimestampSeconds();
+        if (now.sub(created_at).order(DeltaSeconds.fromSeconds(
+            max_session_ticket_lifetime_seconds,
+        )).compare(.gt)) {
             std.log.info("ServerHandshakeStateTls12.checkForResumption exit#5", .{});
             return false;
         }
@@ -789,7 +792,7 @@ pub const ServerHandshakeStateTls12 = struct {
             // the original time it was created.
             state.created_at
         else
-            @intCast(u64, self.conn.config.currentTimestampSeconds());
+            self.conn.config.currentTimestampSeconds();
 
         var state = blk_state: {
             var certs_from_client = blk_certs: {
