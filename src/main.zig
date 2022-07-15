@@ -10,4 +10,9 @@ const urix = @import("urix.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
+    _ = @import("tls.zig");
+    _ = @import("fmtx.zig");
+    _ = @import("memx.zig");
+    _ = @import("netx.zig");
+    _ = @import("urix.zig");
 }

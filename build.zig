@@ -3,7 +3,7 @@ const std = @import("std");
 const pkgs = struct {
     const hutaback = std.build.Pkg{
         .name = "hutaback",
-        .path = .{ .path = "./src/main.zig" },
+        .source = .{ .path = "./src/main.zig" },
         .dependencies = &[_]std.build.Pkg{
             datetime,
             uri,
@@ -12,12 +12,12 @@ const pkgs = struct {
 
     const datetime = std.build.Pkg{
         .name = "datetime",
-        .path = .{ .path = "./lib/zig-datetime/src/main.zig" },
+        .source = .{ .path = "./lib/zig-datetime/src/main.zig" },
     };
 
     const uri = std.build.Pkg{
         .name = "uri",
-        .path = .{ .path = "./lib/zig-uri/uri.zig" },
+        .source = .{ .path = "./lib/zig-uri/uri.zig" },
     };
 };
 
