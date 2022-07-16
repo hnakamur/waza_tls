@@ -1,23 +1,14 @@
 const std = @import("std");
 
 const pkgs = struct {
-    const hutaback = std.build.Pkg{
-        .name = "hutaback",
-        .path = .{ .path = "./src/main.zig" },
-        .dependencies = &[_]std.build.Pkg{
-            datetime,
-            uri,
-        },
-    };
-
     const datetime = std.build.Pkg{
         .name = "datetime",
-        .path = .{ .path = "./lib/zig-datetime/src/main.zig" },
+        .source = .{ .path = "./lib/zig-datetime/src/main.zig" },
     };
 
     const uri = std.build.Pkg{
         .name = "uri",
-        .path = .{ .path = "./lib/zig-uri/uri.zig" },
+        .source = .{ .path = "./lib/zig-uri/uri.zig" },
     };
 };
 
@@ -27,7 +18,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
     // const target = b.standardTargetOptions(.{});
 
-    const lib = b.addStaticLibrary("hutaback", "src/main.zig");
+    const lib = b.addStaticLibrary("waza_tls", "src/main.zig");
     lib.addPackage(pkgs.datetime);
     lib.setBuildMode(mode);
     lib.install();

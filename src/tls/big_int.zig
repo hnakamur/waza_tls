@@ -11,6 +11,9 @@ const Const = std.math.big.int.Const;
 const Mutable = std.math.big.int.Mutable;
 const Managed = std.math.big.int.Managed;
 const Allocator = std.mem.Allocator;
+const calcMulLimbsBufferLen = std.math.big.int.calcMulLimbsBufferLen;
+const calcDivLimbsBufferLen = std.math.big.int.calcDivLimbsBufferLen;
+const maxInt = std.math.maxInt;
 
 const bits = @import("bits.zig");
 
@@ -36,49 +39,138 @@ pub fn managedFromBytes(allocator: Allocator, buf: []const u8, endian: std.built
     };
 }
 
-pub fn mul(out: *Managed, a: Const, b: Const) !void {
-    const is_a_alias = a.limbs.ptr == out.limbs.ptr;
-    const is_b_alias = b.limbs.ptr == out.limbs.ptr;
+pub fn mul(rma: *Managed, a: Const, b: Const) Allocator.Error!void {
+    var a2 = a;
+    var b2 = b;
+    const is_a_alias = a.limbs.ptr == rma.limbs.ptr;
+    const is_b_alias = b.limbs.ptr == rma.limbs.ptr;
+    try rma.ensureMulCapacity(a, b);
+    var alias_count: usize = 0;
+    if (is_a_alias) {
+        a2.limbs.ptr = rma.limbs.ptr;
+        alias_count += 1;
+    }
+    if (is_b_alias) {
+        b2.limbs.ptr = rma.limbs.ptr;
+        alias_count += 1;
+    }
+    var m = rma.toMutable();
     if (is_a_alias or is_b_alias) {
-        try out.ensureMulCapacity(a, b);
-        var a2 = a;
-        var b2 = b;
-        if (is_a_alias) a2.limbs.ptr = out.limbs.ptr;
-        if (is_b_alias) b2.limbs.ptr = out.limbs.ptr;
-        try out.mul(a2, b2);
+        const limb_count = calcMulLimbsBufferLen(a2.limbs.len, b2.limbs.len, alias_count);
+        const limbs_buffer = try rma.allocator.alloc(Limb, limb_count);
+        defer rma.allocator.free(limbs_buffer);
+        m.mul(a2, b2, limbs_buffer, rma.allocator);
     } else {
-        try out.mul(a, b);
+        m.mulNoAlias(a2, b2, rma.allocator);
+    }
+    rma.setMetadata(m.positive, m.len);
+}
+
+/// r = a * a
+pub fn sqr(rma: *Managed, a: Const) Allocator.Error!void {
+    const needed_limbs = 2 * a.limbs.len + 1;
+
+    if (rma.limbs.ptr == a.limbs.ptr) {
+        var m = try Managed.initCapacity(rma.allocator, needed_limbs);
+        errdefer m.deinit();
+        var m_mut = m.toMutable();
+        m_mut.sqrNoAlias(a, rma.allocator);
+        m.setMetadata(m_mut.positive, m_mut.len);
+
+        rma.deinit();
+        rma.swap(&m);
+    } else {
+        try rma.ensureCapacity(needed_limbs);
+        var rma_mut = rma.toMutable();
+        rma_mut.sqrNoAlias(a, rma.allocator);
+        rma.setMetadata(rma_mut.positive, rma_mut.len);
     }
 }
 
-pub fn add(out: *Managed, a: Const, b: Const) !void {
-    const is_a_alias = a.limbs.ptr == out.limbs.ptr;
-    const is_b_alias = b.limbs.ptr == out.limbs.ptr;
-    if (is_a_alias or is_b_alias) {
-        try out.ensureAddCapacity(a, b);
-        var a2 = a;
-        var b2 = b;
-        if (is_a_alias) a2.limbs.ptr = out.limbs.ptr;
-        if (is_b_alias) b2.limbs.ptr = out.limbs.ptr;
-        try out.add(a2, b2);
-    } else {
-        try out.add(a, b);
-    }
+pub fn add(r: *Managed, a: Const, b: Const) Allocator.Error!void {
+    var a2 = a;
+    var b2 = b;
+    const is_a_alias = a.limbs.ptr == r.limbs.ptr;
+    const is_b_alias = b.limbs.ptr == r.limbs.ptr;
+    try r.ensureAddCapacity(a, b);
+    if (is_a_alias) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias) b2.limbs.ptr = r.limbs.ptr;
+    var m = r.toMutable();
+    m.add(a2, b2);
+    r.setMetadata(m.positive, m.len);
 }
 
-pub fn sub(out: *Managed, a: Const, b: Const) !void {
-    const is_a_alias = a.limbs.ptr == out.limbs.ptr;
-    const is_b_alias = b.limbs.ptr == out.limbs.ptr;
-    if (is_a_alias or is_b_alias) {
-        try out.ensureAddCapacity(a, b);
-        var a2 = a;
-        var b2 = b;
-        if (is_a_alias) a2.limbs.ptr = out.limbs.ptr;
-        if (is_b_alias) b2.limbs.ptr = out.limbs.ptr;
-        try out.sub(a2, b2);
-    } else {
-        try out.sub(a, b);
-    }
+pub fn sub(r: *Managed, a: Const, b: Const) Allocator.Error!void {
+    var a2 = a;
+    var b2 = b;
+    const is_a_alias = a.limbs.ptr == r.limbs.ptr;
+    const is_b_alias = b.limbs.ptr == r.limbs.ptr;
+    try r.ensureCapacity(math.max(a.limbs.len, b.limbs.len) + 1);
+    if (is_a_alias) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias) b2.limbs.ptr = r.limbs.ptr;
+    var m = r.toMutable();
+    m.sub(a2, b2);
+    r.setMetadata(m.positive, m.len);
+}
+
+/// q = a / b (rem r)
+///
+/// a / b are floored (rounded towards 0).
+///
+/// Returns an error if memory could not be allocated.
+pub fn divFloor(q: *Managed, r: *Managed, a: Const, b: Const) !void {
+    var a2 = a;
+    var b2 = b;
+
+    const is_a_alias_to_q = a.limbs.ptr == q.limbs.ptr;
+    const is_b_alias_to_q = b.limbs.ptr == q.limbs.ptr;
+    try q.ensureCapacity(a.limbs.len);
+    if (is_a_alias_to_q) a2.limbs.ptr = q.limbs.ptr;
+    if (is_b_alias_to_q) b2.limbs.ptr = q.limbs.ptr;
+
+    const is_a_alias_to_r = a2.limbs.ptr == r.limbs.ptr;
+    const is_b_alias_to_r = b2.limbs.ptr == r.limbs.ptr;
+    try r.ensureCapacity(b.limbs.len);
+    if (is_a_alias_to_r) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias_to_r) b2.limbs.ptr = r.limbs.ptr;
+
+    var mq = q.toMutable();
+    var mr = r.toMutable();
+    const limbs_buffer = try q.allocator.alloc(Limb, calcDivLimbsBufferLen(a2.limbs.len, b2.limbs.len));
+    defer q.allocator.free(limbs_buffer);
+    mq.divFloor(&mr, a2, b2, limbs_buffer);
+    q.setMetadata(mq.positive, mq.len);
+    r.setMetadata(mr.positive, mr.len);
+}
+
+/// q = a / b (rem r)
+///
+/// a / b are truncated (rounded towards -inf).
+///
+/// Returns an error if memory could not be allocated.
+pub fn divTrunc(q: *Managed, r: *Managed, a: Const, b: Const) !void {
+    var a2 = a;
+    var b2 = b;
+
+    const is_a_alias_to_q = a.limbs.ptr == q.limbs.ptr;
+    const is_b_alias_to_q = b.limbs.ptr == q.limbs.ptr;
+    try q.ensureCapacity(a.limbs.len);
+    if (is_a_alias_to_q) a2.limbs.ptr = q.limbs.ptr;
+    if (is_b_alias_to_q) b2.limbs.ptr = q.limbs.ptr;
+
+    const is_a_alias_to_r = a2.limbs.ptr == r.limbs.ptr;
+    const is_b_alias_to_r = b2.limbs.ptr == r.limbs.ptr;
+    try r.ensureCapacity(b.limbs.len);
+    if (is_a_alias_to_r) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias_to_r) b2.limbs.ptr = r.limbs.ptr;
+
+    var mq = q.toMutable();
+    var mr = r.toMutable();
+    const limbs_buffer = try q.allocator.alloc(Limb, calcDivLimbsBufferLen(a2.limbs.len, b2.limbs.len));
+    defer q.allocator.free(limbs_buffer);
+    mq.divTrunc(&mr, a2, b2, limbs_buffer);
+    q.setMetadata(mq.positive, mq.len);
+    r.setMetadata(mr.positive, mr.len);
 }
 
 // constFromBytes interprets buf as the bytes of a unsigned
@@ -304,7 +396,7 @@ pub fn mod(
 ) !void {
     var q = try Managed.init(r.allocator);
     defer q.deinit();
-    try q.divTrunc(r, x, y);
+    try divTrunc(&q, r, x, y);
     if (!r.isPositive()) {
         if (y.positive) {
             try add(r, r.toConst(), y);
@@ -412,7 +504,9 @@ test "mod" {
 ///
 /// rma's allocator is used for temporary storage to boost multiplication performance.
 pub fn gcd(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
+    std.log.debug("gcd start rma={*}, rma.limbs.len={}, a.len={}, b.len={}\n", .{ rma, rma.limbs.len, a.len(), b.len() });
     try rma.ensureCapacity(math.min(a.len(), b.len()));
+    std.log.debug("gcd ensured rma={*}, rma.limbs.len={}, a.len={}, b.len={}\n", .{ rma, rma.limbs.len, a.len(), b.len() });
     var m = rma.toMutable();
     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
     defer limbs_buffer.deinit();
@@ -748,7 +842,7 @@ fn lehmerGcd(
             yy.negate();
         }
         try sub(yy, a.toConst(), yy.toConst());
-        try yy.divTrunc(&r, yy.toConst(), b_c);
+        try divTrunc(yy, &r, yy.toConst(), b_c);
         // try yy.copy(y_m.toConst());
     }
     if (x) |xx| {
@@ -891,7 +985,7 @@ fn euclidUpdate(
     t: *Managed,
     extended: bool,
 ) !void {
-    try q.divTrunc(r, a.toConst(), b.toConst());
+    try divTrunc(q, r, a.toConst(), b.toConst());
 
     const tmp: Managed = a.*;
     a.* = b.*;
@@ -935,7 +1029,7 @@ fn expNn(
     if (y_abs.eq(one) and !m_abs.eqZero()) {
         var q = try Managed.init(allocator);
         defer q.deinit();
-        try q.divFloor(out, x_abs, m_abs);
+        try divFloor(&q, out, x_abs, m_abs);
         return;
     }
     // y > 1
@@ -981,16 +1075,16 @@ fn expNn(
     defer r.deinit();
     var j: usize = 0;
     while (j < w) : (j += 1) {
-        try zz.sqr(z.toConst());
+        try sqr(&zz, z.toConst());
         zz.swap(&z);
 
         if (v & mask != 0) {
-            try zz.mul(z.toConst(), x_abs);
+            try mul(&zz, z.toConst(), x_abs);
             zz.swap(&z);
         }
 
         if (!m_abs.eqZero()) {
-            try zz.divFloor(&r, z.toConst(), m_abs);
+            try divFloor(&zz, &r, z.toConst(), m_abs);
             zz.swap(&q);
             z.swap(&r);
         }
@@ -1004,16 +1098,16 @@ fn expNn(
 
         j = 0;
         while (j < @bitSizeOf(Limb)) : (j += 1) {
-            try zz.sqr(z.toConst());
+            try sqr(&zz, z.toConst());
             zz.swap(&z);
 
             if (v & mask != 0) {
-                try zz.mul(z.toConst(), x_abs);
+                try mul(&zz, z.toConst(), x_abs);
                 zz.swap(&z);
             }
 
             if (!m_abs.eqZero()) {
-                try zz.divFloor(&r, z.toConst(), m_abs);
+                try divFloor(&zz, &r, z.toConst(), m_abs);
                 zz.swap(&q);
                 z.swap(&r);
             }
@@ -1059,11 +1153,11 @@ fn expNnWindowed(
         var p2 = &powers[i / 2];
         var p = &powers[i];
         var p1 = &powers[i + 1];
-        try p.sqr(p2.toConst());
-        try zz.divTrunc(&r, p.toConst(), m_abs);
+        try sqr(p, p2.toConst());
+        try divTrunc(&zz, &r, p.toConst(), m_abs);
         p.swap(&r);
         try mul(p1, p.toConst(), x_abs);
-        try zz.divTrunc(&r, p1.toConst(), m_abs);
+        try divTrunc(&zz, &r, p1.toConst(), m_abs);
         p1.swap(&r);
     }
 
@@ -1078,30 +1172,30 @@ fn expNnWindowed(
                 // Unrolled loop for significant performance
                 // gain. Use go test -bench=".*" in crypto/rsa
                 // to check performance before making changes.
-                try zz.sqr(z.toConst());
+                try sqr(&zz, z.toConst());
                 zz.swap(&z);
-                try zz.divTrunc(&r, z.toConst(), m_abs);
+                try divTrunc(&zz, &r, z.toConst(), m_abs);
                 z.swap(&r);
 
-                try zz.sqr(z.toConst());
+                try sqr(&zz, z.toConst());
                 zz.swap(&z);
-                try zz.divTrunc(&r, z.toConst(), m_abs);
+                try divTrunc(&zz, &r, z.toConst(), m_abs);
                 z.swap(&r);
 
-                try zz.sqr(z.toConst());
+                try sqr(&zz, z.toConst());
                 zz.swap(&z);
-                try zz.divTrunc(&r, z.toConst(), m_abs);
+                try divTrunc(&zz, &r, z.toConst(), m_abs);
                 z.swap(&r);
 
-                try zz.sqr(z.toConst());
+                try sqr(&zz, z.toConst());
                 zz.swap(&z);
-                try zz.divTrunc(&r, z.toConst(), m_abs);
+                try divTrunc(&zz, &r, z.toConst(), m_abs);
                 z.swap(&r);
             }
 
             try mul(&zz, z.toConst(), powers[yi >> (@bitSizeOf(Limb) - n)].toConst());
             zz.swap(&z);
-            try zz.divTrunc(&r, z.toConst(), m_abs);
+            try divTrunc(&zz, &r, z.toConst(), m_abs);
             z.swap(&r);
 
             yi <<= n;
@@ -1129,7 +1223,7 @@ fn expNnMontgomery(
         var q = try Managed.init(allocator);
         defer q.deinit();
         var r = try Managed.initCapacity(allocator, m_len);
-        try q.divTrunc(&r, x_abs, m_abs);
+        try divTrunc(&q, &r, x_abs, m_abs);
         // Note: now r.len() <= m_len, not guaranteed ==.
         break :blk r;
     } else try x_abs.toManaged(allocator);
@@ -1156,10 +1250,10 @@ fn expNnMontgomery(
     defer rr.deinit();
     var zz = try Managed.init(allocator);
     defer zz.deinit();
-    try zz.shiftLeft(rr, 2 * m_len * @bitSizeOf(Limb));
+    try zz.shiftLeft(&rr, 2 * m_len * @bitSizeOf(Limb));
     var q = try Managed.init(allocator);
     defer q.deinit();
-    try q.divTrunc(&rr, zz.toConst(), m_abs);
+    try divTrunc(&q, &rr, zz.toConst(), m_abs);
     if (rr.len() < m_len) {
         try ensureCapacityZero(&rr, m_len);
     }
@@ -1280,7 +1374,7 @@ fn expNnMontgomery(
         try sub(&zz2m, zz2m.toConst(), m_abs);
         if (zz2m.order(m_abs_m).compare(.gte)) {
             try zz.copy(zz2m.toConst());
-            try zz2m.divTrunc(&rr, zz.toConst(), m_abs);
+            try divTrunc(&zz2m, &rr, zz.toConst(), m_abs);
         }
     }
 
@@ -1434,7 +1528,7 @@ pub fn unsignedRandomLessThan(out: *Managed, rand: std.rand.Random, max: Const) 
     }
 
     // var n = try math.big.int.Managed.initCapacity(allocator, max.limbs.len);
-    try out.sub(max, one);
+    try sub(out, max, one);
     // bitLen is the maximum bit length needed to encode a value < max.
     const bit_len = out.bitCountAbs();
     if (bit_len == 0) {
@@ -1693,64 +1787,6 @@ test "exp" {
     );
 }
 
-test "sub alias" {
-    testing.log_level = .err;
-    const Test = struct {
-        fn subWithPriorEnsureAddCapacity(z: *Managed, m: Const) !void {
-            try z.ensureAddCapacity(m, z.toConst().abs());
-            try z.sub(m, z.toConst().abs());
-        }
-
-        fn subWithoutPriorEnsureAddCapacity(z: *Managed, m: Const) !void {
-            try z.sub(m, z.toConst().abs());
-        }
-    };
-
-    const allocator = testing.allocator;
-    @setEvalBranchQuota(10000);
-
-    {
-        var z = try Managed.initSet(
-            allocator,
-            281922260841133273551070008025043459914555276268337460643460315108526877765261390464352640496671039887789192505298225252794539957185024768842469313161479764129247224181297189401525990925473795326087755094680584008760347811744316689416240130559700085054950633118266475951840800503487485174955924840394049387045989174404949532788547856893369861895770550960914964280527618589465570877605006694415646846171541358662415892984829085205264645240029384180584221302020859884571200976183374536230510251046143237942841512234402830927839775811565384377262636188961565843464936744103267299036324029111735191229863576145323218377,
-        );
-        defer z.deinit();
-        var m = try Managed.initSet(
-            allocator,
-            21766174458617435773191008891802753781907668374255538511144643224689886235383840957210909013086056401571399717235807266581649606472148410291413364152197364477180887395655483738115072677402235101762521901569820740293149529620419333266262073471054548368736039519702486226506248861060256971802984953561121442680157668000761429988222457090413873973970171927093992114751765168063614761119615476233422096442783117971236371647333871414335895773474667308967050807005509320424799678417036867928316761272274230314067548291133582479583061439577559347101961771406173684378522703483495337037655006751328447510550299250924469288819,
-        );
-        defer m.deinit();
-        var want = try Managed.initSet(
-            allocator,
-            221503744410097572714424432689452474944933261111882489724412939673449476138580361746108072070780759112254409954541920252236567038487796228021262561231842396760302484121486343614940843809133697231816809313775694775288050525339495825036677245403768055014942285011616197914531600032879766064616687478501185665548112407649201707765807232704160977399387903543110742699894728509597299313975266799916367866665040153940635835025966509270328338606903372697919064849984499606715888609823394778212026787653348000948519904029117189552396594008893588291611660479882127349454613194675600607442687681360348714846396843551405135049,
-        );
-        defer want.deinit();
-        try Test.subWithoutPriorEnsureAddCapacity(&z, m.toConst());
-        try testing.expect(z.eq(want));
-    }
-
-    {
-        var z = try Managed.initSet(
-            allocator,
-            281922260841133273551070008025043459914555276268337460643460315108526877765261390464352640496671039887789192505298225252794539957185024768842469313161479764129247224181297189401525990925473795326087755094680584008760347811744316689416240130559700085054950633118266475951840800503487485174955924840394049387045989174404949532788547856893369861895770550960914964280527618589465570877605006694415646846171541358662415892984829085205264645240029384180584221302020859884571200976183374536230510251046143237942841512234402830927839775811565384377262636188961565843464936744103267299036324029111735191229863576145323218377,
-        );
-        defer z.deinit();
-        var m = try Managed.initSet(
-            allocator,
-            21766174458617435773191008891802753781907668374255538511144643224689886235383840957210909013086056401571399717235807266581649606472148410291413364152197364477180887395655483738115072677402235101762521901569820740293149529620419333266262073471054548368736039519702486226506248861060256971802984953561121442680157668000761429988222457090413873973970171927093992114751765168063614761119615476233422096442783117971236371647333871414335895773474667308967050807005509320424799678417036867928316761272274230314067548291133582479583061439577559347101961771406173684378522703483495337037655006751328447510550299250924469288819,
-        );
-        defer m.deinit();
-        var want = try Managed.initSet(
-            allocator,
-            21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442,
-        );
-        defer want.deinit();
-
-        try Test.subWithPriorEnsureAddCapacity(&z, m.toConst());
-        try testing.expect(z.eq(want));
-    }
-}
-
 test "expNnMontgomery" {
     testing.log_level = .err;
     const f = struct {
@@ -1918,7 +1954,7 @@ test "bigIntDivTrunc" {
                 defer big_q.deinit();
                 var big_r = try Managed.init(allocator);
                 defer big_r.deinit();
-                try big_q.divTrunc(&big_r, big_x.toConst(), big_y.toConst());
+                try divTrunc(&big_q, &big_r, big_x.toConst(), big_y.toConst());
                 try testing.expectEqual(q, try big_q.to(i64));
                 try testing.expectEqual(r, try big_r.to(i64));
             }
@@ -1930,7 +1966,7 @@ test "bigIntDivTrunc" {
                 defer big_q.deinit();
                 var big_r = try Managed.initSet(allocator, x);
                 defer big_r.deinit();
-                try big_q.divTrunc(&big_r, big_r.toConst(), big_q.toConst());
+                try divTrunc(&big_q, &big_r, big_r.toConst(), big_q.toConst());
                 try testing.expectEqual(q, try big_q.to(i64));
                 try testing.expectEqual(r, try big_r.to(i64));
             }
@@ -1939,7 +1975,7 @@ test "bigIntDivTrunc" {
                 defer big_q.deinit();
                 var big_r = try Managed.initSet(allocator, y);
                 defer big_r.deinit();
-                try big_q.divTrunc(&big_r, big_q.toConst(), big_r.toConst());
+                try divTrunc(&big_q, &big_r, big_q.toConst(), big_r.toConst());
                 try testing.expectEqual(q, try big_q.to(i64));
                 try testing.expectEqual(r, try big_r.to(i64));
             }
@@ -2019,5 +2055,109 @@ test "managedFromBytes" {
         defer allocator.free(got);
 
         try testing.expectEqualStrings(c.want, got);
+    }
+}
+
+test "big.int mul multi-multi no alias" {
+    var a = try Managed.initSet(testing.allocator, 0);
+    defer a.deinit();
+    var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer b.deinit();
+    var c = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer c.deinit();
+
+    try mul(&a, b.toConst(), c.toConst());
+
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
+
+    try testing.expect(a.eq(want));
+
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
+
+test "big.int mul multi-multi alias r with a and b" {
+    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer a.deinit();
+
+    try mul(&a, a.toConst(), a.toConst());
+
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
+
+    try testing.expect(a.eq(want));
+
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
+
+test "big.int sqr multi-multi no alias" {
+    var a = try Managed.initSet(testing.allocator, 0);
+    defer a.deinit();
+    var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer b.deinit();
+
+    try sqr(&a, b.toConst());
+
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
+
+    try testing.expect(a.eq(want));
+
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
+
+test "big.int sqr multi-multi alias r with a" {
+    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer a.deinit();
+
+    try sqr(&a, a.toConst());
+
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
+
+    try testing.expect(a.eq(want));
+
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
+
+test "big.int add multi-multi alias r with a and b" {
+    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer a.deinit();
+
+    try add(&a, a.toConst(), a.toConst());
+
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb));
+    defer want.deinit();
+
+    try testing.expect(a.eq(want));
+
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 4), a.limbs.len);
+    }
+}
+
+test "big.int sub multi-multi alias r with a and b" {
+    var a = try Managed.initSet(testing.allocator, 0);
+    defer a.deinit();
+    var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer b.deinit();
+
+    try sub(&a, a.toConst(), b.toConst());
+
+    var want = try Managed.initSet(testing.allocator, -2 * maxInt(Limb));
+    defer want.deinit();
+
+    try testing.expect(a.eq(want));
+
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 4), a.limbs.len);
     }
 }

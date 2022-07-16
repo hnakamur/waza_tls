@@ -430,7 +430,7 @@ fn hashToInt(
     };
     if (hash2.len * @bitSizeOf(u8) > field_bits) {
         const excess: usize = hash2.len * @bitSizeOf(u8) - field_bits;
-        try out.shiftRight(out.*, excess);
+        try out.shiftRight(out, excess);
     }
 }
 
