@@ -115,6 +115,36 @@ pub fn sub(r: *Managed, a: Const, b: Const) Allocator.Error!void {
 
 /// q = a / b (rem r)
 ///
+/// a / b are floored (rounded towards 0).
+///
+/// Returns an error if memory could not be allocated.
+pub fn divFloor(q: *Managed, r: *Managed, a: Const, b: Const) !void {
+    var a2 = a;
+    var b2 = b;
+
+    const is_a_alias_to_q = a.limbs.ptr == q.limbs.ptr;
+    const is_b_alias_to_q = b.limbs.ptr == q.limbs.ptr;
+    try q.ensureCapacity(a.limbs.len);
+    if (is_a_alias_to_q) a2.limbs.ptr = q.limbs.ptr;
+    if (is_b_alias_to_q) b2.limbs.ptr = q.limbs.ptr;
+
+    const is_a_alias_to_r = a2.limbs.ptr == r.limbs.ptr;
+    const is_b_alias_to_r = b2.limbs.ptr == r.limbs.ptr;
+    try r.ensureCapacity(b.limbs.len);
+    if (is_a_alias_to_r) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias_to_r) b2.limbs.ptr = r.limbs.ptr;
+
+    var mq = q.toMutable();
+    var mr = r.toMutable();
+    const limbs_buffer = try q.allocator.alloc(Limb, calcDivLimbsBufferLen(a2.limbs.len, b2.limbs.len));
+    defer q.allocator.free(limbs_buffer);
+    mq.divFloor(&mr, a2, b2, limbs_buffer);
+    q.setMetadata(mq.positive, mq.len);
+    r.setMetadata(mr.positive, mr.len);
+}
+
+/// q = a / b (rem r)
+///
 /// a / b are truncated (rounded towards -inf).
 ///
 /// Returns an error if memory could not be allocated.
@@ -227,53 +257,53 @@ pub fn formatConst(
     );
 }
 
-// // exp returns x**y mod |m| (i.e. the sign of m is ignored).
-// // If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
-// // and x and m are not relatively prime, returns 0.
-// //
-// // Modular exponentiation of inputs of a particular size is not a
-// // cryptographically constant-time operation.
-// pub fn exp(
-//     out: *Managed,
-//     x: Const,
-//     y: Const,
-//     m: Const,
-// ) !void {
-//     const allocator = out.allocator;
+// exp returns x**y mod |m| (i.e. the sign of m is ignored).
+// If m == 0, returns x**y unless y <= 0 then returns 1. If m != 0, y < 0,
+// and x and m are not relatively prime, returns 0.
+//
+// Modular exponentiation of inputs of a particular size is not a
+// cryptographically constant-time operation.
+pub fn exp(
+    out: *Managed,
+    x: Const,
+    y: Const,
+    m: Const,
+) !void {
+    const allocator = out.allocator;
 
-//     // See Knuth, volume 2, section 4.6.3.
-//     var x2 = try Managed.init(allocator);
-//     defer x2.deinit();
-//     try x2.copy(x.abs());
-//     if (!y.positive) {
-//         if (m.eqZero()) {
-//             try out.set(1);
-//             return;
-//         }
-//         // for y < 0: x**y mod m == (x**(-1))**|y| mod m
-//         var inverse = try Managed.init(allocator);
-//         defer inverse.deinit();
-//         try modInverse(&inverse, x, m);
-//         if (inverse.eqZero()) {
-//             try out.set(0);
-//             return;
-//         }
-//         inverse.abs();
-//         x2.swap(&inverse);
-//     }
-//     const m_abs = m.abs();
-//     var z = try Managed.init(allocator);
-//     defer z.deinit();
-//     try expNn(&z, x2.toConst().abs(), y.abs(), m_abs);
-//     z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
-//     if (!z.isPositive() and !m.eqZero()) {
-//         // make modulus result positive
-//         // z == x**y mod |m| && 0 <= z < |m|
-//         try sub(&z, m_abs, z.toConst().abs());
-//         z.abs();
-//     }
-//     out.swap(&z);
-// }
+    // See Knuth, volume 2, section 4.6.3.
+    var x2 = try Managed.init(allocator);
+    defer x2.deinit();
+    try x2.copy(x.abs());
+    if (!y.positive) {
+        if (m.eqZero()) {
+            try out.set(1);
+            return;
+        }
+        // for y < 0: x**y mod m == (x**(-1))**|y| mod m
+        var inverse = try Managed.init(allocator);
+        defer inverse.deinit();
+        try modInverse(&inverse, x, m);
+        if (inverse.eqZero()) {
+            try out.set(0);
+            return;
+        }
+        inverse.abs();
+        x2.swap(&inverse);
+    }
+    const m_abs = m.abs();
+    var z = try Managed.init(allocator);
+    defer z.deinit();
+    try expNn(&z, x2.toConst().abs(), y.abs(), m_abs);
+    z.setSign(!(!z.eqZero() and !x.positive and !y.eqZero() and y.limbs[0] & 1 == 1));
+    if (!z.isPositive() and !m.eqZero()) {
+        // make modulus result positive
+        // z == x**y mod |m| && 0 <= z < |m|
+        try sub(&z, m_abs, z.toConst().abs());
+        z.abs();
+    }
+    out.swap(&z);
+}
 
 // pub fn deinitConst(c: Const, allocator: Allocator) void {
 //     allocator.free(c.limbs);
@@ -971,122 +1001,122 @@ fn euclidUpdate(
     }
 }
 
-// // expNn returns x**y mod m if m != 0,
-// // otherwise it returns x**y.
-// fn expNn(
-//     out: *Managed,
-//     x_abs: Const,
-//     y_abs: Const,
-//     m_abs: Const,
-// ) !void {
-//     const allocator = out.allocator;
+// expNn returns x**y mod m if m != 0,
+// otherwise it returns x**y.
+fn expNn(
+    out: *Managed,
+    x_abs: Const,
+    y_abs: Const,
+    m_abs: Const,
+) !void {
+    const allocator = out.allocator;
 
-//     // x**y mod 1 == 0
-//     if (m_abs.eq(one)) {
-//         try out.set(0);
-//         return;
-//     }
-//     // m == 0 || m > 1
+    // x**y mod 1 == 0
+    if (m_abs.eq(one)) {
+        try out.set(0);
+        return;
+    }
+    // m == 0 || m > 1
 
-//     // x**0 == 1
-//     if (y_abs.eq(zero)) {
-//         try out.set(1);
-//         return;
-//     }
-//     // y > 0
+    // x**0 == 1
+    if (y_abs.eq(zero)) {
+        try out.set(1);
+        return;
+    }
+    // y > 0
 
-//     // x**1 mod m == x mod m
-//     if (y_abs.eq(one) and !m_abs.eqZero()) {
-//         var q = try Managed.init(allocator);
-//         defer q.deinit();
-//         try q.divFloor(out, x_abs, m_abs);
-//         return;
-//     }
-//     // y > 1
+    // x**1 mod m == x mod m
+    if (y_abs.eq(one) and !m_abs.eqZero()) {
+        var q = try Managed.init(allocator);
+        defer q.deinit();
+        try divFloor(&q, out, x_abs, m_abs);
+        return;
+    }
+    // y > 1
 
-//     // We likely end up being as long as the modulus.
-//     var z = try Managed.initCapacity(allocator, m_abs.limbs.len);
-//     defer z.deinit();
-//     try z.copy(x_abs);
+    // We likely end up being as long as the modulus.
+    var z = try Managed.initCapacity(allocator, m_abs.limbs.len);
+    defer z.deinit();
+    try z.copy(x_abs);
 
-//     // If the base is non-trivial and the exponent is large, we use
-//     // 4-bit, windowed exponentiation. This involves precomputing 14 values
-//     // (x^2...x^15) but then reduces the number of multiply-reduces by a
-//     // third. Even for a 32-bit exponent, this reduces the number of
-//     // operations. Uses Montgomery method for odd moduli.
-//     // const y_abs_limbs_len = normalizedLimbsLen(y_abs);
-//     const y_abs_limbs_len = y_abs.limbs.len;
-//     if (x_abs.order(one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
-//         if (m_abs.limbs[0] & 1 == 1) {
-//             try expNnMontgomery(out, x_abs, y_abs, m_abs);
-//             return;
-//         }
-//         try expNnWindowed(out, x_abs, y_abs, m_abs);
-//         return;
-//     }
+    // If the base is non-trivial and the exponent is large, we use
+    // 4-bit, windowed exponentiation. This involves precomputing 14 values
+    // (x^2...x^15) but then reduces the number of multiply-reduces by a
+    // third. Even for a 32-bit exponent, this reduces the number of
+    // operations. Uses Montgomery method for odd moduli.
+    // const y_abs_limbs_len = normalizedLimbsLen(y_abs);
+    const y_abs_limbs_len = y_abs.limbs.len;
+    if (x_abs.order(one) == .gt and y_abs_limbs_len > 1 and !m_abs.eqZero()) {
+        if (m_abs.limbs[0] & 1 == 1) {
+            try expNnMontgomery(out, x_abs, y_abs, m_abs);
+            return;
+        }
+        try expNnWindowed(out, x_abs, y_abs, m_abs);
+        return;
+    }
 
-//     var v = y_abs.limbs[y_abs_limbs_len - 1]; // v > 0 because y_abs is normalized and y_abs > 0
-//     const shift = nlz(v) + 1;
-//     v = math.shl(Limb, v, shift);
-//     var q = try Managed.init(allocator);
-//     defer q.deinit();
+    var v = y_abs.limbs[y_abs_limbs_len - 1]; // v > 0 because y_abs is normalized and y_abs > 0
+    const shift = nlz(v) + 1;
+    v = math.shl(Limb, v, shift);
+    var q = try Managed.init(allocator);
+    defer q.deinit();
 
-//     const mask = math.shl(Limb, 1, @bitSizeOf(Limb) - 1);
+    const mask = math.shl(Limb, 1, @bitSizeOf(Limb) - 1);
 
-//     // We walk through the bits of the exponent one by one. Each time we
-//     // see a bit, we square, thus doubling the power. If the bit is a one,
-//     // we also multiply by x, thus adding one to the power.
-//     const w = @bitSizeOf(Limb) - shift;
-//     // zz and r are used to avoid allocating in mul and div as
-//     // otherwise the arguments would alias.
-//     var zz = try Managed.init(allocator);
-//     defer zz.deinit();
-//     var r = try Managed.init(allocator);
-//     defer r.deinit();
-//     var j: usize = 0;
-//     while (j < w) : (j += 1) {
-//         try zz.sqr(z.toConst());
-//         zz.swap(&z);
+    // We walk through the bits of the exponent one by one. Each time we
+    // see a bit, we square, thus doubling the power. If the bit is a one,
+    // we also multiply by x, thus adding one to the power.
+    const w = @bitSizeOf(Limb) - shift;
+    // zz and r are used to avoid allocating in mul and div as
+    // otherwise the arguments would alias.
+    var zz = try Managed.init(allocator);
+    defer zz.deinit();
+    var r = try Managed.init(allocator);
+    defer r.deinit();
+    var j: usize = 0;
+    while (j < w) : (j += 1) {
+        try sqr(&zz, z.toConst());
+        zz.swap(&z);
 
-//         if (v & mask != 0) {
-//             try zz.mul(z.toConst(), x_abs);
-//             zz.swap(&z);
-//         }
+        if (v & mask != 0) {
+            try mul(&zz, z.toConst(), x_abs);
+            zz.swap(&z);
+        }
 
-//         if (!m_abs.eqZero()) {
-//             try zz.divFloor(&r, z.toConst(), m_abs);
-//             zz.swap(&q);
-//             z.swap(&r);
-//         }
+        if (!m_abs.eqZero()) {
+            try divFloor(&zz, &r, z.toConst(), m_abs);
+            zz.swap(&q);
+            z.swap(&r);
+        }
 
-//         v = math.shl(Limb, v, 1);
-//     }
+        v = math.shl(Limb, v, 1);
+    }
 
-//     var i: isize = @intCast(isize, y_abs.limbs.len) - 2;
-//     while (i >= 0) : (i -= 1) {
-//         v = y_abs.limbs[@intCast(usize, i)];
+    var i: isize = @intCast(isize, y_abs.limbs.len) - 2;
+    while (i >= 0) : (i -= 1) {
+        v = y_abs.limbs[@intCast(usize, i)];
 
-//         j = 0;
-//         while (j < @bitSizeOf(Limb)) : (j += 1) {
-//             try zz.sqr(z.toConst());
-//             zz.swap(&z);
+        j = 0;
+        while (j < @bitSizeOf(Limb)) : (j += 1) {
+            try sqr(&zz, z.toConst());
+            zz.swap(&z);
 
-//             if (v & mask != 0) {
-//                 try zz.mul(z.toConst(), x_abs);
-//                 zz.swap(&z);
-//             }
+            if (v & mask != 0) {
+                try mul(&zz, z.toConst(), x_abs);
+                zz.swap(&z);
+            }
 
-//             if (!m_abs.eqZero()) {
-//                 try zz.divFloor(&r, z.toConst(), m_abs);
-//                 zz.swap(&q);
-//                 z.swap(&r);
-//             }
+            if (!m_abs.eqZero()) {
+                try divFloor(&zz, &r, z.toConst(), m_abs);
+                zz.swap(&q);
+                z.swap(&r);
+            }
 
-//             v = math.shl(Limb, v, 1);
-//         }
-//     }
-//     out.swap(&z);
-// }
+            v = math.shl(Limb, v, 1);
+        }
+    }
+    out.swap(&z);
+}
 
 /// expNnWindowed calculates x**y mod m using a fixed, 4-bit window.
 fn expNnWindowed(
@@ -1586,176 +1616,176 @@ test "bigint.unsignedRandomLessThan" {
 //     try testing.expectEqualStrings("335812727627494322174", s);
 // }
 
-// test "exp" {
-//     testing.log_level = .err;
+test "exp" {
+    testing.log_level = .err;
 
-//     const f = struct {
-//         fn f(
-//             x_base: u8,
-//             x: []const u8,
-//             y_base: u8,
-//             y: []const u8,
-//             m_base: u8,
-//             m: []const u8,
-//             want_base: u8,
-//             want: []const u8,
-//         ) !void {
-//             const allocator = testing.allocator;
+    const f = struct {
+        fn f(
+            x_base: u8,
+            x: []const u8,
+            y_base: u8,
+            y: []const u8,
+            m_base: u8,
+            m: []const u8,
+            want_base: u8,
+            want: []const u8,
+        ) !void {
+            const allocator = testing.allocator;
 
-//             var x_m = try Managed.init(allocator);
-//             defer x_m.deinit();
-//             try x_m.setString(x_base, x);
+            var x_m = try Managed.init(allocator);
+            defer x_m.deinit();
+            try x_m.setString(x_base, x);
 
-//             var y_m = try Managed.init(allocator);
-//             defer y_m.deinit();
-//             try y_m.setString(y_base, y);
+            var y_m = try Managed.init(allocator);
+            defer y_m.deinit();
+            try y_m.setString(y_base, y);
 
-//             var m_m = try Managed.init(allocator);
-//             defer m_m.deinit();
-//             try m_m.setString(m_base, m);
+            var m_m = try Managed.init(allocator);
+            defer m_m.deinit();
+            try m_m.setString(m_base, m);
 
-//             var want_m = try Managed.init(allocator);
-//             defer want_m.deinit();
-//             try want_m.setString(want_base, want);
+            var want_m = try Managed.init(allocator);
+            defer want_m.deinit();
+            try want_m.setString(want_base, want);
 
-//             var got_m = try Managed.init(allocator);
-//             defer got_m.deinit();
-//             try exp(&got_m, x_m.toConst(), y_m.toConst(), m_m.toConst());
+            var got_m = try Managed.init(allocator);
+            defer got_m.deinit();
+            try exp(&got_m, x_m.toConst(), y_m.toConst(), m_m.toConst());
 
-//             if (!got_m.eq(want_m)) {
-//                 var got_s = try got_m.toString(allocator, 10, .lower);
-//                 defer allocator.free(got_s);
-//                 var want_s = try want_m.toString(allocator, 10, .lower);
-//                 defer allocator.free(want_s);
-//                 std.debug.print("result mismatch, got={s}, want={s}\n", .{ got_s, want_s });
-//                 return error.TestExpectedError;
-//             }
-//         }
-//     }.f;
+            if (!got_m.eq(want_m)) {
+                var got_s = try got_m.toString(allocator, 10, .lower);
+                defer allocator.free(got_s);
+                var want_s = try want_m.toString(allocator, 10, .lower);
+                defer allocator.free(want_s);
+                std.debug.print("result mismatch, got={s}, want={s}\n", .{ got_s, want_s });
+                return error.TestExpectedError;
+            }
+        }
+    }.f;
 
-//     // y <= 0
-//     try f(10, "0", 10, "0", 10, "0", 10, "1");
-//     try f(10, "1", 10, "0", 10, "0", 10, "1");
-//     try f(10, "-10", 10, "0", 10, "0", 10, "1");
-//     try f(10, "1234", 10, "-1", 10, "0", 10, "1");
-//     try f(10, "17", 10, "-100", 10, "1234", 10, "865");
-//     try f(10, "2", 10, "-100", 10, "1234", 10, "0");
+    // y <= 0
+    try f(10, "0", 10, "0", 10, "0", 10, "1");
+    try f(10, "1", 10, "0", 10, "0", 10, "1");
+    try f(10, "-10", 10, "0", 10, "0", 10, "1");
+    try f(10, "1234", 10, "-1", 10, "0", 10, "1");
+    try f(10, "17", 10, "-100", 10, "1234", 10, "865");
+    try f(10, "2", 10, "-100", 10, "1234", 10, "0");
 
-//     // m == 1
-//     try f(10, "0", 10, "0", 10, "1", 10, "0");
-//     try f(10, "1", 10, "0", 10, "1", 10, "0");
-//     try f(10, "-10", 10, "0", 10, "1", 10, "0");
-//     try f(10, "1234", 10, "-1", 10, "1", 10, "0");
+    // m == 1
+    try f(10, "0", 10, "0", 10, "1", 10, "0");
+    try f(10, "1", 10, "0", 10, "1", 10, "0");
+    try f(10, "-10", 10, "0", 10, "1", 10, "0");
+    try f(10, "1234", 10, "-1", 10, "1", 10, "0");
 
-//     // misc
-//     try f(10, "5", 10, "1", 10, "3", 10, "2");
-//     try f(10, "5", 10, "-7", 10, "0", 10, "1");
-//     try f(10, "-5", 10, "-7", 10, "0", 10, "1");
-//     try f(10, "5", 10, "0", 10, "0", 10, "1");
-//     try f(10, "-5", 10, "0", 10, "0", 10, "1");
-//     try f(10, "5", 10, "1", 10, "0", 10, "5");
-//     try f(10, "-5", 10, "1", 10, "0", 10, "-5");
-//     try f(10, "-5", 10, "1", 10, "7", 10, "2");
-//     try f(10, "-2", 10, "3", 10, "2", 10, "0");
-//     try f(10, "5", 10, "2", 10, "0", 10, "25");
-//     try f(10, "1", 10, "65537", 10, "2", 10, "1");
-//     try f(16, "8000000000000000", 10, "2", 10, "0", 16, "40000000000000000000000000000000");
-//     try f(16, "8000000000000000", 10, "2", 10, "6719", 10, "4944");
-//     try f(16, "8000000000000000", 10, "3", 10, "6719", 10, "5447");
-//     try f(16, "8000000000000000", 10, "1000", 10, "6719", 10, "1603");
-//     try f(16, "8000000000000000", 10, "1000000", 10, "6719", 10, "3199");
-//     try f(16, "8000000000000000", 10, "-1000000", 10, "6719", 10, "3663"); // 3663 = ModInverse(3199, 6719) Issue #25865
+    // misc
+    try f(10, "5", 10, "1", 10, "3", 10, "2");
+    try f(10, "5", 10, "-7", 10, "0", 10, "1");
+    try f(10, "-5", 10, "-7", 10, "0", 10, "1");
+    try f(10, "5", 10, "0", 10, "0", 10, "1");
+    try f(10, "-5", 10, "0", 10, "0", 10, "1");
+    try f(10, "5", 10, "1", 10, "0", 10, "5");
+    try f(10, "-5", 10, "1", 10, "0", 10, "-5");
+    try f(10, "-5", 10, "1", 10, "7", 10, "2");
+    try f(10, "-2", 10, "3", 10, "2", 10, "0");
+    try f(10, "5", 10, "2", 10, "0", 10, "25");
+    try f(10, "1", 10, "65537", 10, "2", 10, "1");
+    try f(16, "8000000000000000", 10, "2", 10, "0", 16, "40000000000000000000000000000000");
+    try f(16, "8000000000000000", 10, "2", 10, "6719", 10, "4944");
+    try f(16, "8000000000000000", 10, "3", 10, "6719", 10, "5447");
+    try f(16, "8000000000000000", 10, "1000", 10, "6719", 10, "1603");
+    try f(16, "8000000000000000", 10, "1000000", 10, "6719", 10, "3199");
+    try f(16, "8000000000000000", 10, "-1000000", 10, "6719", 10, "3663"); // 3663 = ModInverse(3199, 6719) Issue #25865
 
-//     try f(
-//         16,
-//         "ffffffffffffffffffffffffffffffff",
-//         16,
-//         "12345678123456781234567812345678123456789",
-//         16,
-//         "01112222333344445555666677778889",
-//         16,
-//         "36168FA1DB3AAE6C8CE647E137F97A",
-//     );
+    try f(
+        16,
+        "ffffffffffffffffffffffffffffffff",
+        16,
+        "12345678123456781234567812345678123456789",
+        16,
+        "01112222333344445555666677778889",
+        16,
+        "36168FA1DB3AAE6C8CE647E137F97A",
+    );
 
-//     try f(
-//         10,
-//         "2938462938472983472983659726349017249287491026512746239764525612965293865296239471239874193284792387498274256129746192347",
-//         10,
-//         "298472983472983471903246121093472394872319615612417471234712061",
-//         10,
-//         "29834729834729834729347290846729561262544958723956495615629569234729836259263598127342374289365912465901365498236492183464",
-//         10,
-//         "23537740700184054162508175125554701713153216681790245129157191391322321508055833908509185839069455749219131480588829346291",
-//     );
+    try f(
+        10,
+        "2938462938472983472983659726349017249287491026512746239764525612965293865296239471239874193284792387498274256129746192347",
+        10,
+        "298472983472983471903246121093472394872319615612417471234712061",
+        10,
+        "29834729834729834729347290846729561262544958723956495615629569234729836259263598127342374289365912465901365498236492183464",
+        10,
+        "23537740700184054162508175125554701713153216681790245129157191391322321508055833908509185839069455749219131480588829346291",
+    );
 
-//     // test case for issue 8822
-//     try f(
-//         10,
-//         "11001289118363089646017359372117963499250546375269047542777928006103246876688756735760905680604646624353196869572752623285140408755420374049317646428185270079555372763503115646054602867593662923894140940837479507194934267532831694565516466765025434902348314525627418515646588160955862839022051353653052947073136084780742729727874803457643848197499548297570026926927502505634297079527299004267769780768565695459945235586892627059178884998772989397505061206395455591503771677500931269477503508150175717121828518985901959919560700853226255420793148986854391552859459511723547532575574664944815966793196961286234040892865",
-//         16,
-//         "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
-//         16,
-//         "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73",
-//         10,
-//         "21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442",
-//     );
+    // test case for issue 8822
+    try f(
+        10,
+        "11001289118363089646017359372117963499250546375269047542777928006103246876688756735760905680604646624353196869572752623285140408755420374049317646428185270079555372763503115646054602867593662923894140940837479507194934267532831694565516466765025434902348314525627418515646588160955862839022051353653052947073136084780742729727874803457643848197499548297570026926927502505634297079527299004267769780768565695459945235586892627059178884998772989397505061206395455591503771677500931269477503508150175717121828518985901959919560700853226255420793148986854391552859459511723547532575574664944815966793196961286234040892865",
+        16,
+        "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
+        16,
+        "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73",
+        10,
+        "21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442",
+    );
 
-//     try f(
-//         16,
-//         "-1BCE04427D8032319A89E5C4136456671AC620883F2C4139E57F91307C485AD2D6204F4F87A58262652DB5DBBAC72B0613E51B835E7153BEC6068F5C8D696B74DBD18FEC316AEF73985CF0475663208EB46B4F17DD9DA55367B03323E5491A70997B90C059FB34809E6EE55BCFBD5F2F52233BFE62E6AA9E4E26A1D4C2439883D14F2633D55D8AA66A1ACD5595E778AC3A280517F1157989E70C1A437B849F1877B779CC3CDDEDE2DAA6594A6C66D181A00A5F777EE60596D8773998F6E988DEAE4CCA60E4DDCF9590543C89F74F603259FCAD71660D30294FBBE6490300F78A9D63FA660DC9417B8B9DDA28BEB3977B621B988E23D4D954F322C3540541BC649ABD504C50FADFD9F0987D58A2BF689313A285E773FF02899A6EF887D1D4A0D2",
-//         16,
-//         "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
-//         16,
-//         "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73",
-//         10,
-//         "21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442",
-//     );
+    try f(
+        16,
+        "-1BCE04427D8032319A89E5C4136456671AC620883F2C4139E57F91307C485AD2D6204F4F87A58262652DB5DBBAC72B0613E51B835E7153BEC6068F5C8D696B74DBD18FEC316AEF73985CF0475663208EB46B4F17DD9DA55367B03323E5491A70997B90C059FB34809E6EE55BCFBD5F2F52233BFE62E6AA9E4E26A1D4C2439883D14F2633D55D8AA66A1ACD5595E778AC3A280517F1157989E70C1A437B849F1877B779CC3CDDEDE2DAA6594A6C66D181A00A5F777EE60596D8773998F6E988DEAE4CCA60E4DDCF9590543C89F74F603259FCAD71660D30294FBBE6490300F78A9D63FA660DC9417B8B9DDA28BEB3977B621B988E23D4D954F322C3540541BC649ABD504C50FADFD9F0987D58A2BF689313A285E773FF02899A6EF887D1D4A0D2",
+        16,
+        "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
+        16,
+        "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73",
+        10,
+        "21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442",
+    );
 
-//     // test cases for issue 13907
-//     try f(16, "ffffffff00000001", 16, "ffffffff00000001", 16, "ffffffff00000001", 10, "0");
-//     try f(16, "ffffffffffffffff00000001", 16, "ffffffffffffffff00000001", 16, "ffffffffffffffff00000001", 10, "0");
-//     try f(
-//         16,
-//         "ffffffffffffffffffffffff00000001",
-//         16,
-//         "ffffffffffffffffffffffff00000001",
-//         16,
-//         "ffffffffffffffffffffffff00000001",
-//         10,
-//         "0",
-//     );
-//     try f(
-//         16,
-//         "ffffffffffffffffffffffffffffffff00000001",
-//         16,
-//         "ffffffffffffffffffffffffffffffff00000001",
-//         16,
-//         "ffffffffffffffffffffffffffffffff00000001",
-//         10,
-//         "0",
-//     );
+    // test cases for issue 13907
+    try f(16, "ffffffff00000001", 16, "ffffffff00000001", 16, "ffffffff00000001", 10, "0");
+    try f(16, "ffffffffffffffff00000001", 16, "ffffffffffffffff00000001", 16, "ffffffffffffffff00000001", 10, "0");
+    try f(
+        16,
+        "ffffffffffffffffffffffff00000001",
+        16,
+        "ffffffffffffffffffffffff00000001",
+        16,
+        "ffffffffffffffffffffffff00000001",
+        10,
+        "0",
+    );
+    try f(
+        16,
+        "ffffffffffffffffffffffffffffffff00000001",
+        16,
+        "ffffffffffffffffffffffffffffffff00000001",
+        16,
+        "ffffffffffffffffffffffffffffffff00000001",
+        10,
+        "0",
+    );
 
-//     try f(
-//         10,
-//         "2",
-//         16,
-//         "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
-//         16,
-//         "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73", // odd
-//         16,
-//         "6AADD3E3E424D5B713FCAA8D8945B1E055166132038C57BBD2D51C833F0C5EA2007A2324CE514F8E8C2F008A2F36F44005A4039CB55830986F734C93DAF0EB4BAB54A6A8C7081864F44346E9BC6F0A3EB9F2C0146A00C6A05187D0C101E1F2D038CDB70CB5E9E05A2D188AB6CBB46286624D4415E7D4DBFAD3BCC6009D915C406EED38F468B940F41E6BEDC0430DD78E6F19A7DA3A27498A4181E24D738B0072D8F6ADB8C9809A5B033A09785814FD9919F6EF9F83EEA519BEC593855C4C10CBEEC582D4AE0792158823B0275E6AEC35242740468FAF3D5C60FD1E376362B6322F78B7ED0CA1C5BBCD2B49734A56C0967A1D01A100932C837B91D592CE08ABFF",
-//     );
-//     try f(
-//         10,
-//         "2",
-//         16,
-//         "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
-//         16,
-//         "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF72", // even
-//         16,
-//         "7858794B5897C29F4ED0B40913416AB6C48588484E6A45F2ED3E26C941D878E923575AAC434EE2750E6439A6976F9BB4D64CEDB2A53CE8D04DD48CADCDF8E46F22747C6B81C6CEA86C0D873FBF7CEF262BAAC43A522BD7F32F3CDAC52B9337C77B3DCFB3DB3EDD80476331E82F4B1DF8EFDC1220C92656DFC9197BDC1877804E28D928A2A284B8DED506CBA304435C9D0133C246C98A7D890D1DE60CBC53A024361DA83A9B8775019083D22AC6820ED7C3C68F8E801DD4EC779EE0A05C6EB682EF9840D285B838369BA7E148FA27691D524FAEAF7C6ECE2A4B99A294B9F2C241857B5B90CC8BFFCFCF18DFA7D676131D5CD3855A5A3E8EBFA0CDFADB4D198B4A",
-//     );
-// }
+    try f(
+        10,
+        "2",
+        16,
+        "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
+        16,
+        "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73", // odd
+        16,
+        "6AADD3E3E424D5B713FCAA8D8945B1E055166132038C57BBD2D51C833F0C5EA2007A2324CE514F8E8C2F008A2F36F44005A4039CB55830986F734C93DAF0EB4BAB54A6A8C7081864F44346E9BC6F0A3EB9F2C0146A00C6A05187D0C101E1F2D038CDB70CB5E9E05A2D188AB6CBB46286624D4415E7D4DBFAD3BCC6009D915C406EED38F468B940F41E6BEDC0430DD78E6F19A7DA3A27498A4181E24D738B0072D8F6ADB8C9809A5B033A09785814FD9919F6EF9F83EEA519BEC593855C4C10CBEEC582D4AE0792158823B0275E6AEC35242740468FAF3D5C60FD1E376362B6322F78B7ED0CA1C5BBCD2B49734A56C0967A1D01A100932C837B91D592CE08ABFF",
+    );
+    try f(
+        10,
+        "2",
+        16,
+        "B08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
+        16,
+        "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF72", // even
+        16,
+        "7858794B5897C29F4ED0B40913416AB6C48588484E6A45F2ED3E26C941D878E923575AAC434EE2750E6439A6976F9BB4D64CEDB2A53CE8D04DD48CADCDF8E46F22747C6B81C6CEA86C0D873FBF7CEF262BAAC43A522BD7F32F3CDAC52B9337C77B3DCFB3DB3EDD80476331E82F4B1DF8EFDC1220C92656DFC9197BDC1877804E28D928A2A284B8DED506CBA304435C9D0133C246C98A7D890D1DE60CBC53A024361DA83A9B8775019083D22AC6820ED7C3C68F8E801DD4EC779EE0A05C6EB682EF9840D285B838369BA7E148FA27691D524FAEAF7C6ECE2A4B99A294B9F2C241857B5B90CC8BFFCFCF18DFA7D676131D5CD3855A5A3E8EBFA0CDFADB4D198B4A",
+    );
+}
 
 test "expNnMontgomery" {
     testing.log_level = .err;
