@@ -322,7 +322,7 @@ test "ClientSessionState" {
 }
 
 test "LruSessionCache" {
-    testing.log_level = .debug;
+    testing.log_level = .err;
     const allocator = testing.allocator;
     var cache = try LruSessionCache.init(allocator, 2);
     defer cache.deinit();
