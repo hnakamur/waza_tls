@@ -345,7 +345,7 @@ pub const String = struct {
 
             // ret = -(ret + 1)
             const one = math.big.int.Const{ .limbs = &[_]math.big.Limb{1}, .positive = true };
-            try ret.add(ret.toConst(), one);
+            try bigint.add(&ret, ret.toConst(), one);
             ret.negate();
             return ret.toConst();
         } else {
