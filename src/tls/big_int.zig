@@ -461,198 +461,198 @@ test "mod" {
     try f("-51", "-13", "1");
 }
 
-// /// GCD sets rma to the greatest common divisor of a and b.
-// /// If x or y are not nil, GCD sets their value such that rma = a*x + b*y.
-// ///
-// /// a and b may be positive, zero or negative. (Before Go 1.14 both had
-// /// to be > 0.) Regardless of the signs of a and b, rma is always >= 0.
-// ///
-// /// If a == b == 0, GCD sets rma = x = y = 0.
-// ///
-// /// If a == 0 and b != 0, GCD sets rma = |b|, x = 0, y = sign(b) * 1.
-// ///
-// /// If a != 0 and b == 0, GCD sets rma = |a|, x = sign(a) * 1, y = 0.
-// ///
-// /// rma may alias a or b.
-// /// a and b may alias each other.
-// ///
-// /// rma's allocator is used for temporary storage to boost multiplication performance.
-// pub fn gcd(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
-//     try rma.ensureCapacity(math.min(a.len(), b.len()));
-//     var m = rma.toMutable();
-//     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
-//     defer limbs_buffer.deinit();
-//     try gcdMutable(&m, x, y, a.toConst(), b.toConst(), &limbs_buffer);
-//     rma.setMetadata(m.positive, m.len);
-// }
+/// GCD sets rma to the greatest common divisor of a and b.
+/// If x or y are not nil, GCD sets their value such that rma = a*x + b*y.
+///
+/// a and b may be positive, zero or negative. (Before Go 1.14 both had
+/// to be > 0.) Regardless of the signs of a and b, rma is always >= 0.
+///
+/// If a == b == 0, GCD sets rma = x = y = 0.
+///
+/// If a == 0 and b != 0, GCD sets rma = |b|, x = 0, y = sign(b) * 1.
+///
+/// If a != 0 and b == 0, GCD sets rma = |a|, x = sign(a) * 1, y = 0.
+///
+/// rma may alias a or b.
+/// a and b may alias each other.
+///
+/// rma's allocator is used for temporary storage to boost multiplication performance.
+pub fn gcd(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
+    try rma.ensureCapacity(math.min(a.len(), b.len()));
+    var m = rma.toMutable();
+    var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
+    defer limbs_buffer.deinit();
+    try gcdMutable(&m, x, y, a.toConst(), b.toConst(), &limbs_buffer);
+    rma.setMetadata(m.positive, m.len);
+}
 
-// test "gcd" {
-//     const f = struct {
-//         fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
-//             const allocator = testing.allocator;
+test "gcd" {
+    const f = struct {
+        fn f(d: []const u8, x: []const u8, y: []const u8, a: []const u8, b: []const u8) !void {
+            const allocator = testing.allocator;
 
-//             var big_a = try strToManaged(allocator, a);
-//             defer big_a.deinit();
-//             var big_b = try strToManaged(allocator, b);
-//             defer big_b.deinit();
+            var big_a = try strToManaged(allocator, a);
+            defer big_a.deinit();
+            var big_b = try strToManaged(allocator, b);
+            defer big_b.deinit();
 
-//             var want_d = try strToManaged(allocator, d);
-//             defer want_d.deinit();
-//             var want_x = try strToManaged(allocator, x);
-//             defer want_x.deinit();
-//             var want_y = try strToManaged(allocator, y);
-//             defer want_y.deinit();
+            var want_d = try strToManaged(allocator, d);
+            defer want_d.deinit();
+            var want_x = try strToManaged(allocator, x);
+            defer want_x.deinit();
+            var want_y = try strToManaged(allocator, y);
+            defer want_y.deinit();
 
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 try gcd(&got_d, null, null, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 var got_x = try Managed.init(allocator);
-//                 defer got_x.deinit();
-//                 try gcd(&got_d, &got_x, null, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_x.eq(want_x)) {
-//                     var got_x_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_x_s);
-//                     std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 var got_y = try Managed.init(allocator);
-//                 defer got_y.deinit();
-//                 try gcd(&got_d, null, &got_y, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_y.eq(want_y)) {
-//                     var got_y_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_y_s);
-//                     std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//             {
-//                 var got_d = try Managed.init(allocator);
-//                 defer got_d.deinit();
-//                 var got_x = try Managed.init(allocator);
-//                 defer got_x.deinit();
-//                 var got_y = try Managed.init(allocator);
-//                 defer got_y.deinit();
-//                 try gcd(&got_d, &got_x, &got_y, big_a, big_b);
-//                 if (!got_d.eq(want_d)) {
-//                     var got_d_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_d_s);
-//                     std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_x.eq(want_x)) {
-//                     var got_x_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_x_s);
-//                     std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
-//                     return error.TestExpectedError;
-//                 }
-//                 if (!got_y.eq(want_y)) {
-//                     var got_y_s = try got_d.toString(allocator, 10, .lower);
-//                     defer allocator.free(got_y_s);
-//                     std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
-//                     return error.TestExpectedError;
-//                 }
-//             }
-//         }
-//     }.f;
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                try gcd(&got_d, null, null, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                try gcd(&got_d, &got_x, null, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+                if (!got_x.eq(want_x)) {
+                    var got_x_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_x_s);
+                    std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcd(&got_d, null, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+                if (!got_y.eq(want_y)) {
+                    var got_y_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_y_s);
+                    std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
+                    return error.TestExpectedError;
+                }
+            }
+            {
+                var got_d = try Managed.init(allocator);
+                defer got_d.deinit();
+                var got_x = try Managed.init(allocator);
+                defer got_x.deinit();
+                var got_y = try Managed.init(allocator);
+                defer got_y.deinit();
+                try gcd(&got_d, &got_x, &got_y, big_a, big_b);
+                if (!got_d.eq(want_d)) {
+                    var got_d_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_d_s);
+                    std.debug.print("gcd d mismatch, got={s}, want={s}\n", .{ got_d_s, d });
+                    return error.TestExpectedError;
+                }
+                if (!got_x.eq(want_x)) {
+                    var got_x_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_x_s);
+                    std.debug.print("gcd x mismatch, got={s}, want={s}\n", .{ got_x_s, x });
+                    return error.TestExpectedError;
+                }
+                if (!got_y.eq(want_y)) {
+                    var got_y_s = try got_d.toString(allocator, 10, .lower);
+                    defer allocator.free(got_y_s);
+                    std.debug.print("gcd y mismatch, got={s}, want={s}\n", .{ got_y_s, y });
+                    return error.TestExpectedError;
+                }
+            }
+        }
+    }.f;
 
-//     testing.log_level = .err;
+    testing.log_level = .err;
 
-//     // a <= 0 || b <= 0
-//     try f("0", "0", "0", "0", "0");
-//     try f("7", "0", "1", "0", "7");
-//     try f("7", "0", "-1", "0", "-7");
-//     try f("11", "1", "0", "11", "0");
-//     try f("7", "-1", "-2", "-77", "35");
-//     try f("935", "-3", "8", "64515", "24310");
-//     try f("935", "-3", "-8", "64515", "-24310");
-//     try f("935", "3", "-8", "-64515", "-24310");
+    // a <= 0 || b <= 0
+    try f("0", "0", "0", "0", "0");
+    try f("7", "0", "1", "0", "7");
+    try f("7", "0", "-1", "0", "-7");
+    try f("11", "1", "0", "11", "0");
+    try f("7", "-1", "-2", "-77", "35");
+    try f("935", "-3", "8", "64515", "24310");
+    try f("935", "-3", "-8", "64515", "-24310");
+    try f("935", "3", "-8", "-64515", "-24310");
 
-//     try f("1", "-9", "47", "120", "23");
-//     try f("7", "1", "-2", "77", "35");
-//     try f("935", "-3", "8", "64515", "24310");
-//     try f("935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000");
-//     try f(
-//         "1",
-//         "-221",
-//         "22059940471369027483332068679400581064239780177629666810348940098015901108344",
-//         "98920366548084643601728869055592650835572950932266967461790948584315647051443",
-//         "991",
-//     );
-// }
+    try f("1", "-9", "47", "120", "23");
+    try f("7", "1", "-2", "77", "35");
+    try f("935", "-3", "8", "64515", "24310");
+    try f("935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000");
+    try f(
+        "1",
+        "-221",
+        "22059940471369027483332068679400581064239780177629666810348940098015901108344",
+        "98920366548084643601728869055592650835572950932266967461790948584315647051443",
+        "991",
+    );
+}
 
-// pub fn strToManaged(allocator: Allocator, value: []const u8) !Managed {
-//     var m = try Managed.init(allocator);
-//     errdefer m.deinit();
-//     try m.setString(10, value);
-//     return m;
-// }
+pub fn strToManaged(allocator: Allocator, value: []const u8) !Managed {
+    var m = try Managed.init(allocator);
+    errdefer m.deinit();
+    try m.setString(10, value);
+    return m;
+}
 
-// /// rma may alias a or b.
-// /// a and b may alias each other.
-// /// Asserts that `rma` has enough limbs to store the result. Upper bound is
-// /// `math.min(normalizedLimbsLen(a), normalizedLimbsLen(b))`.
-// ///
-// /// `limbs_buffer` is used for temporary storage during the operation. When this function returns,
-// /// it will have the same length as it had when the function was called.
-// pub fn gcdMutable(
-//     rma: *Mutable,
-//     x: ?*Managed,
-//     y: ?*Managed,
-//     a: Const,
-//     b: Const,
-//     limbs_buffer: *std.ArrayList(Limb),
-// ) !void {
-//     if (a.eqZero() or b.eqZero()) {
-//         rma.copy(if (a.eqZero()) b else a);
-//         rma.abs();
-//         if (x) |xx| try xx.set(signConst(a));
-//         if (y) |yy| try yy.set(signConst(b));
-//         return;
-//     }
+/// rma may alias a or b.
+/// a and b may alias each other.
+/// Asserts that `rma` has enough limbs to store the result. Upper bound is
+/// `math.min(normalizedLimbsLen(a), normalizedLimbsLen(b))`.
+///
+/// `limbs_buffer` is used for temporary storage during the operation. When this function returns,
+/// it will have the same length as it had when the function was called.
+pub fn gcdMutable(
+    rma: *Mutable,
+    x: ?*Managed,
+    y: ?*Managed,
+    a: Const,
+    b: Const,
+    limbs_buffer: *std.ArrayList(Limb),
+) !void {
+    if (a.eqZero() or b.eqZero()) {
+        rma.copy(if (a.eqZero()) b else a);
+        rma.abs();
+        if (x) |xx| try xx.set(signConst(a));
+        if (y) |yy| try yy.set(signConst(b));
+        return;
+    }
 
-//     const prev_len = limbs_buffer.items.len;
-//     defer limbs_buffer.shrinkRetainingCapacity(prev_len);
+    const prev_len = limbs_buffer.items.len;
+    defer limbs_buffer.shrinkRetainingCapacity(prev_len);
 
-//     const a_copy = if (rma.limbs.ptr == a.limbs.ptr) blk: {
-//         const start = limbs_buffer.items.len;
-//         try limbs_buffer.appendSlice(a.limbs);
-//         break :blk a.toMutable(limbs_buffer.items[start..]).toConst();
-//     } else a;
-//     const b_copy = if (rma.limbs.ptr == b.limbs.ptr) blk: {
-//         const start = limbs_buffer.items.len;
-//         try limbs_buffer.appendSlice(b.limbs);
-//         break :blk b.toMutable(limbs_buffer.items[start..]).toConst();
-//     } else b;
+    const a_copy = if (rma.limbs.ptr == a.limbs.ptr) blk: {
+        const start = limbs_buffer.items.len;
+        try limbs_buffer.appendSlice(a.limbs);
+        break :blk a.toMutable(limbs_buffer.items[start..]).toConst();
+    } else a;
+    const b_copy = if (rma.limbs.ptr == b.limbs.ptr) blk: {
+        const start = limbs_buffer.items.len;
+        try limbs_buffer.appendSlice(b.limbs);
+        break :blk b.toMutable(limbs_buffer.items[start..]).toConst();
+    } else b;
 
-//     return lehmerGcd(rma, x, y, a_copy, b_copy, limbs_buffer);
-// }
+    return lehmerGcd(rma, x, y, a_copy, b_copy, limbs_buffer);
+}
 
 fn signConst(c: Const) i2 {
     return if (c.eqZero()) @as(i2, 0) else if (c.positive) @as(i2, 1) else @as(i2, -1);
@@ -674,304 +674,304 @@ test "signConst" {
     try f(-2, @as(i2, -1));
 }
 
-// fn lehmerGcd(
-//     result: *Mutable,
-//     x: ?*Managed,
-//     y: ?*Managed,
-//     a_c: Const,
-//     b_c: Const,
-//     limbs_buffer: *std.ArrayList(Limb),
-// ) !void {
-//     const allocator = limbs_buffer.allocator;
+fn lehmerGcd(
+    result: *Mutable,
+    x: ?*Managed,
+    y: ?*Managed,
+    a_c: Const,
+    b_c: Const,
+    limbs_buffer: *std.ArrayList(Limb),
+) !void {
+    const allocator = limbs_buffer.allocator;
 
-//     var a = try a_c.abs().toManaged(allocator);
-//     defer a.deinit();
+    var a = try a_c.abs().toManaged(allocator);
+    defer a.deinit();
 
-//     var b = try b_c.abs().toManaged(allocator);
-//     defer b.deinit();
+    var b = try b_c.abs().toManaged(allocator);
+    defer b.deinit();
 
-//     var ua = try Managed.init(allocator);
-//     defer ua.deinit();
+    var ua = try Managed.init(allocator);
+    defer ua.deinit();
 
-//     var ub = try Managed.init(allocator);
-//     defer ub.deinit();
+    var ub = try Managed.init(allocator);
+    defer ub.deinit();
 
-//     const extended = x != null or y != null;
-//     if (extended) {
-//         // ua (ub) tracks how many times input a has been accumulated into a (b).
-//         try ua.set(1);
-//         try ub.set(0);
-//     }
+    const extended = x != null or y != null;
+    if (extended) {
+        // ua (ub) tracks how many times input a has been accumulated into a (b).
+        try ua.set(1);
+        try ub.set(0);
+    }
 
-//     // ensure A >= B
-//     if (a.toConst().order(b.toConst()) == .lt) {
-//         a.swap(&b);
-//         ua.swap(&ub);
-//     }
+    // ensure A >= B
+    if (a.toConst().order(b.toConst()) == .lt) {
+        a.swap(&b);
+        ua.swap(&ub);
+    }
 
-//     var q = try Managed.init(allocator);
-//     defer q.deinit();
+    var q = try Managed.init(allocator);
+    defer q.deinit();
 
-//     var r = try Managed.init(allocator);
-//     defer r.deinit();
+    var r = try Managed.init(allocator);
+    defer r.deinit();
 
-//     var s = try Managed.init(allocator);
-//     defer s.deinit();
+    var s = try Managed.init(allocator);
+    defer s.deinit();
 
-//     var t = try Managed.init(allocator);
-//     defer t.deinit();
+    var t = try Managed.init(allocator);
+    defer t.deinit();
 
-//     // loop invariant a >= b
-//     while (b.len() > 1) {
-//         // Simulate the effect of the single-precision steps using the cosequences.
-//         // a = u0*a + v0*b
-//         // b = u1*a + v1*b
-//         var @"u0": Limb = undefined;
-//         var @"u1": Limb = undefined;
-//         var v0: Limb = undefined;
-//         var v1: Limb = undefined;
-//         var even: bool = undefined;
-//         lehmerSimulate(&a, &b, &@"u0", &@"u1", &v0, &v1, &even);
+    // loop invariant a >= b
+    while (b.len() > 1) {
+        // Simulate the effect of the single-precision steps using the cosequences.
+        // a = u0*a + v0*b
+        // b = u1*a + v1*b
+        var @"u0": Limb = undefined;
+        var @"u1": Limb = undefined;
+        var v0: Limb = undefined;
+        var v1: Limb = undefined;
+        var even: bool = undefined;
+        lehmerSimulate(&a, &b, &@"u0", &@"u1", &v0, &v1, &even);
 
-//         // multiprecision Step
-//         if (v0 != 0) {
-//             // Simulate the effect of the single-precision steps using the cosequences.
-//             // a = u0*a + v0*b
-//             // b = u1*a + v1*b
-//             try lehmerUpdate(&a, &b, &q, &r, &s, &t, @"u0", @"u1", v0, v1, even);
+        // multiprecision Step
+        if (v0 != 0) {
+            // Simulate the effect of the single-precision steps using the cosequences.
+            // a = u0*a + v0*b
+            // b = u1*a + v1*b
+            try lehmerUpdate(&a, &b, &q, &r, &s, &t, @"u0", @"u1", v0, v1, even);
 
-//             if (extended) {
-//                 // ua = u0*ua + v0*ub
-//                 // ub = u1*ua + v1*ub
-//                 try lehmerUpdate(&ua, &ub, &q, &r, &s, &t, @"u0", @"u1", v0, v1, even);
-//             }
-//         } else {
-//             // Single-digit calculations failed to simulate any quotients.
-//             // Do a standard Euclidean step.
-//             try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
-//         }
-//     }
+            if (extended) {
+                // ua = u0*ua + v0*ub
+                // ub = u1*ua + v1*ub
+                try lehmerUpdate(&ua, &ub, &q, &r, &s, &t, @"u0", @"u1", v0, v1, even);
+            }
+        } else {
+            // Single-digit calculations failed to simulate any quotients.
+            // Do a standard Euclidean step.
+            try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
+        }
+    }
 
-//     if (!b.eqZero()) {
-//         // extended Euclidean algorithm base case if B is a single Word
-//         if (a.len() > 1) {
-//             // A is longer than a single Word, so one update is needed.
-//             try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
-//         }
-//         if (!b.eqZero()) {
-//             // A and B are both a single Word.
-//             var a_word = a.limbs[0];
-//             var b_word = b.limbs[0];
-//             if (extended) {
-//                 var uaw: Limb = 1;
-//                 var ubw: Limb = 0;
-//                 var va: Limb = 0;
-//                 var vb: Limb = 1;
-//                 var even = true;
-//                 while (b_word != 0) {
-//                     const qw = a_word / b_word;
-//                     const rw = a_word % b_word;
-//                     a_word = b_word;
-//                     b_word = rw;
+    if (!b.eqZero()) {
+        // extended Euclidean algorithm base case if B is a single Word
+        if (a.len() > 1) {
+            // A is longer than a single Word, so one update is needed.
+            try euclidUpdate(&a, &b, &ua, &ub, &q, &r, &s, &t, extended);
+        }
+        if (!b.eqZero()) {
+            // A and B are both a single Word.
+            var a_word = a.limbs[0];
+            var b_word = b.limbs[0];
+            if (extended) {
+                var uaw: Limb = 1;
+                var ubw: Limb = 0;
+                var va: Limb = 0;
+                var vb: Limb = 1;
+                var even = true;
+                while (b_word != 0) {
+                    const qw = a_word / b_word;
+                    const rw = a_word % b_word;
+                    a_word = b_word;
+                    b_word = rw;
 
-//                     const new_ubw = uaw + qw * ubw;
-//                     uaw = ubw;
-//                     ubw = new_ubw;
+                    const new_ubw = uaw + qw * ubw;
+                    uaw = ubw;
+                    ubw = new_ubw;
 
-//                     const new_vb = va + qw * vb;
-//                     va = vb;
-//                     vb = new_vb;
+                    const new_vb = va + qw * vb;
+                    va = vb;
+                    vb = new_vb;
 
-//                     even = !even;
-//                 }
+                    even = !even;
+                }
 
-//                 try t.set(uaw);
-//                 try s.set(va);
-//                 t.setSign(even);
-//                 s.setSign(!even);
+                try t.set(uaw);
+                try s.set(va);
+                t.setSign(even);
+                s.setSign(!even);
 
-//                 try mul(&t, ua.toConst(), t.toConst());
-//                 try mul(&s, ub.toConst(), s.toConst());
+                try mul(&t, ua.toConst(), t.toConst());
+                try mul(&s, ub.toConst(), s.toConst());
 
-//                 try add(&ua, t.toConst(), s.toConst());
-//             } else {
-//                 while (b_word != 0) {
-//                     const new_a_word = a_word % b_word;
-//                     a_word = b_word;
-//                     b_word = new_a_word;
-//                 }
-//             }
-//             a.limbs[0] = a_word;
-//         }
-//     }
+                try add(&ua, t.toConst(), s.toConst());
+            } else {
+                while (b_word != 0) {
+                    const new_a_word = a_word % b_word;
+                    a_word = b_word;
+                    b_word = new_a_word;
+                }
+            }
+            a.limbs[0] = a_word;
+        }
+    }
 
-//     if (y) |yy| {
-//         // y = (z - a*x)/b
-//         // var y_m = try Managed.init(allocator);
-//         // defer y_m.deinit();
-//         try mul(yy, a_c, ua.toConst());
-//         if (!a_c.positive) {
-//             yy.negate();
-//         }
-//         try sub(yy, a.toConst(), yy.toConst());
-//         try yy.divTrunc(&r, yy.toConst(), b_c);
-//         // try yy.copy(y_m.toConst());
-//     }
-//     if (x) |xx| {
-//         xx.swap(&ua);
-//         if (!a_c.positive) {
-//             xx.negate();
-//         }
-//     }
+    if (y) |yy| {
+        // y = (z - a*x)/b
+        // var y_m = try Managed.init(allocator);
+        // defer y_m.deinit();
+        try mul(yy, a_c, ua.toConst());
+        if (!a_c.positive) {
+            yy.negate();
+        }
+        try sub(yy, a.toConst(), yy.toConst());
+        try divTrunc(yy, &r, yy.toConst(), b_c);
+        // try yy.copy(y_m.toConst());
+    }
+    if (x) |xx| {
+        xx.swap(&ua);
+        if (!a_c.positive) {
+            xx.negate();
+        }
+    }
 
-//     result.copy(a.toConst());
-// }
+    result.copy(a.toConst());
+}
 
-// /// lehmerSimulate attempts to simulate several Euclidean update steps
-// /// using the leading digits of A and B.  It sets u0, u1, v0, v1
-// /// such that A and B can be updated as:
-// ///		A = u0*A + v0*B
-// ///		B = u1*A + v1*B
-// /// Requirements: A >= B and len(B.abs) >= 2
-// /// Since we are calculating with full words to avoid overflow,
-// /// we use 'even' to track the sign of the cosequences.
-// /// For even iterations: u0, v1 >= 0 && u1, v0 <= 0
-// /// For odd  iterations: u0, v1 <= 0 && u1, v0 >= 0
-// fn lehmerSimulate(
-//     a: *Managed,
-//     b: *Managed,
-//     @"u0": *Limb,
-//     @"u1": *Limb,
-//     v0: *Limb,
-//     v1: *Limb,
-//     even: *bool,
-// ) void {
-//     // initialize the digits
-//     var a1: Limb = undefined;
-//     var a2: Limb = undefined;
-//     var @"u2": Limb = undefined;
-//     var v2: Limb = undefined;
+/// lehmerSimulate attempts to simulate several Euclidean update steps
+/// using the leading digits of A and B.  It sets u0, u1, v0, v1
+/// such that A and B can be updated as:
+///		A = u0*A + v0*B
+///		B = u1*A + v1*B
+/// Requirements: A >= B and len(B.abs) >= 2
+/// Since we are calculating with full words to avoid overflow,
+/// we use 'even' to track the sign of the cosequences.
+/// For even iterations: u0, v1 >= 0 && u1, v0 <= 0
+/// For odd  iterations: u0, v1 <= 0 && u1, v0 >= 0
+fn lehmerSimulate(
+    a: *Managed,
+    b: *Managed,
+    @"u0": *Limb,
+    @"u1": *Limb,
+    v0: *Limb,
+    v1: *Limb,
+    even: *bool,
+) void {
+    // initialize the digits
+    var a1: Limb = undefined;
+    var a2: Limb = undefined;
+    var @"u2": Limb = undefined;
+    var v2: Limb = undefined;
 
-//     const m = b.len(); // m >= 2
-//     const n = a.len(); // n >= m >= 2
+    const m = b.len(); // m >= 2
+    const n = a.len(); // n >= m >= 2
 
-//     // extract the top Word of bits from A and B
-//     const h = nlz(a.limbs[n - 1]);
-//     a1 = math.shl(Limb, a.limbs[n - 1], h) | math.shr(Limb, a.limbs[n - 2], @bitSizeOf(Limb) - h);
-//     // B may have implicit zero words in the high bits if the lengths differ
-//     a2 = if (n == m)
-//         math.shl(Limb, b.limbs[n - 1], h) | math.shr(Limb, b.limbs[n - 2], @bitSizeOf(Limb) - h)
-//     else if (n == m + 1)
-//         math.shr(Limb, b.limbs[n - 2], @bitSizeOf(Limb) - h)
-//     else
-//         0;
+    // extract the top Word of bits from A and B
+    const h = nlz(a.limbs[n - 1]);
+    a1 = math.shl(Limb, a.limbs[n - 1], h) | math.shr(Limb, a.limbs[n - 2], @bitSizeOf(Limb) - h);
+    // B may have implicit zero words in the high bits if the lengths differ
+    a2 = if (n == m)
+        math.shl(Limb, b.limbs[n - 1], h) | math.shr(Limb, b.limbs[n - 2], @bitSizeOf(Limb) - h)
+    else if (n == m + 1)
+        math.shr(Limb, b.limbs[n - 2], @bitSizeOf(Limb) - h)
+    else
+        0;
 
-//     // Since we are calculating with full words to avoid overflow,
-//     // we use 'even' to track the sign of the cosequences.
-//     // For even iterations: u0, v1 >= 0 && u1, v0 <= 0
-//     // For odd  iterations: u0, v1 <= 0 && u1, v0 >= 0
-//     // The first iteration starts with k=1 (odd).
-//     even.* = false;
-//     // variables to track the cosequences
-//     @"u0".* = 0;
-//     @"u1".* = 1;
-//     @"u2" = 0;
-//     v0.* = 0;
-//     v1.* = 0;
-//     v2 = 1;
+    // Since we are calculating with full words to avoid overflow,
+    // we use 'even' to track the sign of the cosequences.
+    // For even iterations: u0, v1 >= 0 && u1, v0 <= 0
+    // For odd  iterations: u0, v1 <= 0 && u1, v0 >= 0
+    // The first iteration starts with k=1 (odd).
+    even.* = false;
+    // variables to track the cosequences
+    @"u0".* = 0;
+    @"u1".* = 1;
+    @"u2" = 0;
+    v0.* = 0;
+    v1.* = 0;
+    v2 = 1;
 
-//     // Calculate the quotient and cosequences using Collins' stopping condition.
-//     // Note that overflow of a Word is not possible when computing the remainder
-//     // sequence and cosequences since the cosequence size is bounded by the input size.
-//     // See section 4.2 of Jebelean for details.
-//     while (a2 >= v2 and a1 -% a2 >= v1.* + v2) {
-//         const q = a1 / a2;
-//         const r = a1 % a2;
-//         a1 = a2;
-//         a2 = r;
+    // Calculate the quotient and cosequences using Collins' stopping condition.
+    // Note that overflow of a Word is not possible when computing the remainder
+    // sequence and cosequences since the cosequence size is bounded by the input size.
+    // See section 4.2 of Jebelean for details.
+    while (a2 >= v2 and a1 -% a2 >= v1.* + v2) {
+        const q = a1 / a2;
+        const r = a1 % a2;
+        a1 = a2;
+        a2 = r;
 
-//         const u2_new = @"u1".* + q * @"u2";
-//         @"u0".* = @"u1".*;
-//         @"u1".* = @"u2";
-//         @"u2" = u2_new;
+        const u2_new = @"u1".* + q * @"u2";
+        @"u0".* = @"u1".*;
+        @"u1".* = @"u2";
+        @"u2" = u2_new;
 
-//         const v2_new = @"v1".* + q * @"v2";
-//         @"v0".* = @"v1".*;
-//         @"v1".* = @"v2";
-//         @"v2" = v2_new;
+        const v2_new = @"v1".* + q * @"v2";
+        @"v0".* = @"v1".*;
+        @"v1".* = @"v2";
+        @"v2" = v2_new;
 
-//         even.* = !even.*;
-//     }
-// }
+        even.* = !even.*;
+    }
+}
 
-// // lehmerUpdate updates the inputs a and b such that:
-// //		a = u0*a + v0*b
-// //		b = u1*a + v1*b
-// // where the signs of u0, u1, v0, v1 are given by even
-// // For even == true: u0, v1 >= 0 && u1, v0 <= 0
-// // For even == false: u0, v1 <= 0 && u1, v0 >= 0
-// // q, r, s, t are temporary variables to avoid allocations in the multiplication
-// fn lehmerUpdate(
-//     a: *Managed,
-//     b: *Managed,
-//     q: *Managed,
-//     r: *Managed,
-//     s: *Managed,
-//     t: *Managed,
-//     @"u0": Limb,
-//     @"u1": Limb,
-//     v0: Limb,
-//     v1: Limb,
-//     even: bool,
-// ) !void {
-//     try t.set(@"u0");
-//     try s.set(v0);
-//     t.setSign(even);
-//     s.setSign(!even);
+// lehmerUpdate updates the inputs a and b such that:
+//		a = u0*a + v0*b
+//		b = u1*a + v1*b
+// where the signs of u0, u1, v0, v1 are given by even
+// For even == true: u0, v1 >= 0 && u1, v0 <= 0
+// For even == false: u0, v1 <= 0 && u1, v0 >= 0
+// q, r, s, t are temporary variables to avoid allocations in the multiplication
+fn lehmerUpdate(
+    a: *Managed,
+    b: *Managed,
+    q: *Managed,
+    r: *Managed,
+    s: *Managed,
+    t: *Managed,
+    @"u0": Limb,
+    @"u1": Limb,
+    v0: Limb,
+    v1: Limb,
+    even: bool,
+) !void {
+    try t.set(@"u0");
+    try s.set(v0);
+    t.setSign(even);
+    s.setSign(!even);
 
-//     try mul(t, a.toConst(), t.toConst());
-//     try mul(s, b.toConst(), s.toConst());
+    try mul(t, a.toConst(), t.toConst());
+    try mul(s, b.toConst(), s.toConst());
 
-//     try r.set(@"u1");
-//     try q.set(v1);
-//     r.setSign(!even);
-//     q.setSign(even);
+    try r.set(@"u1");
+    try q.set(v1);
+    r.setSign(!even);
+    q.setSign(even);
 
-//     try mul(r, a.toConst(), r.toConst());
-//     try mul(q, b.toConst(), q.toConst());
+    try mul(r, a.toConst(), r.toConst());
+    try mul(q, b.toConst(), q.toConst());
 
-//     try add(a, t.toConst(), s.toConst());
-//     try add(b, r.toConst(), q.toConst());
-// }
+    try add(a, t.toConst(), s.toConst());
+    try add(b, r.toConst(), q.toConst());
+}
 
-// /// euclidUpdate performs a single step of the Euclidean GCD algorithm
-// /// if extended is true, it also updates the cosequence ua, ub
-// fn euclidUpdate(
-//     a: *Managed,
-//     b: *Managed,
-//     ua: *Managed,
-//     ub: *Managed,
-//     q: *Managed,
-//     r: *Managed,
-//     s: *Managed,
-//     t: *Managed,
-//     extended: bool,
-// ) !void {
-//     try q.divTrunc(r, a.toConst(), b.toConst());
+/// euclidUpdate performs a single step of the Euclidean GCD algorithm
+/// if extended is true, it also updates the cosequence ua, ub
+fn euclidUpdate(
+    a: *Managed,
+    b: *Managed,
+    ua: *Managed,
+    ub: *Managed,
+    q: *Managed,
+    r: *Managed,
+    s: *Managed,
+    t: *Managed,
+    extended: bool,
+) !void {
+    try divTrunc(q, r, a.toConst(), b.toConst());
 
-//     const tmp: Managed = a.*;
-//     a.* = b.*;
-//     b.* = r.*;
-//     r.* = tmp;
+    const tmp: Managed = a.*;
+    a.* = b.*;
+    b.* = r.*;
+    r.* = tmp;
 
-//     if (extended) {
-//         // ua, ub = ub, ua - q*ub
-//         try t.copy(ub.toConst());
-//         try mul(s, ub.toConst(), q.toConst());
-//         try sub(ub, ua.toConst(), s.toConst());
-//         try ua.copy(t.toConst());
-//     }
-// }
+    if (extended) {
+        // ua, ub = ub, ua - q*ub
+        try t.copy(ub.toConst());
+        try mul(s, ub.toConst(), q.toConst());
+        try sub(ub, ua.toConst(), s.toConst());
+        try ua.copy(t.toConst());
+    }
+}
 
 // // expNn returns x**y mod m if m != 0,
 // // otherwise it returns x**y.
