@@ -1493,67 +1493,67 @@ fn expNnWindowed(
 //     }
 // }
 
-// // Sets a uniform random value in [0, max) to out. It panics if max <= 0.
-// pub fn unsignedRandomLessThan(out: *Managed, rand: std.rand.Random, max: Const) !void {
-//     if (!max.positive) {
-//         @panic("crypto/rand: argument to Int is <= 0");
-//     }
+// Sets a uniform random value in [0, max) to out. It panics if max <= 0.
+pub fn unsignedRandomLessThan(out: *Managed, rand: std.rand.Random, max: Const) !void {
+    if (!max.positive) {
+        @panic("crypto/rand: argument to Int is <= 0");
+    }
 
-//     // var n = try math.big.int.Managed.initCapacity(allocator, max.limbs.len);
-//     try out.sub(max, one);
-//     // bitLen is the maximum bit length needed to encode a value < max.
-//     const bit_len = out.bitCountAbs();
-//     if (bit_len == 0) {
-//         // the only valid result is 0
-//         try out.set(0);
-//         return;
-//     }
+    // var n = try math.big.int.Managed.initCapacity(allocator, max.limbs.len);
+    try sub(out, max, one);
+    // bitLen is the maximum bit length needed to encode a value < max.
+    const bit_len = out.bitCountAbs();
+    if (bit_len == 0) {
+        // the only valid result is 0
+        try out.set(0);
+        return;
+    }
 
-//     // k is the maximum byte length needed to encode a value < max.
-//     const k = (bit_len + 7) / 8;
+    // k is the maximum byte length needed to encode a value < max.
+    const k = (bit_len + 7) / 8;
 
-//     // b is the number of bits in the most significant byte of max-1.
-//     var b = bit_len % 8;
-//     if (b == 0) {
-//         b = 8;
-//     }
+    // b is the number of bits in the most significant byte of max-1.
+    var b = bit_len % 8;
+    if (b == 0) {
+        b = 8;
+    }
 
-//     const allocator = out.allocator;
-//     var bytes = try allocator.alloc(u8, k);
-//     defer allocator.free(bytes);
+    const allocator = out.allocator;
+    var bytes = try allocator.alloc(u8, k);
+    defer allocator.free(bytes);
 
-//     while (true) {
-//         rand.bytes(bytes);
+    while (true) {
+        rand.bytes(bytes);
 
-//         // Clear bits in the first byte to increase the probability
-//         // that the candidate is < max.
-//         bytes[0] &= @intCast(u8, (@as(u16, 1) << @intCast(u4, b)) - 1);
+        // Clear bits in the first byte to increase the probability
+        // that the candidate is < max.
+        bytes[0] &= @intCast(u8, (@as(u16, 1) << @intCast(u4, b)) - 1);
 
-//         try setManagedBytes(out, bytes, .Big);
-//         if (out.toConst().order(max).compare(.lt)) {
-//             return;
-//         }
-//     }
-// }
+        try setManagedBytes(out, bytes, .Big);
+        if (out.toConst().order(max).compare(.lt)) {
+            return;
+        }
+    }
+}
 
 const testing = std.testing;
 
-// test "bigint.unsignedRandomLessThan" {
-//     testing.log_level = .err;
-//     const allocator = testing.allocator;
-//     var max = try Managed.initSet(allocator, 10000000000000000000000000000000000000000000);
-//     defer max.deinit();
+test "bigint.unsignedRandomLessThan" {
+    testing.log_level = .err;
+    const allocator = testing.allocator;
+    var max = try Managed.initSet(allocator, 10000000000000000000000000000000000000000000);
+    defer max.deinit();
 
-//     var r = try Managed.init(allocator);
-//     defer r.deinit();
+    var r = try Managed.init(allocator);
+    defer r.deinit();
 
-//     const n = 100;
-//     var i: usize = 0;
-//     while (i < n) : (i += 1) {
-//         try unsignedRandomLessThan(&r, std.crypto.random, max.toConst());
-//         std.log.debug("r={}", .{r});
-//     }
-// }
+    const n = 100;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        try unsignedRandomLessThan(&r, std.crypto.random, max.toConst());
+        std.log.debug("r={}", .{r});
+    }
+}
 
 // test "bigint.Const const" {
 //     try testing.expectEqual(@as(u64, 0), try zero.to(u64));
