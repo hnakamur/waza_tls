@@ -508,132 +508,6 @@ fn parseInt64(input: []const u8) !i64 {
     return ret;
 }
 
-// ASN.1 has IMPLICIT and EXPLICIT tags, which can be translated as "instead
-// of" and "in addition to". When not specified, every primitive type has a
-// default tag in the UNIVERSAL class.
-//
-// For example: a BIT STRING is tagged [UNIVERSAL 3] by default (although ASN.1
-// doesn't actually have a UNIVERSAL keyword). However, by saying [IMPLICIT
-// CONTEXT-SPECIFIC 42], that means that the tag is replaced by another.
-//
-// On the other hand, if it said [EXPLICIT CONTEXT-SPECIFIC 10], then an
-// /additional/ tag would wrap the default tag. This explicit tag will have the
-// compound flag set.
-//
-// (This is used in order to remove ambiguity with optional elements.)
-//
-// You can layer EXPLICIT and IMPLICIT tags to an arbitrary depth, however we
-// don't support that here. We support a single layer of EXPLICIT or IMPLICIT
-// tagging with tag strings on the fields of a structure.
-
-// FieldParameters is the parameters for parsing ASN.1 value for a structure field.
-pub const FieldParameters = struct {
-    name: []const u8, // field name
-    optional: bool = false, // true iff the field is OPTIONAL
-    explicit: bool = false, // true iff an EXPLICIT tag is in use.
-    application: bool = false, // true iff an APPLICATION tag is in use.
-    private: bool = false, // true iff a PRIVATE tag is in use.
-    default_value: ?i64 = null, // a default value for INTEGER typed fields.
-    tag: ?TagAndClass = null, // the EXPLICIT or IMPLICIT tag
-    string_type: ?TagAndClass = null, // the string tag to use when marshaling.
-    time_type: ?TagAndClass = null, // the time tag to use when marshaling.
-    set: bool = false, // true iff this should be encoded as a SET
-    omit_empty: bool = false, // true iff this should be omitted if empty when marshaling.
-
-    pub fn getSlice(comptime Struct: type) []const FieldParameters {
-        const struct_info = @typeInfo(Struct).Struct;
-        inline for (struct_info.decls) |decl| {
-            switch (decl.data) {
-                .Var => |v| {
-                    switch (@typeInfo(v)) {
-                        .Array => |a| {
-                            if (a.child == FieldParameters) {
-                                return &@field(Struct, decl.name);
-                            }
-                        },
-                        else => {},
-                    }
-                },
-                else => {},
-            }
-        }
-        return &[_]FieldParameters{};
-    }
-
-    pub fn forField(
-        comptime params: []const FieldParameters,
-        comptime name: []const u8,
-    ) ?*const FieldParameters {
-        for (params) |*param| {
-            if (mem.eql(u8, param.name, name)) {
-                return param;
-            }
-        }
-        return null;
-    }
-
-    // setDefaultValue is used to install a default value into out.
-    // It is successful if the field was optional, even if a default value
-    // wasn't provided or it failed to install it into the Value.
-    fn setDefaultValue(self: *const FieldParameters, out: anytype) !void {
-        if (!self.optional) {
-            return error.NotOptionalField;
-        }
-        if (self.default_value) |v| {
-            const OutType = @TypeOf(out);
-            switch (@typeInfo(OutType)) {
-                .Pointer => |ptr| {
-                    if (!ptr.is_const and ptr.size == .One) {
-                        switch (@typeInfo(ptr.child)) {
-                            .Int => |i| {
-                                if (i.signedness == .signed) {
-                                    out.* = @intCast(ptr.child, v);
-                                    return;
-                                }
-                            },
-                            else => {},
-                        }
-                    }
-                },
-                else => {},
-            }
-            @panic("out must be a pointer to single mutable signed integer");
-        }
-    }
-};
-
-test "FieldParameters.setDefaultValue" {
-    testing.log_level = .err;
-
-    {
-        const MyStruct = struct {
-            pub const field_parameters = [_]FieldParameters{
-                .{ .name = "v", .optional = true, .default_value = 3 },
-            };
-
-            v: i32 = undefined,
-        };
-
-        var s = MyStruct{};
-        try MyStruct.field_parameters[0].setDefaultValue(&s.v);
-        try testing.expectEqual(@as(i32, 3), s.v);
-    }
-
-    {
-        const MyStruct = struct {
-            pub const field_parameters = [_]FieldParameters{
-                .{ .name = "v", .optional = true },
-            };
-
-            v: i32 = undefined,
-        };
-
-        var s = MyStruct{ .v = 2 };
-        try MyStruct.field_parameters[0].setDefaultValue(&s.v);
-        try testing.expectEqual(@as(i32, 2), s.v);
-    }
-}
-
 fn checkAsn1Integer(bytes: []const u8) !void {
     switch (bytes.len) {
         0 => {
@@ -1012,7 +886,7 @@ pub fn parseBigInt(allocator: mem.Allocator, der: []const u8) !math.big.int.Cons
 
         // ret = -(ret + 1)
         const one = math.big.int.Const{ .limbs = &[_]math.big.Limb{1}, .positive = true };
-        try ret.add(ret.toConst(), one);
+        try bigint.add(&ret, ret.toConst(), one);
         ret.negate();
         return ret.toConst();
     } else {
@@ -1112,89 +986,6 @@ fn invalidLength(offset: usize, length: usize, slice_length: usize) bool {
     return end_offest < offset or end_offest > slice_length;
 }
 
-// parseField is the main parsing function. Given a byte slice and an offset
-// into the array, it will try to parse a suitable ASN.1 value out and store it
-// in the given Value.
-pub fn parseField(
-    self: *const FieldParameters,
-    allocator: mem.Allocator,
-    input: []const u8,
-    init_offset: usize,
-    out: anytype,
-) !usize {
-    const OutPtrChildType = switch (@typeInfo(@TypeOf(out))) {
-        .Pointer => |ptr| ptr.child,
-        else => @panic("out must be pointer"),
-    };
-
-    var offset = init_offset;
-    // If we have run out of data, it may be that there are optional elements at the end.
-    if (offset == input.len) {
-        self.setDefaultValue(out) catch {
-            std.log.warn("sequence truncated", .{});
-            return error.Asn1SyntaxError;
-        };
-    }
-    // Deal with the ANY type.
-    var t: TagAndLength = undefined;
-    offset = try TagAndLength.parse(input, offset, &t);
-    std.log.debug("offset={}, t={}", .{ offset, t });
-    if (invalidLength(offset, t.length, input.len)) {
-        std.log.warn("data truncated", .{});
-        return error.Asn1SyntaxError;
-    }
-
-    const inner_input = input[offset .. offset + t.length];
-    std.log.debug("inner_input={}", .{fmtx.fmtSliceHexEscapeLower(inner_input)});
-    switch (OutPtrChildType) {
-        []const u8, ?[]const u8 => switch (t.tag) {
-            .printable_string => {
-                const result = try parsePrintableString(inner_input);
-                out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
-                return offset + t.length;
-            },
-            else => {},
-        },
-        ObjectIdentifier, ?ObjectIdentifier => {
-            out.* = try parseObjectIdentifier(inner_input, allocator);
-            return offset + t.length;
-        },
-        else => switch (@typeInfo(OutPtrChildType)) {
-            .Int => {
-                out.* = @intCast(OutPtrChildType, try parseInt64(inner_input));
-                return offset + t.length;
-            },
-            else => {},
-        },
-    }
-
-    // if (t.class == .universal) {
-    //     const inner_input = input[offset .. offset + t.length];
-    //     switch (t.tag) {
-    //         .printable_string => {
-    //             const result = try parsePrintableString(inner_input);
-    //             if (OutPtrChildType == []const u8) {
-    //                 out.* = if (result.len == 0) &[_]u8{} else try allocator.dupe(u8, result);
-    //             } else @panic("out pointer child type mismatch");
-    //         },
-    //         .integer => switch (@typeInfo(OutPtrChildType)) {
-    //             .Int => out.* = @intCast(OutPtrChildType, try parseInt64(inner_input)),
-    //             else => @panic("out pointer child type mismatch"),
-    //         },
-    //         .oid => if (OutPtrChildType == ObjectIdentifier) {
-    //             out.* = try parseObjectIdentifier(inner_input, allocator);
-    //         } else @panic("out pointer child type mismatch"),
-    //         else => {
-    //             // If we don't know how to handle the type, we just leave Value unmodified.
-    //         },
-    //     }
-    //     return offset + t.length;
-    // }
-    // TODO: implement
-    @panic("not implemented yet");
-    // return offset;
-}
-
 test "out two types" {
     testing.log_level = .err;
     try struct {
@@ -1237,73 +1028,6 @@ test "out two types" {
         }
     }.runTest();
 }
-
-// test "parseField all" {
-//     testing.log_level = .err;
-
-//     const T1 = struct {
-//         const Self = @This();
-
-//         pub const field_parameters = [_]FieldParameters{
-//             .{ .name = "a" },
-//             .{ .name = "b" },
-//             .{ .name = "c" },
-//         };
-
-//         a: []const u8 = &[_]u8{},
-//         c: ?ObjectIdentifier = null,
-//         b: u32 = undefined,
-
-//         pub fn deinit(self: *Self, allocator: mem.Allocator) void {
-//             if (self.a.len > 0) allocator.free(self.a);
-//             if (self.c) |*c| c.deinit(allocator);
-//         }
-//     };
-
-//     const Test = struct {
-//         const params_list = FieldParameters.getSlice(T1);
-
-//         fn a(input: []const u8, want: []const u8) !void {
-//             const allocator = testing.allocator;
-//             var t1: T1 = undefined;
-//             defer t1.deinit(allocator);
-//             const field_param = FieldParameters.forField(params_list, "a").?;
-//             const new_offset = try parseField(field_param, allocator, input, 0, &t1.a);
-//             try testing.expectEqual(input.len, new_offset);
-//             try testing.expectEqualStrings(want, t1.a);
-//         }
-
-//         fn b(input: []const u8, want: u32) !void {
-//             const allocator = testing.allocator;
-//             var t1: T1 = undefined;
-//             const field_param = FieldParameters.forField(params_list, "b").?;
-//             const new_offset = try parseField(field_param, allocator, input, 0, &t1.b);
-//             try testing.expectEqual(input.len, new_offset);
-//             try testing.expectEqual(want, t1.b);
-//         }
-
-//         fn c(input: []const u8, want: ObjectIdentifier) !void {
-//             const allocator = testing.allocator;
-//             var t1: T1 = undefined;
-//             const field_param = FieldParameters.forField(params_list, "c").?;
-//             const new_offset = try parseField(field_param, allocator, input, 0, &t1.c);
-//             try testing.expectEqual(input.len, new_offset);
-//             if (!want.eql(t1.c.?)) {
-//                 std.log.warn("oid mismatch, want={}, got={}", .{ want, t1.c.? });
-//             }
-//             try testing.expect(want.eql(t1.c.?));
-//         }
-//     };
-
-//     // try Test.a(&[_]u8{ 0x13, 0x04, 't', 'e', 's', 't' }, "test");
-//     // try Test.a(&[_]u8{ 0x13, 0x00 }, "");
-
-//     // try Test.b(&[_]u8{ 0x02, 0x01, 0x10 }, 16);
-
-//     try Test.c(&[_]u8{
-//         0x30, 0x08, 0x06, 0x06, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
-//     }, ObjectIdentifier.initConst(&.{ 1, 2, 840, 113549 }));
-// }
 
 // PrintableString
 
@@ -1605,7 +1329,7 @@ pub fn writeAsn1BigInt(
                 // negative.
                 var n_neg_minus_one_m = try context.n.negate().toManaged(context.allocator);
                 defer n_neg_minus_one_m.deinit();
-                try n_neg_minus_one_m.sub(n_neg_minus_one_m.toConst(), bigint.one);
+                try bigint.sub(&n_neg_minus_one_m, n_neg_minus_one_m.toConst(), bigint.one);
 
                 var b: []const u8 = undefined;
                 b.ptr = @ptrCast([*]const u8, n_neg_minus_one_m.limbs.ptr);
