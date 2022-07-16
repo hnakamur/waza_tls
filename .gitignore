@@ -10,3 +10,6 @@ src/tls/naruh.dev.key
 
 tests/client_cert/*.crt
 tests/client_cert/*.key
+
+tests/*.pem
+tests/*.pem.bak
