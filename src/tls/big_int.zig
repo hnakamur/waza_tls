@@ -305,9 +305,9 @@ pub fn exp(
     out.swap(&z);
 }
 
-// pub fn deinitConst(c: Const, allocator: Allocator) void {
-//     allocator.free(c.limbs);
-// }
+pub fn deinitConst(c: Const, allocator: Allocator) void {
+    allocator.free(c.limbs);
+}
 
 // modInverse returns the multiplicative inverse of g in the ring ℤ/nℤ.
 // If g and n are not relatively prime, g has no multiplicative
@@ -1485,41 +1485,41 @@ fn nlz(x: Limb) usize {
     return @clz(Limb, x);
 }
 
-// fn cloneConst(
-//     allocator: Allocator,
-//     x: Const,
-// ) !Const {
-//     return Const{
-//         .limbs = try allocator.dupe(Limb, x.limbs),
-//         .positive = x.positive,
-//     };
-// }
+fn cloneConst(
+    allocator: Allocator,
+    x: Const,
+) !Const {
+    return Const{
+        .limbs = try allocator.dupe(Limb, x.limbs),
+        .positive = x.positive,
+    };
+}
 
-// // bytes writes the value of z into buf using big-endian encoding.
-// // The value of z is encoded in the slice buf[i:]. If the value of z
-// // cannot be represented in buf, bytes panics. The number i of unused
-// // bytes at the beginning of buf is returned as result.
-// pub fn fillBytes(
-//     c: Const,
-//     dest: []u8,
-// ) void {
-//     mem.set(u8, dest, 0);
-//     var i: usize = dest.len;
-//     for (c.limbs) |d| {
-//         var d2: Limb = d;
-//         var j: usize = 0;
-//         while (j < @sizeOf(Limb)) : (j += 1) {
-//             const b = @truncate(u8, d2);
-//             if (i > 0) {
-//                 i -= 1;
-//                 dest[i] = b;
-//             } else if (b != 0) {
-//                 @panic("dest buffer too small to fill bytes");
-//             }
-//             d2 >>= 8;
-//         }
-//     }
-// }
+// bytes writes the value of z into buf using big-endian encoding.
+// The value of z is encoded in the slice buf[i:]. If the value of z
+// cannot be represented in buf, bytes panics. The number i of unused
+// bytes at the beginning of buf is returned as result.
+pub fn fillBytes(
+    c: Const,
+    dest: []u8,
+) void {
+    mem.set(u8, dest, 0);
+    var i: usize = dest.len;
+    for (c.limbs) |d| {
+        var d2: Limb = d;
+        var j: usize = 0;
+        while (j < @sizeOf(Limb)) : (j += 1) {
+            const b = @truncate(u8, d2);
+            if (i > 0) {
+                i -= 1;
+                dest[i] = b;
+            } else if (b != 0) {
+                @panic("dest buffer too small to fill bytes");
+            }
+            d2 >>= 8;
+        }
+    }
+}
 
 // Sets a uniform random value in [0, max) to out. It panics if max <= 0.
 pub fn unsignedRandomLessThan(out: *Managed, rand: std.rand.Random, max: Const) !void {
@@ -1583,38 +1583,38 @@ test "bigint.unsignedRandomLessThan" {
     }
 }
 
-// test "bigint.Const const" {
-//     try testing.expectEqual(@as(u64, 0), try zero.to(u64));
-//     try testing.expectEqual(@as(u64, 1), try one.to(u64));
-// }
+test "bigint.Const const" {
+    try testing.expectEqual(@as(u64, 0), try zero.to(u64));
+    try testing.expectEqual(@as(u64, 1), try one.to(u64));
+}
 
-// test "std.Const zero" {
-//     const allocator = testing.allocator;
-//     var zero_want = (try Managed.initSet(allocator, 0)).toConst();
-//     defer deinitConst(zero_want, allocator);
-//     try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero_want.limbs);
-//     try testing.expect(zero_want.positive);
-// }
+test "std.Const zero" {
+    const allocator = testing.allocator;
+    var zero_want = (try Managed.initSet(allocator, 0)).toConst();
+    defer deinitConst(zero_want, allocator);
+    try testing.expectEqualSlices(Limb, &[_]Limb{0}, zero_want.limbs);
+    try testing.expect(zero_want.positive);
+}
 
-// test "std.Const one" {
-//     const allocator = testing.allocator;
-//     var one_want = (try Managed.initSet(allocator, 1)).toConst();
-//     defer deinitConst(one_want, allocator);
-//     try testing.expectEqualSlices(Limb, &[_]Limb{1}, one_want.limbs);
-//     try testing.expect(one_want.positive);
-// }
+test "std.Const one" {
+    const allocator = testing.allocator;
+    var one_want = (try Managed.initSet(allocator, 1)).toConst();
+    defer deinitConst(one_want, allocator);
+    try testing.expectEqualSlices(Limb, &[_]Limb{1}, one_want.limbs);
+    try testing.expect(one_want.positive);
+}
 
-// test "constFromBytes" {
-//     testing.log_level = .err;
-//     const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
-//     const allocator = testing.allocator;
-//     var i = try constFromBytes(allocator, buf, .Big);
-//     defer deinitConst(i, allocator);
+test "constFromBytes" {
+    testing.log_level = .err;
+    const buf = &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0xfe };
+    const allocator = testing.allocator;
+    var i = try constFromBytes(allocator, buf, .Big);
+    defer deinitConst(i, allocator);
 
-//     var s = try i.toStringAlloc(allocator, 10, .lower);
-//     defer allocator.free(s);
-//     try testing.expectEqualStrings("335812727627494322174", s);
-// }
+    var s = try i.toStringAlloc(allocator, 10, .lower);
+    defer allocator.free(s);
+    try testing.expectEqualStrings("335812727627494322174", s);
+}
 
 test "exp" {
     testing.log_level = .err;
@@ -1938,125 +1938,125 @@ test "expNnWindowed" {
     }
 }
 
-// test "bigIntDivTrunc" {
-//     // Zig's std.Managed.divTrunc equals to Go's math/big.QuoRem.
-//     const f = struct {
-//         fn f(x: i64, y: i64, q: i64, r: i64, d: i64, m: i64) !void {
-//             _ = d;
-//             _ = m;
-//             const allocator = testing.allocator;
-//             { // no alias
-//                 var big_x = try Managed.initSet(allocator, x);
-//                 defer big_x.deinit();
-//                 var big_y = try Managed.initSet(allocator, y);
-//                 defer big_y.deinit();
-//                 var big_q = try Managed.init(allocator);
-//                 defer big_q.deinit();
-//                 var big_r = try Managed.init(allocator);
-//                 defer big_r.deinit();
-//                 try big_q.divTrunc(&big_r, big_x.toConst(), big_y.toConst());
-//                 try testing.expectEqual(q, try big_q.to(i64));
-//                 try testing.expectEqual(r, try big_r.to(i64));
-//             }
-//             // Though these test passes, Managed.divTrunc document says nothing
-//             // about aliases, and Mutable.divTrunc document says q may alias with
-//             // a or b, but says nothing about r.
-//             { // alias r and x, q and y
-//                 var big_q = try Managed.initSet(allocator, y);
-//                 defer big_q.deinit();
-//                 var big_r = try Managed.initSet(allocator, x);
-//                 defer big_r.deinit();
-//                 try big_q.divTrunc(&big_r, big_r.toConst(), big_q.toConst());
-//                 try testing.expectEqual(q, try big_q.to(i64));
-//                 try testing.expectEqual(r, try big_r.to(i64));
-//             }
-//             { // alias q and x, r and y
-//                 var big_q = try Managed.initSet(allocator, x);
-//                 defer big_q.deinit();
-//                 var big_r = try Managed.initSet(allocator, y);
-//                 defer big_r.deinit();
-//                 try big_q.divTrunc(&big_r, big_q.toConst(), big_r.toConst());
-//                 try testing.expectEqual(q, try big_q.to(i64));
-//                 try testing.expectEqual(r, try big_r.to(i64));
-//             }
-//         }
-//     }.f;
+test "bigIntDivTrunc" {
+    // Zig's std.Managed.divTrunc equals to Go's math/big.QuoRem.
+    const f = struct {
+        fn f(x: i64, y: i64, q: i64, r: i64, d: i64, m: i64) !void {
+            _ = d;
+            _ = m;
+            const allocator = testing.allocator;
+            { // no alias
+                var big_x = try Managed.initSet(allocator, x);
+                defer big_x.deinit();
+                var big_y = try Managed.initSet(allocator, y);
+                defer big_y.deinit();
+                var big_q = try Managed.init(allocator);
+                defer big_q.deinit();
+                var big_r = try Managed.init(allocator);
+                defer big_r.deinit();
+                try divTrunc(&big_q, &big_r, big_x.toConst(), big_y.toConst());
+                try testing.expectEqual(q, try big_q.to(i64));
+                try testing.expectEqual(r, try big_r.to(i64));
+            }
+            // Though these test passes, Managed.divTrunc document says nothing
+            // about aliases, and Mutable.divTrunc document says q may alias with
+            // a or b, but says nothing about r.
+            { // alias r and x, q and y
+                var big_q = try Managed.initSet(allocator, y);
+                defer big_q.deinit();
+                var big_r = try Managed.initSet(allocator, x);
+                defer big_r.deinit();
+                try divTrunc(&big_q, &big_r, big_r.toConst(), big_q.toConst());
+                try testing.expectEqual(q, try big_q.to(i64));
+                try testing.expectEqual(r, try big_r.to(i64));
+            }
+            { // alias q and x, r and y
+                var big_q = try Managed.initSet(allocator, x);
+                defer big_q.deinit();
+                var big_r = try Managed.initSet(allocator, y);
+                defer big_r.deinit();
+                try divTrunc(&big_q, &big_r, big_q.toConst(), big_r.toConst());
+                try testing.expectEqual(q, try big_q.to(i64));
+                try testing.expectEqual(r, try big_r.to(i64));
+            }
+        }
+    }.f;
 
-//     try f(5, 3, 1, 2, 1, 2);
-//     try f(-5, 3, -1, -2, -2, 1);
-//     try f(5, -3, -1, 2, -1, 2);
-//     try f(-5, -3, 1, -2, 2, 1);
-//     try f(1, 2, 0, 1, 0, 1);
-//     try f(8, 4, 2, 0, 2, 0);
-// }
+    try f(5, 3, 1, 2, 1, 2);
+    try f(-5, 3, -1, -2, -2, 1);
+    try f(5, -3, -1, 2, -1, 2);
+    try f(-5, -3, 1, -2, 2, 1);
+    try f(1, 2, 0, 1, 0, 1);
+    try f(8, 4, 2, 0, 2, 0);
+}
 
-// test "managedFromBytes" {
-//     const cases = &[_]struct {
-//         input: []const u8,
-//         want: []const u8,
-//     }{
-//         .{ .input = "\x4a", .want = "74" },
-//         .{ .input = "\xd9\xaa", .want = "55722" },
-//         .{ .input = "\x47\x5f\x17", .want = "4677399" },
-//         .{ .input = "\x8c\x46\x12\xaa", .want = "2353402538" },
-//         .{ .input = "\xd7\x54\xeb\xec\x53", .want = "924842716243" },
-//         .{ .input = "\xaa\x6a\x28\xef\xe4\x94", .want = "187372930065556" },
-//         .{ .input = "\x3b\x7d\x1d\x4c\x92\x7f\xcc", .want = "16744588418121676" },
-//         .{ .input = "\x63\xff\xb2\x36\xe2\x30\xf0\x0a", .want = "7205673877608919050" },
-//         .{ .input = "\x26\xaf\xe3\x47\xe1\xb9\xaf\x1e\x36", .want = "713650327612122144310" },
-//         .{
-//             .input = "\xa3\xa0\x63\xcf\xd9\xd8\xf5\x8f\xa9\xcc",
-//             .want = "772704407966201488058828",
-//         },
-//         .{
-//             .input = "\xf3\x73\x00\x14\xc3\xb4\x5e\xcd\x79\x6c\x86",
-//             .want = "294312047808122719137524870",
-//         },
-//         .{
-//             .input = "\xc6\xfb\x2c\x1a\x1e\x56\x12\xbe\xd7\x57\xc8\x4b",
-//             .want = "61581680591276142991196538955",
-//         },
-//         .{
-//             .input = "\xfd\xf9\x03\x3d\x29\x9e\xbb\x56\x52\x67\x61\x95\x47",
-//             .want = "20121790799163960969827622950215",
-//         },
-//         .{
-//             .input = "\x87\x28\x2c\x91\x46\x84\x78\x6c\x74\x61\x11\xbe\x33\xfe",
-//             .want = "2741308215961231365498022024590334",
-//         },
-//         .{
-//             .input = "\x19\xab\xed\x9c\xc8\x61\xa1\x0d\xfb\xb2\xf6\x88\x80\x36\x3b",
-//             .want = "133294539102018743538753550516500027",
-//         },
-//         .{
-//             .input = "\x7b\x14\xe5\x40\x2f\xa7\x72\xc4\xe0\x92\xa4\xa9\xbb\x20\xd2\x86",
-//             .want = "163603539175865214120185492597282755206",
-//         },
-//         .{
-//             .input = "\xf2\xec\xf4\xd7\x94\xa0\x3d\x94\x5d\x68\x15\xed\xf7\x64\x74\x4d\x76",
-//             .want = "82663301894799255685983276547661284789622",
-//         },
-//         .{
-//             .input = "\x9c\xf3\xd2\xc7\x6a\x4b\x68\xba\xd9\xf1\xf2\xbe\x0c\x17\x58\x1a\x0a\x1f",
-//             .want = "13672485393818486146765023671054315829201439",
-//         },
-//         .{
-//             .input = "\x58\x6f\x9d\x99\x9d\x7a\x75\x19\x4c\xdd\xcc\xaf\xb3\x31\x45\x18\xa4\x63\xe4",
-//             .want = "1972188669730284504550489401945552795554046948",
-//         },
-//     };
+test "managedFromBytes" {
+    const cases = &[_]struct {
+        input: []const u8,
+        want: []const u8,
+    }{
+        .{ .input = "\x4a", .want = "74" },
+        .{ .input = "\xd9\xaa", .want = "55722" },
+        .{ .input = "\x47\x5f\x17", .want = "4677399" },
+        .{ .input = "\x8c\x46\x12\xaa", .want = "2353402538" },
+        .{ .input = "\xd7\x54\xeb\xec\x53", .want = "924842716243" },
+        .{ .input = "\xaa\x6a\x28\xef\xe4\x94", .want = "187372930065556" },
+        .{ .input = "\x3b\x7d\x1d\x4c\x92\x7f\xcc", .want = "16744588418121676" },
+        .{ .input = "\x63\xff\xb2\x36\xe2\x30\xf0\x0a", .want = "7205673877608919050" },
+        .{ .input = "\x26\xaf\xe3\x47\xe1\xb9\xaf\x1e\x36", .want = "713650327612122144310" },
+        .{
+            .input = "\xa3\xa0\x63\xcf\xd9\xd8\xf5\x8f\xa9\xcc",
+            .want = "772704407966201488058828",
+        },
+        .{
+            .input = "\xf3\x73\x00\x14\xc3\xb4\x5e\xcd\x79\x6c\x86",
+            .want = "294312047808122719137524870",
+        },
+        .{
+            .input = "\xc6\xfb\x2c\x1a\x1e\x56\x12\xbe\xd7\x57\xc8\x4b",
+            .want = "61581680591276142991196538955",
+        },
+        .{
+            .input = "\xfd\xf9\x03\x3d\x29\x9e\xbb\x56\x52\x67\x61\x95\x47",
+            .want = "20121790799163960969827622950215",
+        },
+        .{
+            .input = "\x87\x28\x2c\x91\x46\x84\x78\x6c\x74\x61\x11\xbe\x33\xfe",
+            .want = "2741308215961231365498022024590334",
+        },
+        .{
+            .input = "\x19\xab\xed\x9c\xc8\x61\xa1\x0d\xfb\xb2\xf6\x88\x80\x36\x3b",
+            .want = "133294539102018743538753550516500027",
+        },
+        .{
+            .input = "\x7b\x14\xe5\x40\x2f\xa7\x72\xc4\xe0\x92\xa4\xa9\xbb\x20\xd2\x86",
+            .want = "163603539175865214120185492597282755206",
+        },
+        .{
+            .input = "\xf2\xec\xf4\xd7\x94\xa0\x3d\x94\x5d\x68\x15\xed\xf7\x64\x74\x4d\x76",
+            .want = "82663301894799255685983276547661284789622",
+        },
+        .{
+            .input = "\x9c\xf3\xd2\xc7\x6a\x4b\x68\xba\xd9\xf1\xf2\xbe\x0c\x17\x58\x1a\x0a\x1f",
+            .want = "13672485393818486146765023671054315829201439",
+        },
+        .{
+            .input = "\x58\x6f\x9d\x99\x9d\x7a\x75\x19\x4c\xdd\xcc\xaf\xb3\x31\x45\x18\xa4\x63\xe4",
+            .want = "1972188669730284504550489401945552795554046948",
+        },
+    };
 
-//     const allocator = testing.allocator;
-//     for (cases) |c| {
-//         var n = try managedFromBytes(allocator, c.input, .Big);
-//         defer n.deinit();
+    const allocator = testing.allocator;
+    for (cases) |c| {
+        var n = try managedFromBytes(allocator, c.input, .Big);
+        defer n.deinit();
 
-//         var got = try n.toString(allocator, 10, .lower);
-//         defer allocator.free(got);
+        var got = try n.toString(allocator, 10, .lower);
+        defer allocator.free(got);
 
-//         try testing.expectEqualStrings(c.want, got);
-//     }
-// }
+        try testing.expectEqualStrings(c.want, got);
+    }
+}
 
 test "big.int mul multi-multi no alias" {
     var a = try Managed.initSet(testing.allocator, 0);
