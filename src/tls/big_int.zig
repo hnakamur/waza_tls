@@ -359,107 +359,107 @@ pub fn formatConst(
 //     try f("-17", "-13");
 // }
 
-// // mod sets r to the modulus x%y for y != 0.
-// // If y == 0, a division-by-zero run-time panic occurs.
-// // mod implements Euclidean modulus (unlike Go).
-// // r may alias x or y.
-// pub fn mod(
-//     r: *Managed,
-//     x: Const,
-//     y: Const,
-// ) !void {
-//     var q = try Managed.init(r.allocator);
-//     defer q.deinit();
-//     try q.divTrunc(r, x, y);
-//     if (!r.isPositive()) {
-//         if (y.positive) {
-//             try add(r, r.toConst(), y);
-//         } else {
-//             try sub(r, r.toConst(), y);
-//         }
-//     }
-// }
+// mod sets r to the modulus x%y for y != 0.
+// If y == 0, a division-by-zero run-time panic occurs.
+// mod implements Euclidean modulus (unlike Go).
+// r may alias x or y.
+pub fn mod(
+    r: *Managed,
+    x: Const,
+    y: Const,
+) !void {
+    var q = try Managed.init(r.allocator);
+    defer q.deinit();
+    try divTrunc(&q, r, x, y);
+    if (!r.isPositive()) {
+        if (y.positive) {
+            try add(r, r.toConst(), y);
+        } else {
+            try sub(r, r.toConst(), y);
+        }
+    }
+}
 
-// test "mod" {
-//     testing.log_level = .err;
-//     const f = struct {
-//         fn f(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
-//             try noAlias(a_dec, b_dec, want_dec);
-//             try aAlias(a_dec, b_dec, want_dec);
-//         }
+test "mod" {
+    testing.log_level = .err;
+    const f = struct {
+        fn f(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
+            try noAlias(a_dec, b_dec, want_dec);
+            try aAlias(a_dec, b_dec, want_dec);
+        }
 
-//         fn noAlias(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
-//             const allocator = testing.allocator;
+        fn noAlias(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
+            const allocator = testing.allocator;
 
-//             var a = try Managed.init(allocator);
-//             defer a.deinit();
-//             try a.setString(10, a_dec);
+            var a = try Managed.init(allocator);
+            defer a.deinit();
+            try a.setString(10, a_dec);
 
-//             var b = try Managed.init(allocator);
-//             defer b.deinit();
-//             try b.setString(10, b_dec);
+            var b = try Managed.init(allocator);
+            defer b.deinit();
+            try b.setString(10, b_dec);
 
-//             var want = try Managed.init(allocator);
-//             defer want.deinit();
-//             try want.setString(10, want_dec);
+            var want = try Managed.init(allocator);
+            defer want.deinit();
+            try want.setString(10, want_dec);
 
-//             var got = try Managed.init(allocator);
-//             defer got.deinit();
-//             try mod(&got, a.toConst(), b.toConst());
+            var got = try Managed.init(allocator);
+            defer got.deinit();
+            try mod(&got, a.toConst(), b.toConst());
 
-//             try testing.expect(got.eq(want));
-//         }
+            try testing.expect(got.eq(want));
+        }
 
-//         fn aAlias(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
-//             const allocator = testing.allocator;
+        fn aAlias(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
+            const allocator = testing.allocator;
 
-//             var got = try Managed.init(allocator);
-//             defer got.deinit();
-//             try got.setString(10, a_dec);
+            var got = try Managed.init(allocator);
+            defer got.deinit();
+            try got.setString(10, a_dec);
 
-//             var b = try Managed.init(allocator);
-//             defer b.deinit();
-//             try b.setString(10, b_dec);
+            var b = try Managed.init(allocator);
+            defer b.deinit();
+            try b.setString(10, b_dec);
 
-//             var want = try Managed.init(allocator);
-//             defer want.deinit();
-//             try want.setString(10, want_dec);
+            var want = try Managed.init(allocator);
+            defer want.deinit();
+            try want.setString(10, want_dec);
 
-//             try mod(&got, got.toConst(), b.toConst());
+            try mod(&got, got.toConst(), b.toConst());
 
-//             try testing.expect(got.eq(want));
-//         }
+            try testing.expect(got.eq(want));
+        }
 
-//         fn bAlias(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
-//             const allocator = testing.allocator;
+        fn bAlias(a_dec: []const u8, b_dec: []const u8, want_dec: []const u8) !void {
+            const allocator = testing.allocator;
 
-//             var got = try Managed.init(allocator);
-//             defer got.deinit();
-//             try got.setString(10, b_dec);
+            var got = try Managed.init(allocator);
+            defer got.deinit();
+            try got.setString(10, b_dec);
 
-//             var a = try Managed.init(allocator);
-//             defer a.deinit();
-//             try a.setString(10, a_dec);
+            var a = try Managed.init(allocator);
+            defer a.deinit();
+            try a.setString(10, a_dec);
 
-//             var want = try Managed.init(allocator);
-//             defer want.deinit();
-//             try want.setString(10, want_dec);
+            var want = try Managed.init(allocator);
+            defer want.deinit();
+            try want.setString(10, want_dec);
 
-//             try mod(&got, a.toConst(), got.toConst());
+            try mod(&got, a.toConst(), got.toConst());
 
-//             try testing.expect(got.eq(want));
-//         }
-//     }.f;
-//     try f("17694774222311561", "458948883992", "1");
-//     try f(
-//         "237934373742502196773711020334249533855437519268329331127996513076407519013378763037128952305053737425643207526811874248822497304120841397396740933665562386116406569665410881715710641431127597590879227797097512559732858629398863647933492076261754988287045337601508593073845315700540762139732699324323002763882356541049457793494480174872894450490195493781427758333854872063235882903706055421841331781485822640244239616780040447171443917696979497891518136474554688580907579220",
-//         "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919",
-//         "1",
-//     );
-//     try f("-90", "13", "1");
-//     try f("40", "-13", "1");
-//     try f("-51", "-13", "1");
-// }
+            try testing.expect(got.eq(want));
+        }
+    }.f;
+    try f("17694774222311561", "458948883992", "1");
+    try f(
+        "237934373742502196773711020334249533855437519268329331127996513076407519013378763037128952305053737425643207526811874248822497304120841397396740933665562386116406569665410881715710641431127597590879227797097512559732858629398863647933492076261754988287045337601508593073845315700540762139732699324323002763882356541049457793494480174872894450490195493781427758333854872063235882903706055421841331781485822640244239616780040447171443917696979497891518136474554688580907579220",
+        "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919",
+        "1",
+    );
+    try f("-90", "13", "1");
+    try f("40", "-13", "1");
+    try f("-51", "-13", "1");
+}
 
 // /// GCD sets rma to the greatest common divisor of a and b.
 // /// If x or y are not nil, GCD sets their value such that rma = a*x + b*y.
@@ -1452,10 +1452,10 @@ fn clearUnusedLimbs(r: *Managed) void {
     mem.set(Limb, r.limbs[r.len()..], 0);
 }
 
-// // nlz returns the number of leading zeros in x.
-// fn nlz(x: Limb) usize {
-//     return @clz(Limb, x);
-// }
+// nlz returns the number of leading zeros in x.
+fn nlz(x: Limb) usize {
+    return @clz(Limb, x);
+}
 
 // fn cloneConst(
 //     allocator: Allocator,
