@@ -1180,277 +1180,277 @@ fn expNnWindowed(
     out.swap(&z);
 }
 
-// fn expNnMontgomery(
-//     out: *Managed,
-//     x_abs: Const,
-//     y_abs: Const,
-//     m_abs: Const,
-// ) !void {
-//     const allocator = out.allocator;
-//     const m_len = m_abs.limbs.len;
+fn expNnMontgomery(
+    out: *Managed,
+    x_abs: Const,
+    y_abs: Const,
+    m_abs: Const,
+) !void {
+    const allocator = out.allocator;
+    const m_len = m_abs.limbs.len;
 
-//     // We want the lengths of x and m to be equal.
-//     // It is OK if x >= m as long as normalizedLimbsLen(x_abs) == normalizedLimbsLen(m_abs).
-//     var x_m = if (x_abs.limbs.len > m_len) blk: {
-//         var q = try Managed.init(allocator);
-//         defer q.deinit();
-//         var r = try Managed.initCapacity(allocator, m_len);
-//         try q.divTrunc(&r, x_abs, m_abs);
-//         // Note: now r.len() <= m_len, not guaranteed ==.
-//         break :blk r;
-//     } else try x_abs.toManaged(allocator);
-//     defer x_m.deinit();
+    // We want the lengths of x and m to be equal.
+    // It is OK if x >= m as long as normalizedLimbsLen(x_abs) == normalizedLimbsLen(m_abs).
+    var x_m = if (x_abs.limbs.len > m_len) blk: {
+        var q = try Managed.init(allocator);
+        defer q.deinit();
+        var r = try Managed.initCapacity(allocator, m_len);
+        try divTrunc(&q, &r, x_abs, m_abs);
+        // Note: now r.len() <= m_len, not guaranteed ==.
+        break :blk r;
+    } else try x_abs.toManaged(allocator);
+    defer x_m.deinit();
 
-//     if (x_m.len() < m_len) {
-//         try ensureCapacityZero(&x_m, m_len);
-//     }
+    if (x_m.len() < m_len) {
+        try ensureCapacityZero(&x_m, m_len);
+    }
 
-//     // Ideally the precomputations would be performed outside, and reused
-//     // k0 = -m**-1 mod 2**_W. Algorithm from: Dumas, J.G. "On Newton–Raphson
-//     // Iteration for Multiplicative Inverses Modulo Prime Powers".
-//     var k0: Limb = 2 -% m_abs.limbs[0];
-//     var t: Limb = m_abs.limbs[0] -% 1;
-//     var i: usize = 1;
-//     while (i < @bitSizeOf(Limb)) : (i <<= 1) {
-//         t *%= t;
-//         k0 *%= (t + 1);
-//     }
-//     k0 = 0 -% k0;
+    // Ideally the precomputations would be performed outside, and reused
+    // k0 = -m**-1 mod 2**_W. Algorithm from: Dumas, J.G. "On Newton–Raphson
+    // Iteration for Multiplicative Inverses Modulo Prime Powers".
+    var k0: Limb = 2 -% m_abs.limbs[0];
+    var t: Limb = m_abs.limbs[0] -% 1;
+    var i: usize = 1;
+    while (i < @bitSizeOf(Limb)) : (i <<= 1) {
+        t *%= t;
+        k0 *%= (t + 1);
+    }
+    k0 = 0 -% k0;
 
-//     // RR = 2**(2*_W*len(m)) mod m
-//     var rr = try Managed.initSet(allocator, 1);
-//     defer rr.deinit();
-//     var zz = try Managed.init(allocator);
-//     defer zz.deinit();
-//     try zz.shiftLeft(rr, 2 * m_len * @bitSizeOf(Limb));
-//     var q = try Managed.init(allocator);
-//     defer q.deinit();
-//     try q.divTrunc(&rr, zz.toConst(), m_abs);
-//     if (rr.len() < m_len) {
-//         try ensureCapacityZero(&rr, m_len);
-//     }
+    // RR = 2**(2*_W*len(m)) mod m
+    var rr = try Managed.initSet(allocator, 1);
+    defer rr.deinit();
+    var zz = try Managed.init(allocator);
+    defer zz.deinit();
+    try zz.shiftLeft(&rr, 2 * m_len * @bitSizeOf(Limb));
+    var q = try Managed.init(allocator);
+    defer q.deinit();
+    try divTrunc(&q, &rr, zz.toConst(), m_abs);
+    if (rr.len() < m_len) {
+        try ensureCapacityZero(&rr, m_len);
+    }
 
-//     // one = 1, with equal length to that of m
-//     var long_one = try initManagedCapacityZero(allocator, m_len);
-//     defer long_one.deinit();
-//     try long_one.set(1);
+    // one = 1, with equal length to that of m
+    var long_one = try initManagedCapacityZero(allocator, m_len);
+    defer long_one.deinit();
+    try long_one.set(1);
 
-//     var m_abs_m = try initManagedCapacityZero(allocator, m_len);
-//     defer m_abs_m.deinit();
-//     try m_abs_m.copy(m_abs);
+    var m_abs_m = try initManagedCapacityZero(allocator, m_len);
+    defer m_abs_m.deinit();
+    try m_abs_m.copy(m_abs);
 
-//     const n = 4;
-//     // powers[i] contains x^i
-//     var powers = try allocator.alloc([]Limb, 1 << n);
-//     defer {
-//         for (powers) |p| allocator.free(p);
-//         allocator.free(powers);
-//     }
+    const n = 4;
+    // powers[i] contains x^i
+    var powers = try allocator.alloc([]Limb, 1 << n);
+    defer {
+        for (powers) |p| allocator.free(p);
+        allocator.free(powers);
+    }
 
-//     powers[0] = try allocator.alloc(Limb, 2 * m_len);
-//     try montgomery(
-//         allocator,
-//         &powers[0],
-//         long_one.limbs[0..m_len],
-//         rr.limbs[0..m_len],
-//         m_abs_m.limbs[0..m_len],
-//         k0,
-//         m_len,
-//     );
-//     powers[1] = try allocator.alloc(Limb, 2 * m_len);
-//     try montgomery(
-//         allocator,
-//         &powers[1],
-//         x_m.limbs[0..m_len],
-//         rr.limbs[0..m_len],
-//         m_abs_m.limbs[0..m_len],
-//         k0,
-//         m_len,
-//     );
-//     i = 2;
-//     while (i < 1 << n) : (i += 1) {
-//         powers[i] = try allocator.alloc(Limb, 2 * m_len);
-//         try montgomery(
-//             allocator,
-//             &powers[i],
-//             powers[i - 1],
-//             powers[1],
-//             m_abs_m.limbs[0..m_len],
-//             k0,
-//             m_len,
-//         );
-//     }
+    powers[0] = try allocator.alloc(Limb, 2 * m_len);
+    try montgomery(
+        allocator,
+        &powers[0],
+        long_one.limbs[0..m_len],
+        rr.limbs[0..m_len],
+        m_abs_m.limbs[0..m_len],
+        k0,
+        m_len,
+    );
+    powers[1] = try allocator.alloc(Limb, 2 * m_len);
+    try montgomery(
+        allocator,
+        &powers[1],
+        x_m.limbs[0..m_len],
+        rr.limbs[0..m_len],
+        m_abs_m.limbs[0..m_len],
+        k0,
+        m_len,
+    );
+    i = 2;
+    while (i < 1 << n) : (i += 1) {
+        powers[i] = try allocator.alloc(Limb, 2 * m_len);
+        try montgomery(
+            allocator,
+            &powers[i],
+            powers[i - 1],
+            powers[1],
+            m_abs_m.limbs[0..m_len],
+            k0,
+            m_len,
+        );
+    }
 
-//     // initialize z = 1 (Montgomery 1)
-//     var z = try allocator.alloc(Limb, m_len);
-//     defer allocator.free(z);
-//     mem.copy(Limb, z, powers[0]);
+    // initialize z = 1 (Montgomery 1)
+    var z = try allocator.alloc(Limb, m_len);
+    defer allocator.free(z);
+    mem.copy(Limb, z, powers[0]);
 
-//     var zz2 = try allocator.alloc(Limb, m_len);
+    var zz2 = try allocator.alloc(Limb, m_len);
 
-//     // same windowed exponent, but with Montgomery multiplications
-//     i = y_abs.limbs.len - 1;
-//     while (i >= 0) : (i -= 1) {
-//         var yi = y_abs.limbs[i];
-//         var j: usize = 0;
-//         while (j < @bitSizeOf(Limb)) : (j += n) {
-//             if (i != y_abs.limbs.len - 1 or j != 0) {
-//                 try montgomery(allocator, &zz2, z, z, m_abs_m.limbs[0..m_len], k0, m_len);
-//                 try montgomery(allocator, &z, zz2, zz2, m_abs_m.limbs[0..m_len], k0, m_len);
-//                 try montgomery(allocator, &zz2, z, z, m_abs_m.limbs[0..m_len], k0, m_len);
-//                 try montgomery(allocator, &z, zz2, zz2, m_abs_m.limbs[0..m_len], k0, m_len);
-//             }
-//             try montgomery(
-//                 allocator,
-//                 &zz2,
-//                 z,
-//                 powers[yi >> (@bitSizeOf(Limb) - n)],
-//                 m_abs_m.limbs[0..m_len],
-//                 k0,
-//                 m_len,
-//             );
-//             mem.swap([]Limb, &z, &zz2);
-//             yi <<= n;
-//         }
-//         if (i == 0) {
-//             break;
-//         }
-//     }
-//     // convert to regular number
-//     try montgomery(
-//         allocator,
-//         &zz2,
-//         z,
-//         long_one.limbs[0..m_len],
-//         m_abs_m.limbs[0..m_len],
-//         k0,
-//         m_len,
-//     );
+    // same windowed exponent, but with Montgomery multiplications
+    i = y_abs.limbs.len - 1;
+    while (i >= 0) : (i -= 1) {
+        var yi = y_abs.limbs[i];
+        var j: usize = 0;
+        while (j < @bitSizeOf(Limb)) : (j += n) {
+            if (i != y_abs.limbs.len - 1 or j != 0) {
+                try montgomery(allocator, &zz2, z, z, m_abs_m.limbs[0..m_len], k0, m_len);
+                try montgomery(allocator, &z, zz2, zz2, m_abs_m.limbs[0..m_len], k0, m_len);
+                try montgomery(allocator, &zz2, z, z, m_abs_m.limbs[0..m_len], k0, m_len);
+                try montgomery(allocator, &z, zz2, zz2, m_abs_m.limbs[0..m_len], k0, m_len);
+            }
+            try montgomery(
+                allocator,
+                &zz2,
+                z,
+                powers[yi >> (@bitSizeOf(Limb) - n)],
+                m_abs_m.limbs[0..m_len],
+                k0,
+                m_len,
+            );
+            mem.swap([]Limb, &z, &zz2);
+            yi <<= n;
+        }
+        if (i == 0) {
+            break;
+        }
+    }
+    // convert to regular number
+    try montgomery(
+        allocator,
+        &zz2,
+        z,
+        long_one.limbs[0..m_len],
+        m_abs_m.limbs[0..m_len],
+        k0,
+        m_len,
+    );
 
-//     // One last reduction, just in case.
-//     // See golang.org/issue/13907.
-//     var zz2m = Managed{
-//         .allocator = allocator,
-//         .limbs = zz2,
-//         .metadata = zz2.len,
-//     };
-//     defer zz2m.deinit();
-//     if (zz2m.order(m_abs_m).compare(.gte)) {
-//         // Common case is m has high bit set; in that case,
-//         // since zz is the same length as m, there can be just
-//         // one multiple of m to remove. Just subtract.
-//         // We think that the subtract should be sufficient in general,
-//         // so do that unconditionally, but double-check,
-//         // in case our beliefs are wrong.
-//         // The div is not expected to be reached.
-//         try sub(&zz2m, zz2m.toConst(), m_abs);
-//         if (zz2m.order(m_abs_m).compare(.gte)) {
-//             try zz.copy(zz2m.toConst());
-//             try zz2m.divTrunc(&rr, zz.toConst(), m_abs);
-//         }
-//     }
+    // One last reduction, just in case.
+    // See golang.org/issue/13907.
+    var zz2m = Managed{
+        .allocator = allocator,
+        .limbs = zz2,
+        .metadata = zz2.len,
+    };
+    defer zz2m.deinit();
+    if (zz2m.order(m_abs_m).compare(.gte)) {
+        // Common case is m has high bit set; in that case,
+        // since zz is the same length as m, there can be just
+        // one multiple of m to remove. Just subtract.
+        // We think that the subtract should be sufficient in general,
+        // so do that unconditionally, but double-check,
+        // in case our beliefs are wrong.
+        // The div is not expected to be reached.
+        try sub(&zz2m, zz2m.toConst(), m_abs);
+        if (zz2m.order(m_abs_m).compare(.gte)) {
+            try zz.copy(zz2m.toConst());
+            try divTrunc(&zz2m, &rr, zz.toConst(), m_abs);
+        }
+    }
 
-//     zz2m.normalize(zz2m.len());
-//     out.swap(&zz2m);
-// }
+    zz2m.normalize(zz2m.len());
+    out.swap(&zz2m);
+}
 
-// // montgomery computes z mod m = x*y*2**(-n*_W) mod m,
-// // assuming k = -1/m mod 2**_W.
-// // z is used for storing the result which is returned;
-// // z must not alias x, y or m.
-// // See Gueron, "Efficient Software Implementations of Modular Exponentiation".
-// // https://eprint.iacr.org/2011/239.pdf
-// // In the terminology of that paper, this is an "Almost Montgomery Multiplication":
-// // x and y are required to satisfy 0 <= z < 2**(n*_W) and then the result
-// // z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
-// fn montgomery(
-//     allocator: Allocator,
-//     z: *[]Limb,
-//     x: []const Limb,
-//     y: []const Limb,
-//     m: []const Limb,
-//     k: Limb,
-//     n: usize,
-// ) !void {
-//     // This code assumes x, y, m are all the same length, n.
-//     // (required by addMulVVW and the for loop).
-//     // It also assumes that x, y are already reduced mod m,
-//     // or else the result will not be properly reduced.
-//     if (!(x.len == n and y.len == n and m.len == n)) {
-//         std.log.err(
-//             "montgomery len mismatch, x={}, y={}, m={}, n={}",
-//             .{ x.len, y.len, m.len, n },
-//         );
-//     }
-//     assert(x.len == n and y.len == n and m.len == n);
+// montgomery computes z mod m = x*y*2**(-n*_W) mod m,
+// assuming k = -1/m mod 2**_W.
+// z is used for storing the result which is returned;
+// z must not alias x, y or m.
+// See Gueron, "Efficient Software Implementations of Modular Exponentiation".
+// https://eprint.iacr.org/2011/239.pdf
+// In the terminology of that paper, this is an "Almost Montgomery Multiplication":
+// x and y are required to satisfy 0 <= z < 2**(n*_W) and then the result
+// z is guaranteed to satisfy 0 <= z < 2**(n*_W), but it may not be < m.
+fn montgomery(
+    allocator: Allocator,
+    z: *[]Limb,
+    x: []const Limb,
+    y: []const Limb,
+    m: []const Limb,
+    k: Limb,
+    n: usize,
+) !void {
+    // This code assumes x, y, m are all the same length, n.
+    // (required by addMulVVW and the for loop).
+    // It also assumes that x, y are already reduced mod m,
+    // or else the result will not be properly reduced.
+    if (!(x.len == n and y.len == n and m.len == n)) {
+        std.log.err(
+            "montgomery len mismatch, x={}, y={}, m={}, n={}",
+            .{ x.len, y.len, m.len, n },
+        );
+    }
+    assert(x.len == n and y.len == n and m.len == n);
 
-//     z.* = try allocator.realloc(z.*, n * 2);
-//     mem.set(Limb, z.*, 0);
-//     var c: Limb = 0;
-//     var i: usize = 0;
-//     while (i < n) : (i += 1) {
-//         var d = y[i];
-//         var c2 = addMulVvw(z.*[i .. n + i], x, d);
-//         var t = z.*[i] *% k;
-//         var c3 = addMulVvw(z.*[i .. n + i], m, t);
-//         var cx = c +% c2;
-//         var cy = cx +% c3;
-//         z.*[n + i] = cy;
-//         c = if (cx < c2 or cy < c3) 1 else 0;
-//     }
-//     if (c != 0) {
-//         _ = subVv(z.*[0..n], z.*[n..], m);
-//     } else {
-//         mem.copy(Limb, z.*[0..n], z.*[n..]);
-//     }
-//     z.* = try allocator.realloc(z.*, n);
-// }
+    z.* = try allocator.realloc(z.*, n * 2);
+    mem.set(Limb, z.*, 0);
+    var c: Limb = 0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        var d = y[i];
+        var c2 = addMulVvw(z.*[i .. n + i], x, d);
+        var t = z.*[i] *% k;
+        var c3 = addMulVvw(z.*[i .. n + i], m, t);
+        var cx = c +% c2;
+        var cy = cx +% c3;
+        z.*[n + i] = cy;
+        c = if (cx < c2 or cy < c3) 1 else 0;
+    }
+    if (c != 0) {
+        _ = subVv(z.*[0..n], z.*[n..], m);
+    } else {
+        mem.copy(Limb, z.*[0..n], z.*[n..]);
+    }
+    z.* = try allocator.realloc(z.*, n);
+}
 
-// fn addMulVvw(z: []Limb, x: []const Limb, y: Limb) Limb {
-//     var c: Limb = 0;
-//     var i: usize = 0;
-//     while (i < z.len and i < x.len) : (i += 1) {
-//         var z0: Limb = undefined;
-//         const z1 = mulAddWww(x[i], y, z[i], &z0);
-//         z[i] = bits.add(z0, c, 0, &c);
-//         c += z1;
-//     }
-//     return c;
-// }
+fn addMulVvw(z: []Limb, x: []const Limb, y: Limb) Limb {
+    var c: Limb = 0;
+    var i: usize = 0;
+    while (i < z.len and i < x.len) : (i += 1) {
+        var z0: Limb = undefined;
+        const z1 = mulAddWww(x[i], y, z[i], &z0);
+        z[i] = bits.add(z0, c, 0, &c);
+        c += z1;
+    }
+    return c;
+}
 
-// // z1<<_W + z0 = x*y + c
-// fn mulAddWww(x: Limb, y: Limb, c: Limb, z0: *Limb) Limb {
-//     var lo: Limb = undefined;
-//     const hi = bits.mul(x, y, &lo);
-//     var cc: Limb = undefined;
-//     z0.* = bits.add(lo, c, 0, &cc);
-//     return hi + cc;
-// }
+// z1<<_W + z0 = x*y + c
+fn mulAddWww(x: Limb, y: Limb, c: Limb, z0: *Limb) Limb {
+    var lo: Limb = undefined;
+    const hi = bits.mul(x, y, &lo);
+    var cc: Limb = undefined;
+    z0.* = bits.add(lo, c, 0, &cc);
+    return hi + cc;
+}
 
-// // The resulting carry c is either 0 or 1.
-// fn subVv(z: []Limb, x: []const Limb, y: []const Limb) Limb {
-//     var c: Limb = 0;
-//     var i: usize = 0;
-//     while (i < z.len and i < x.len and i < y.len) : (i += 1) {
-//         z[i] = bits.sub(x[i], y[i], c, &c);
-//     }
-//     return c;
-// }
+// The resulting carry c is either 0 or 1.
+fn subVv(z: []Limb, x: []const Limb, y: []const Limb) Limb {
+    var c: Limb = 0;
+    var i: usize = 0;
+    while (i < z.len and i < x.len and i < y.len) : (i += 1) {
+        z[i] = bits.sub(x[i], y[i], c, &c);
+    }
+    return c;
+}
 
-// fn initManagedCapacityZero(allocator: Allocator, capacity: usize) !Managed {
-//     var m = try Managed.initCapacity(allocator, capacity);
-//     clearUnusedLimbs(&m);
-//     return m;
-// }
+fn initManagedCapacityZero(allocator: Allocator, capacity: usize) !Managed {
+    var m = try Managed.initCapacity(allocator, capacity);
+    clearUnusedLimbs(&m);
+    return m;
+}
 
-// fn ensureCapacityZero(r: *Managed, capacity: usize) !void {
-//     try r.ensureCapacity(capacity);
-//     clearUnusedLimbs(r);
-// }
+fn ensureCapacityZero(r: *Managed, capacity: usize) !void {
+    try r.ensureCapacity(capacity);
+    clearUnusedLimbs(r);
+}
 
-// fn clearUnusedLimbs(r: *Managed) void {
-//     mem.set(Limb, r.limbs[r.len()..], 0);
-// }
+fn clearUnusedLimbs(r: *Managed) void {
+    mem.set(Limb, r.limbs[r.len()..], 0);
+}
 
 // // nlz returns the number of leading zeros in x.
 // fn nlz(x: Limb) usize {
@@ -1817,93 +1817,93 @@ test "bigint.unsignedRandomLessThan" {
 //     }
 // }
 
-// test "expNnMontgomery" {
-//     testing.log_level = .err;
-//     const f = struct {
-//         fn f(want: Managed, x: Const, y: Const, m: Const) !void {
-//             const allocator = want.allocator;
-//             var got = try Managed.init(allocator);
-//             defer got.deinit();
-//             try expNnMontgomery(&got, x, y, m);
-//             try testing.expect(got.eq(want));
-//         }
-//     }.f;
+test "expNnMontgomery" {
+    testing.log_level = .err;
+    const f = struct {
+        fn f(want: Managed, x: Const, y: Const, m: Const) !void {
+            const allocator = want.allocator;
+            var got = try Managed.init(allocator);
+            defer got.deinit();
+            try expNnMontgomery(&got, x, y, m);
+            try testing.expect(got.eq(want));
+        }
+    }.f;
 
-//     const allocator = testing.allocator;
-//     {
-//         var x = try Managed.initSet(
-//             allocator,
-//             340282366920938463463374607431768211455,
-//         );
-//         defer x.deinit();
-//         var y = try Managed.initSet(
-//             allocator,
-//             1662864082237195566310326201168373022015780906889,
-//         );
-//         defer y.deinit();
-//         var m = try Managed.initSet(
-//             allocator,
-//             1418189353909770683508028082434312329,
-//         );
-//         defer m.deinit();
-//         var want = try Managed.initSet(
-//             allocator,
-//             280841623091519019033764486157171066,
-//         );
-//         defer want.deinit();
-//         try f(want, x.toConst(), y.toConst(), m.toConst());
-//     }
-//     {
-//         @setEvalBranchQuota(10000);
+    const allocator = testing.allocator;
+    {
+        var x = try Managed.initSet(
+            allocator,
+            340282366920938463463374607431768211455,
+        );
+        defer x.deinit();
+        var y = try Managed.initSet(
+            allocator,
+            1662864082237195566310326201168373022015780906889,
+        );
+        defer y.deinit();
+        var m = try Managed.initSet(
+            allocator,
+            1418189353909770683508028082434312329,
+        );
+        defer m.deinit();
+        var want = try Managed.initSet(
+            allocator,
+            280841623091519019033764486157171066,
+        );
+        defer want.deinit();
+        try f(want, x.toConst(), y.toConst(), m.toConst());
+    }
+    {
+        @setEvalBranchQuota(10000);
 
-//         var x = try Managed.initSet(
-//             allocator,
-//             11001289118363089646017359372117963499250546375269047542777928006103246876688756735760905680604646624353196869572752623285140408755420374049317646428185270079555372763503115646054602867593662923894140940837479507194934267532831694565516466765025434902348314525627418515646588160955862839022051353653052947073136084780742729727874803457643848197499548297570026926927502505634297079527299004267769780768565695459945235586892627059178884998772989397505061206395455591503771677500931269477503508150175717121828518985901959919560700853226255420793148986854391552859459511723547532575574664944815966793196961286234040892865,
-//         );
-//         defer x.deinit();
-//         var y = try Managed.initSet(
-//             allocator,
-//             9247324572804102889565555777311914057954687482673431192869682151395651003606366864848904841770165182604035932529621174486515688424932060959148379649412557,
-//         );
-//         defer y.deinit();
-//         var m = try Managed.initSet(
-//             allocator,
-//             21766174458617435773191008891802753781907668374255538511144643224689886235383840957210909013086056401571399717235807266581649606472148410291413364152197364477180887395655483738115072677402235101762521901569820740293149529620419333266262073471054548368736039519702486226506248861060256971802984953561121442680157668000761429988222457090413873973970171927093992114751765168063614761119615476233422096442783117971236371647333871414335895773474667308967050807005509320424799678417036867928316761272274230314067548291133582479583061439577559347101961771406173684378522703483495337037655006751328447510550299250924469288819,
-//         );
-//         defer m.deinit();
-//         var want = try Managed.initSet(
-//             allocator,
-//             21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442,
-//         );
-//         defer want.deinit();
-//         try f(want, x.toConst(), y.toConst(), m.toConst());
-//     }
-//     {
-//         @setEvalBranchQuota(10000);
+        var x = try Managed.initSet(
+            allocator,
+            11001289118363089646017359372117963499250546375269047542777928006103246876688756735760905680604646624353196869572752623285140408755420374049317646428185270079555372763503115646054602867593662923894140940837479507194934267532831694565516466765025434902348314525627418515646588160955862839022051353653052947073136084780742729727874803457643848197499548297570026926927502505634297079527299004267769780768565695459945235586892627059178884998772989397505061206395455591503771677500931269477503508150175717121828518985901959919560700853226255420793148986854391552859459511723547532575574664944815966793196961286234040892865,
+        );
+        defer x.deinit();
+        var y = try Managed.initSet(
+            allocator,
+            9247324572804102889565555777311914057954687482673431192869682151395651003606366864848904841770165182604035932529621174486515688424932060959148379649412557,
+        );
+        defer y.deinit();
+        var m = try Managed.initSet(
+            allocator,
+            21766174458617435773191008891802753781907668374255538511144643224689886235383840957210909013086056401571399717235807266581649606472148410291413364152197364477180887395655483738115072677402235101762521901569820740293149529620419333266262073471054548368736039519702486226506248861060256971802984953561121442680157668000761429988222457090413873973970171927093992114751765168063614761119615476233422096442783117971236371647333871414335895773474667308967050807005509320424799678417036867928316761272274230314067548291133582479583061439577559347101961771406173684378522703483495337037655006751328447510550299250924469288819,
+        );
+        defer m.deinit();
+        var want = try Managed.initSet(
+            allocator,
+            21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442,
+        );
+        defer want.deinit();
+        try f(want, x.toConst(), y.toConst(), m.toConst());
+    }
+    {
+        @setEvalBranchQuota(10000);
 
-//         var x = try Managed.initSet(
-//             allocator,
-//             406433107806066117724671127918333319356292137541743435963950056078916830599029304840314096986266415209224657355837736572200922261163426578651179331131393453988793860237218377235310492383052991190710496340935141634222043093630918151355287758455407438574603857807197323193543796704282457632629182117985956027344756573721567514880098048276151534703676759064670659469188726096428997021371814351238905656170764301138971404583017383454598548551490083189000750931917501000103588820172353162181746970031885719255647656318788280042451109911548051099338702770999665507389439368204693523628612571814083081853523955169312343114509112104365057376126477933949472021889879434438295890522570919854239271657682,
-//         );
-//         defer x.deinit();
-//         var y = try Managed.initSet(
-//             allocator,
-//             9247324572804102889565555777311914057954687482673431192869682151395651003606366864848904841770165182604035932529621174486515688424932060959148379649412557,
-//         );
-//         defer y.deinit();
-//         var m = try Managed.initSet(
-//             allocator,
-//             21766174458617435773191008891802753781907668374255538511144643224689886235383840957210909013086056401571399717235807266581649606472148410291413364152197364477180887395655483738115072677402235101762521901569820740293149529620419333266262073471054548368736039519702486226506248861060256971802984953561121442680157668000761429988222457090413873973970171927093992114751765168063614761119615476233422096442783117971236371647333871414335895773474667308967050807005509320424799678417036867928316761272274230314067548291133582479583061439577559347101961771406173684378522703483495337037655006751328447510550299250924469288819,
-//         );
-//         defer m.deinit();
-//         var want = try Managed.initSet(
-//             allocator,
-//             281922260841133273551070008025043459914555276268337460643460315108526877765261390464352640496671039887789192505298225252794539957185024768842469313161479764129247224181297189401525990925473795326087755094680584008760347811744316689416240130559700085054950633118266475951840800503487485174955924840394049387045989174404949532788547856893369861895770550960914964280527618589465570877605006694415646846171541358662415892984829085205264645240029384180584221302020859884571200976183374536230510251046143237942841512234402830927839775811565384377262636188961565843464936744103267299036324029111735191229863576145323218377,
-//         );
-//         defer want.deinit();
-//         try f(want, x.toConst(), y.toConst(), m.toConst());
-//     }
-// }
+        var x = try Managed.initSet(
+            allocator,
+            406433107806066117724671127918333319356292137541743435963950056078916830599029304840314096986266415209224657355837736572200922261163426578651179331131393453988793860237218377235310492383052991190710496340935141634222043093630918151355287758455407438574603857807197323193543796704282457632629182117985956027344756573721567514880098048276151534703676759064670659469188726096428997021371814351238905656170764301138971404583017383454598548551490083189000750931917501000103588820172353162181746970031885719255647656318788280042451109911548051099338702770999665507389439368204693523628612571814083081853523955169312343114509112104365057376126477933949472021889879434438295890522570919854239271657682,
+        );
+        defer x.deinit();
+        var y = try Managed.initSet(
+            allocator,
+            9247324572804102889565555777311914057954687482673431192869682151395651003606366864848904841770165182604035932529621174486515688424932060959148379649412557,
+        );
+        defer y.deinit();
+        var m = try Managed.initSet(
+            allocator,
+            21766174458617435773191008891802753781907668374255538511144643224689886235383840957210909013086056401571399717235807266581649606472148410291413364152197364477180887395655483738115072677402235101762521901569820740293149529620419333266262073471054548368736039519702486226506248861060256971802984953561121442680157668000761429988222457090413873973970171927093992114751765168063614761119615476233422096442783117971236371647333871414335895773474667308967050807005509320424799678417036867928316761272274230314067548291133582479583061439577559347101961771406173684378522703483495337037655006751328447510550299250924469288819,
+        );
+        defer m.deinit();
+        var want = try Managed.initSet(
+            allocator,
+            281922260841133273551070008025043459914555276268337460643460315108526877765261390464352640496671039887789192505298225252794539957185024768842469313161479764129247224181297189401525990925473795326087755094680584008760347811744316689416240130559700085054950633118266475951840800503487485174955924840394049387045989174404949532788547856893369861895770550960914964280527618589465570877605006694415646846171541358662415892984829085205264645240029384180584221302020859884571200976183374536230510251046143237942841512234402830927839775811565384377262636188961565843464936744103267299036324029111735191229863576145323218377,
+        );
+        defer want.deinit();
+        try f(want, x.toConst(), y.toConst(), m.toConst());
+    }
+}
 
 test "expNnWindowed" {
     testing.log_level = .err;
