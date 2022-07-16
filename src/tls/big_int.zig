@@ -2088,106 +2088,106 @@ test "expNnWindowed" {
 //     }
 // }
 
-// test "big.int mul multi-multi no alias" {
-//     var a = try Managed.initSet(testing.allocator, 0);
-//     defer a.deinit();
-//     var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer b.deinit();
-//     var c = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer c.deinit();
+test "big.int mul multi-multi no alias" {
+    var a = try Managed.initSet(testing.allocator, 0);
+    defer a.deinit();
+    var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer b.deinit();
+    var c = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer c.deinit();
 
-//     try mul(&a, b.toConst(), c.toConst());
+    try mul(&a, b.toConst(), c.toConst());
 
-//     var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
-//     defer want.deinit();
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
 
-//     try testing.expect(a.eq(want));
+    try testing.expect(a.eq(want));
 
-//     if (@typeInfo(Limb).Int.bits == 64) {
-//         try testing.expectEqual(@as(usize, 4), a.limbs.len);
-//     }
-// }
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
 
-// test "big.int mul multi-multi alias r with a and b" {
-//     var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer a.deinit();
+test "big.int mul multi-multi alias r with a and b" {
+    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer a.deinit();
 
-//     try mul(&a, a.toConst(), a.toConst());
+    try mul(&a, a.toConst(), a.toConst());
 
-//     var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
-//     defer want.deinit();
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
 
-//     try testing.expect(a.eq(want));
+    try testing.expect(a.eq(want));
 
-//     if (@typeInfo(Limb).Int.bits == 64) {
-//         try testing.expectEqual(@as(usize, 5), a.limbs.len);
-//     }
-// }
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
 
-// test "big.int sqr multi-multi no alias" {
-//     var a = try Managed.initSet(testing.allocator, 0);
-//     defer a.deinit();
-//     var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer b.deinit();
+test "big.int sqr multi-multi no alias" {
+    var a = try Managed.initSet(testing.allocator, 0);
+    defer a.deinit();
+    var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer b.deinit();
 
-//     try sqr(&a, b.toConst());
+    try sqr(&a, b.toConst());
 
-//     var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
-//     defer want.deinit();
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
 
-//     try testing.expect(a.eq(want));
+    try testing.expect(a.eq(want));
 
-//     if (@typeInfo(Limb).Int.bits == 64) {
-//         try testing.expectEqual(@as(usize, 5), a.limbs.len);
-//     }
-// }
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
 
-// test "big.int sqr multi-multi alias r with a" {
-//     var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer a.deinit();
+test "big.int sqr multi-multi alias r with a" {
+    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer a.deinit();
 
-//     try sqr(&a, a.toConst());
+    try sqr(&a, a.toConst());
 
-//     var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
-//     defer want.deinit();
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    defer want.deinit();
 
-//     try testing.expect(a.eq(want));
+    try testing.expect(a.eq(want));
 
-//     if (@typeInfo(Limb).Int.bits == 64) {
-//         try testing.expectEqual(@as(usize, 5), a.limbs.len);
-//     }
-// }
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 5), a.limbs.len);
+    }
+}
 
-// test "big.int add multi-multi alias r with a and b" {
-//     var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer a.deinit();
+test "big.int add multi-multi alias r with a and b" {
+    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer a.deinit();
 
-//     try add(&a, a.toConst(), a.toConst());
+    try add(&a, a.toConst(), a.toConst());
 
-//     var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb));
-//     defer want.deinit();
+    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb));
+    defer want.deinit();
 
-//     try testing.expect(a.eq(want));
+    try testing.expect(a.eq(want));
 
-//     if (@typeInfo(Limb).Int.bits == 64) {
-//         try testing.expectEqual(@as(usize, 4), a.limbs.len);
-//     }
-// }
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 4), a.limbs.len);
+    }
+}
 
-// test "big.int sub multi-multi alias r with a and b" {
-//     var a = try Managed.initSet(testing.allocator, 0);
-//     defer a.deinit();
-//     var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
-//     defer b.deinit();
+test "big.int sub multi-multi alias r with a and b" {
+    var a = try Managed.initSet(testing.allocator, 0);
+    defer a.deinit();
+    var b = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    defer b.deinit();
 
-//     try sub(&a, a.toConst(), b.toConst());
+    try sub(&a, a.toConst(), b.toConst());
 
-//     var want = try Managed.initSet(testing.allocator, -2 * maxInt(Limb));
-//     defer want.deinit();
+    var want = try Managed.initSet(testing.allocator, -2 * maxInt(Limb));
+    defer want.deinit();
 
-//     try testing.expect(a.eq(want));
+    try testing.expect(a.eq(want));
 
-//     if (@typeInfo(Limb).Int.bits == 64) {
-//         try testing.expectEqual(@as(usize, 4), a.limbs.len);
-//     }
-// }
+    if (@typeInfo(Limb).Int.bits == 64) {
+        try testing.expectEqual(@as(usize, 4), a.limbs.len);
+    }
+}
