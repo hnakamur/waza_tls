@@ -253,9 +253,11 @@ pub const LruSessionCache = struct {
         cs.addRef();
         result.value_ptr.data = cs;
         self.queue.append(result.value_ptr);
-        std.log.debug("LruSessionCache.putHelper, &node.data=0x{x}, queue.len={}", .{
+        std.log.debug("LruSessionCache.putHelper, &node.data=0x{x}, queue.len={}, result.value_ptr={*}, result.value_ptr.data={*}", .{
             @ptrToInt(&result.value_ptr.data),
             self.queue.len,
+            result.value_ptr,
+            result.value_ptr.data,
         });
     }
 
@@ -266,9 +268,10 @@ pub const LruSessionCache = struct {
     }
 
     fn debugLogKeys(self: *const Self) void {
-        std.log.debug("LruSessionCache.debugLogKeys start", .{});
+        std.log.debug("LruSessionCache.debugLogKeys start, self={*}", .{self});
         var it = self.queue.first;
         while (it) |node_ptr| : (it = node_ptr.next) {
+            std.log.debug("LruSessionCache.debugLogKeys node_ptr={*}", .{node_ptr});
             const map_index = self.getMapIndexFromValuePtr(node_ptr);
             const key = self.getMapKeys()[map_index];
             std.log.debug("key={s}", .{key});
@@ -276,14 +279,18 @@ pub const LruSessionCache = struct {
         std.log.debug("LruSessionCache.debugLogKeys exit", .{});
     }
 
-    const MapHeader = packed struct {
+    // NOTE: This must be exactly the same as std.HashMapUnmanaged.Header.
+    const MapHeader = struct {
         values: [*]Node,
         keys: [*][]const u8,
         capacity: Size,
     };
 
     fn getMapHeader(self: *const Self) *MapHeader {
-        return @ptrCast(*MapHeader, @ptrCast([*]MapHeader, self.map.unmanaged.metadata.?) - 1);
+        std.log.debug("mapHader={*}", .{
+            @ptrCast(*MapHeader, @ptrCast([*]MapHeader, @alignCast(@alignOf(MapHeader), self.map.unmanaged.metadata.?)) - 1),
+        });
+        return @ptrCast(*MapHeader, @ptrCast([*]MapHeader, @alignCast(@alignOf(MapHeader), self.map.unmanaged.metadata.?)) - 1);
     }
 
     fn getMapKeys(self: *const Self) [*][]const u8 {
@@ -295,6 +302,7 @@ pub const LruSessionCache = struct {
     }
 
     fn getMapIndexFromValuePtr(self: *const Self, value_ptr: *const Node) usize {
+        std.log.debug("LruSessionCache.getMapIndexFromValuePtr value_ptr={*}, values={*}, self={*}", .{ value_ptr, self.getMapValues(), self });
         return (@ptrToInt(value_ptr) - @ptrToInt(self.getMapValues())) / @sizeOf(Node);
     }
 };
@@ -314,10 +322,12 @@ test "ClientSessionState" {
 }
 
 test "LruSessionCache" {
-    testing.log_level = .err;
+    testing.log_level = .debug;
     const allocator = testing.allocator;
     var cache = try LruSessionCache.init(allocator, 2);
     defer cache.deinit();
+
+    std.log.debug("cache created, self={*}, mapValues={*}", .{ &cache, cache.getMapValues() });
 
     {
         var ticket1 = try allocator.dupe(u8, "ticket1");
@@ -330,8 +340,11 @@ test "LruSessionCache" {
             .received_at = TimestampSeconds.now(),
         };
         defer value1.decRef(allocator);
+        std.log.debug("before put key1", .{});
         try cache.put("key1", value1);
+        std.log.debug("after put key1", .{});
         cache.debugLogKeys();
+        std.log.debug("after debugLogKeys", .{});
     }
 
     {
