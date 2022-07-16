@@ -654,25 +654,25 @@ test "mod" {
 //     return lehmerGcd(rma, x, y, a_copy, b_copy, limbs_buffer);
 // }
 
-// fn signConst(c: Const) i2 {
-//     return if (c.eqZero()) @as(i2, 0) else if (c.positive) @as(i2, 1) else @as(i2, -1);
-// }
+fn signConst(c: Const) i2 {
+    return if (c.eqZero()) @as(i2, 0) else if (c.positive) @as(i2, 1) else @as(i2, -1);
+}
 
-// test "signConst" {
-//     const f = struct {
-//         fn f(input: i64, want: i2) !void {
-//             const allocator = testing.allocator;
-//             var m = try Managed.initSet(allocator, input);
-//             defer m.deinit();
-//             var got = signConst(m.toConst());
-//             try testing.expectEqual(want, got);
-//         }
-//     }.f;
+test "signConst" {
+    const f = struct {
+        fn f(input: i64, want: i2) !void {
+            const allocator = testing.allocator;
+            var m = try Managed.initSet(allocator, input);
+            defer m.deinit();
+            var got = signConst(m.toConst());
+            try testing.expectEqual(want, got);
+        }
+    }.f;
 
-//     try f(2, @as(i2, 1));
-//     try f(0, @as(i2, 0));
-//     try f(-2, @as(i2, -1));
-// }
+    try f(2, @as(i2, 1));
+    try f(0, @as(i2, 0));
+    try f(-2, @as(i2, -1));
+}
 
 // fn lehmerGcd(
 //     result: *Mutable,
