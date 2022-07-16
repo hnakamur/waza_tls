@@ -92,11 +92,9 @@ pub fn add(r: *Managed, a: Const, b: Const) Allocator.Error!void {
     var b2 = b;
     const is_a_alias = a.limbs.ptr == r.limbs.ptr;
     const is_b_alias = b.limbs.ptr == r.limbs.ptr;
-    if (is_a_alias or is_b_alias) {
-        try r.ensureAddCapacity(a, b);
-        if (is_a_alias) a2.limbs.ptr = r.limbs.ptr;
-        if (is_b_alias) b2.limbs.ptr = r.limbs.ptr;
-    }
+    try r.ensureAddCapacity(a, b);
+    if (is_a_alias) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias) b2.limbs.ptr = r.limbs.ptr;
     var m = r.toMutable();
     m.add(a2, b2);
     r.setMetadata(m.positive, m.len);
@@ -107,11 +105,9 @@ pub fn sub(r: *Managed, a: Const, b: Const) Allocator.Error!void {
     var b2 = b;
     const is_a_alias = a.limbs.ptr == r.limbs.ptr;
     const is_b_alias = b.limbs.ptr == r.limbs.ptr;
-    if (is_a_alias or is_b_alias) {
-        try r.ensureAddCapacity(a, b);
-        if (is_a_alias) a2.limbs.ptr = r.limbs.ptr;
-        if (is_b_alias) b2.limbs.ptr = r.limbs.ptr;
-    }
+    try r.ensureCapacity(math.max(a.limbs.len, b.limbs.len) + 1);
+    if (is_a_alias) a2.limbs.ptr = r.limbs.ptr;
+    if (is_b_alias) b2.limbs.ptr = r.limbs.ptr;
     var m = r.toMutable();
     m.sub(a2, b2);
     r.setMetadata(m.positive, m.len);
@@ -283,81 +279,81 @@ pub fn formatConst(
 //     allocator.free(c.limbs);
 // }
 
-// // modInverse returns the multiplicative inverse of g in the ring ℤ/nℤ.
-// // If g and n are not relatively prime, g has no multiplicative
-// // inverse in the ring ℤ/nℤ.  In this case, returns a zero.
-// pub fn modInverse(
-//     out: *Managed,
-//     g: Const,
-//     n: Const,
-// ) !void {
-//     const allocator = out.allocator;
+// modInverse returns the multiplicative inverse of g in the ring ℤ/nℤ.
+// If g and n are not relatively prime, g has no multiplicative
+// inverse in the ring ℤ/nℤ.  In this case, returns a zero.
+pub fn modInverse(
+    out: *Managed,
+    g: Const,
+    n: Const,
+) !void {
+    const allocator = out.allocator;
 
-//     // GCD expects parameters a and b to be > 0.
-//     var n2 = try n.toManaged(allocator);
-//     defer n2.deinit();
-//     if (!n.positive) {
-//         n2.negate();
-//     }
+    // GCD expects parameters a and b to be > 0.
+    var n2 = try n.toManaged(allocator);
+    defer n2.deinit();
+    if (!n.positive) {
+        n2.negate();
+    }
 
-//     var g2 = try g.toManaged(allocator);
-//     defer g2.deinit();
-//     if (!g.positive) {
-//         try mod(&g2, g, n2.toConst());
-//     }
+    var g2 = try g.toManaged(allocator);
+    defer g2.deinit();
+    if (!g.positive) {
+        try mod(&g2, g, n2.toConst());
+    }
 
-//     var d = try Managed.init(allocator);
-//     defer d.deinit();
-//     var x = try Managed.init(allocator);
-//     defer x.deinit();
-//     try gcd(&d, &x, null, g2, n2);
+    var d = try Managed.init(allocator);
+    defer d.deinit();
+    var x = try Managed.init(allocator);
+    defer x.deinit();
+    try gcd(&d, &x, null, g2, n2);
 
-//     // if and only if d==1, g and n are relatively prime
-//     if (!d.toConst().eq(one)) {
-//         try out.set(0);
-//         return;
-//     }
+    // if and only if d==1, g and n are relatively prime
+    if (!d.toConst().eq(one)) {
+        try out.set(0);
+        return;
+    }
 
-//     // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
-//     // but it may be negative, so convert to the range 0 <= z < |n|
-//     if (x.isPositive()) {
-//         out.swap(&x);
-//     } else {
-//         try add(out, x.toConst(), n2.toConst());
-//     }
-// }
+    // x and y are such that g*x + n*y = 1, therefore x is the inverse element,
+    // but it may be negative, so convert to the range 0 <= z < |n|
+    if (x.isPositive()) {
+        out.swap(&x);
+    } else {
+        try add(out, x.toConst(), n2.toConst());
+    }
+}
 
-// test "modInverse" {
-//     testing.log_level = .err;
-//     const f = struct {
-//         fn f(element: []const u8, modulus: []const u8) !void {
-//             const allocator = testing.allocator;
-//             var element_m = try strToManaged(allocator, element);
-//             defer element_m.deinit();
-//             var modulus_m = try strToManaged(allocator, modulus);
-//             defer modulus_m.deinit();
-//             var inverse = try Managed.init(allocator);
-//             defer inverse.deinit();
-//             try modInverse(&inverse, element_m.toConst(), modulus_m.toConst());
-//             try mul(&inverse, inverse.toConst(), element_m.toConst());
-//             try mod(&inverse, inverse.toConst(), modulus_m.toConst());
-//             if (!inverse.toConst().eq(one)) {
-//                 var inverse_s = try inverse.toString(allocator, 10, .lower);
-//                 defer allocator.free(inverse_s);
-//                 std.debug.print(
-//                     "modInverseConst({s}, {s}) * {s} % {s} = {s}, not 1\n",
-//                     .{ element, modulus, element, modulus, inverse_s },
-//                 );
-//                 return error.TestExpectedError;
-//             }
-//         }
-//     }.f;
-//     try f("1234567", "458948883992");
-//     try f("239487239847", "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919");
-//     try f("-10", "13");
-//     try f("10", "-13");
-//     try f("-17", "-13");
-// }
+test "modInverse" {
+    testing.log_level = .err;
+    const f = struct {
+        fn f(element: []const u8, modulus: []const u8) !void {
+            const allocator = testing.allocator;
+            var element_m = try strToManaged(allocator, element);
+            defer element_m.deinit();
+            var modulus_m = try strToManaged(allocator, modulus);
+            defer modulus_m.deinit();
+            var inverse = try Managed.init(allocator);
+            defer inverse.deinit();
+            try modInverse(&inverse, element_m.toConst(), modulus_m.toConst());
+            try mul(&inverse, inverse.toConst(), element_m.toConst());
+            try mod(&inverse, inverse.toConst(), modulus_m.toConst());
+            if (!inverse.toConst().eq(one)) {
+                var inverse_s = try inverse.toString(allocator, 10, .lower);
+                defer allocator.free(inverse_s);
+                std.debug.print(
+                    "modInverseConst({s}, {s}) * {s} % {s} = {s}, not 1\n",
+                    .{ element, modulus, element, modulus, inverse_s },
+                );
+                return error.TestExpectedError;
+            }
+        }
+    }.f;
+    try f("1234567", "458948883992");
+    try f("239487239847", "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919");
+    try f("-10", "13");
+    try f("10", "-13");
+    try f("-17", "-13");
+}
 
 // mod sets r to the modulus x%y for y != 0.
 // If y == 0, a division-by-zero run-time panic occurs.
@@ -478,7 +474,9 @@ test "mod" {
 ///
 /// rma's allocator is used for temporary storage to boost multiplication performance.
 pub fn gcd(rma: *Managed, x: ?*Managed, y: ?*Managed, a: Managed, b: Managed) !void {
+    std.log.debug("gcd start rma={*}, rma.limbs.len={}, a.len={}, b.len={}\n", .{ rma, rma.limbs.len, a.len(), b.len() });
     try rma.ensureCapacity(math.min(a.len(), b.len()));
+    std.log.debug("gcd ensured rma={*}, rma.limbs.len={}, a.len={}, b.len={}\n", .{ rma, rma.limbs.len, a.len(), b.len() });
     var m = rma.toMutable();
     var limbs_buffer = std.ArrayList(Limb).init(rma.allocator);
     defer limbs_buffer.deinit();
